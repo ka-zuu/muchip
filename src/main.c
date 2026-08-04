@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config.h"
 #include "log.h"
+#include "player.h"
 
 typedef struct {
     const char *path;      /* 開く対象 (.gbs/.m3u/.zip) */
@@ -116,6 +118,50 @@ static int run_blank_window(void) {
     return 0;
 }
 
+/* ファイルを開いて再生するCLIハーネス。
+ * P1時点では単体 .gbs 等のみを直接 player に渡す（m3u/zip対応はP3/P4）。
+ * GUI(P5)がまだ無いため、--cli の有無に関わらずこのループで再生する。 */
+static int run_player_cli(const mugbs_args_t *args) {
+    if (args->list_only) {
+        LOG_ERR("--list はまだ実装されていません（P3のplaylist.cで対応予定）");
+        return 1;
+    }
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    player_t player;
+    if (player_init(&player, &cfg) != 0) {
+        return 1;
+    }
+
+    int track_index = args->track - 1; /* CLI引数は1始まり、gmeは0始まり */
+    if (player_open_and_play(&player, args->path, track_index) != 0) {
+        player_shutdown(&player);
+        return 1;
+    }
+
+    Uint32 start_tick = SDL_GetTicks();
+    int running = 1;
+    while (running) {
+        if (player_is_track_ended(&player)) {
+            LOG_INFO("トラック終端に到達しました");
+            running = 0;
+            break;
+        }
+        if (args->duration_sec > 0 &&
+            (SDL_GetTicks() - start_tick) >= (Uint32)(args->duration_sec * 1000)) {
+            LOG_INFO("--duration %d 秒に到達したため停止します", args->duration_sec);
+            running = 0;
+            break;
+        }
+        SDL_Delay(50);
+    }
+
+    player_shutdown(&player);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     mugbs_args_t args;
     if (parse_args(argc, argv, &args) != 0) {
@@ -127,13 +173,17 @@ int main(int argc, char **argv) {
         /* ファイル指定なし: P0 の疎通確認用に空ウィンドウを出す。
          * --cli 指定時はウィンドウなしで即終了する。 */
         if (args.cli_mode) {
-            LOG_INFO("muGBS (P0) --cli: ファイル未指定のため何もせず終了します");
+            LOG_INFO("muGBS --cli: ファイル未指定のため何もせず終了します");
             return 0;
         }
         return run_blank_window();
     }
 
-    /* P1 以降でここに playlist_open / player_* / audio_* を接続する。 */
-    LOG_ERR("再生ロジックは未実装です (P1 以降で対応予定): %s", args.path);
-    return 1;
+    if (SDL_Init(SDL_INIT_AUDIO) != 0) {
+        LOG_ERR("SDL_Init(AUDIO) failed: %s", SDL_GetError());
+        return 1;
+    }
+    int rc = run_player_cli(&args);
+    SDL_Quit();
+    return rc;
 }

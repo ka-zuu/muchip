@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.13)
-project(mugbs C)
+# libgme は C++ で書かれている (SPEC 4.1)。mugbs 自体のソースは C だが、
+# libgme を静的リンクする最終リンクは C++ ランタイム(libstdc++)を要求するため
+# CXX も有効化し、mugbs のリンカドライバを g++ に切り替える(下記 LINKER_LANGUAGE)。
+project(mugbs C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -51,6 +54,8 @@ endif()
 # --- mugbs 本体 -------------------------------------------------------------
 add_executable(mugbs
     src/main.c
+    src/audio.c
+    src/player.c
 )
 
 target_include_directories(mugbs PRIVATE src)
@@ -64,8 +69,13 @@ endif()
 
 target_link_libraries(mugbs PRIVATE gme_static miniz m)
 
-# libgme は C++ で書かれている。実機の glibc/libstdc++ とのバージョン差で
-# "GLIBCXX_3.4.xx not found" が起きるのを避けるため静的リンクする。 (SPEC 4.1)
+# libgme(C++静的ライブラリ)をリンクするため、リンカドライバを g++ にする。
+# C コンパイラ(gcc)のままだと -lstdc++ が自動で付かず operator new/delete 等が
+# 未定義参照になる。
+set_target_properties(mugbs PROPERTIES LINKER_LANGUAGE CXX)
+
+# 実機の glibc/libstdc++ とのバージョン差で "GLIBCXX_3.4.xx not found" が
+# 起きるのを避けるため libstdc++/libgcc を静的リンクする。 (SPEC 4.1)
 target_link_options(mugbs PRIVATE -static-libstdc++ -static-libgcc)
 
 enable_testing()
