@@ -1,0 +1,9 @@
+build/
+build-*/
+sysroot/
+*.muxapp
+log.txt
+*.o
+*.a
+compile_commands.json
+.cache/

@@ -1,0 +1,72 @@
+cmake_minimum_required(VERSION 3.13)
+project(mugbs C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
+
+# TARGET_HOST=ON (既定): 開発機 (x86_64 Linux 等) 向けにネイティブビルドする。
+# 実機向けクロスビルド (P7) では toolchain-aarch64.cmake を経由し、
+# 実機から抜いた SDL2 を CMAKE_FIND_ROOT_PATH で解決する想定。 (SPEC 8.1, 10.1)
+option(TARGET_HOST "ホスト(開発機)向けにネイティブビルドする" ON)
+
+add_compile_options(-Wall -Wextra)
+
+# --- libgme (game-music-emu) --------------------------------------------
+# GBS デコード・拡張M3U解析を丸ごと委譲する。自前で GB APU を実装しない。 (SPEC 4.1, 5.1)
+# オプション名は GME_ プレフィクス付き（旧名 BUILD_SHARED_LIBS 等は既定値の参照元でしかない）。
+set(GME_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(GME_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(GME_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GME_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(GME_ENABLE_UBSAN OFF CACHE BOOL "" FORCE)
+set(GME_ENABLE_ASAN OFF CACHE BOOL "" FORCE)
+# zlib 依存を持ち込まない。VGZ 等の圧縮系フォーマットが読めなくなるだけで GBS には影響しない。
+set(GME_ZLIB OFF CACHE BOOL "" FORCE)
+set(USE_GME_GBS ON CACHE BOOL "" FORCE)
+
+add_subdirectory(vendor/game-music-emu EXCLUDE_FROM_ALL)
+
+# --- miniz (zip展開, P4で使用開始) ---------------------------------------
+add_library(miniz STATIC
+    vendor/miniz/miniz.c
+    vendor/miniz/miniz_tdef.c
+    vendor/miniz/miniz_tinfl.c
+    vendor/miniz/miniz_zip.c
+)
+target_include_directories(miniz PUBLIC vendor/miniz)
+
+# --- SDL2 -----------------------------------------------------------------
+if(TARGET_HOST)
+    find_package(SDL2 REQUIRED)
+else()
+    # クロスビルド時は toolchain ファイルの CMAKE_FIND_ROOT_PATH (sysroot) から解決する。
+    find_package(SDL2 REQUIRED)
+endif()
+
+# --- mugbs 本体 -------------------------------------------------------------
+add_executable(mugbs
+    src/main.c
+)
+
+target_include_directories(mugbs PRIVATE src)
+
+if(TARGET SDL2::SDL2)
+    target_link_libraries(mugbs PRIVATE SDL2::SDL2)
+else()
+    target_include_directories(mugbs PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(mugbs PRIVATE ${SDL2_LIBRARIES})
+endif()
+
+target_link_libraries(mugbs PRIVATE gme_static miniz m)
+
+# libgme は C++ で書かれている。実機の glibc/libstdc++ とのバージョン差で
+# "GLIBCXX_3.4.xx not found" が起きるのを避けるため静的リンクする。 (SPEC 4.1)
+target_link_options(mugbs PRIVATE -static-libstdc++ -static-libgcc)
+
+enable_testing()
+add_subdirectory(tests)
