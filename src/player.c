@@ -8,10 +8,7 @@
  * gme_info_t.play_length は曲長不明時に -1 ではなく 150000(既定150秒)を
  * 返してしまうため、これだけでは「本当に不明か」を判定できない。
  * 判定には length（総曲長）と intro_length/loop_length（ループ構造）を使う。
- * どちらも無ければ真に不明 → config の default_length_sec を使う (F-08)。
- *
- * P1〜P2はここで直接 gme_track_info を見て計算する暫定実装。
- * P3 で playlist_entry_t.play_length_ms に集約したらそちらを使う。 */
+ * どちらも無ければ真に不明 → config の default_length_sec を使う (F-08)。 */
 static int fade_start_ms(const gme_info_t *info, const mugbs_config_t *cfg) {
     if (info->length > 0) return info->length;
     if (info->intro_length > 0 && info->loop_length > 0) return info->play_length;
@@ -26,8 +23,7 @@ static void close_current_emu(player_t *p) {
     audio_set_emu(&p->audio, NULL);
     gme_delete(p->emu);
     p->emu = NULL;
-    p->track_count = 0;
-    p->track_index = 0;
+    p->current_source = -1;
     p->state = PLAYER_STOPPED;
 }
 
@@ -49,11 +45,6 @@ static int start_track_at(player_t *p, int track_index) {
     if (!err) {
         fade_at = fade_start_ms(info, &p->config);
         fade_len = info->fade_length > 0 ? info->fade_length : p->config.fade_length_ms;
-        LOG_INFO("再生: [%d/%d] \"%s\" by %s (フェード開始 %dms, 長さ %dms)",
-                  track_index + 1, p->track_count,
-                  info->song[0] ? info->song : "(no title)",
-                  info->author[0] ? info->author : "(unknown)",
-                  fade_at, fade_len);
         gme_free_info(info); /* gme_track_info はヒープを返すので必ず解放する */
     } else {
         LOG_WARN("gme_track_info: %s。既定長 %d 秒でフェード開始します",
@@ -66,7 +57,6 @@ static int start_track_at(player_t *p, int track_index) {
     gme_set_fade_msecs(p->emu, fade_at, fade_len);
     audio_unlock(&p->audio);
 
-    p->track_index = track_index;
     p->state = PLAYER_PLAYING;
     /* track_ended フラグをクリアしつつ再設定する（emuポインタ自体は不変）。 */
     audio_set_emu(&p->audio, p->emu);
@@ -78,6 +68,8 @@ int player_init(player_t *p, const mugbs_config_t *config) {
     memset(p, 0, sizeof(*p));
     p->config = *config;
     p->state = PLAYER_STOPPED;
+    p->current_source = -1;
+    p->current_entry = -1;
 
     if (audio_init(&p->audio, config->sample_rate) != 0) {
         return -1;
@@ -88,39 +80,59 @@ int player_init(player_t *p, const mugbs_config_t *config) {
 void player_shutdown(player_t *p) {
     close_current_emu(p);
     audio_shutdown(&p->audio);
+    p->playlist = NULL;
+    p->current_entry = -1;
 }
 
-int player_open_and_play(player_t *p, const char *path, int track_index) {
+int player_load_playlist(player_t *p, const playlist_t *pl) {
     close_current_emu(p);
+    p->playlist = pl;
+    p->current_entry = -1;
+    return 0;
+}
 
-    Music_Emu *emu = NULL;
-    gme_err_t err = gme_open_file(path, &emu, p->config.sample_rate);
-    if (err) {
-        LOG_ERR("gme_open_file(%s): %s", path, err);
+int player_play_entry(player_t *p, int entry_index) {
+    if (!p->playlist || entry_index < 0 || entry_index >= p->playlist->entry_count) {
+        LOG_ERR("player_play_entry: 不正なエントリ番号です: %d", entry_index);
         return -1;
     }
 
-    int track_count = gme_track_count(emu);
-    if (track_index < 0 || track_index >= track_count) {
-        LOG_ERR("トラック番号が範囲外です: %d (全%dトラック)", track_index + 1, track_count);
-        gme_delete(emu);
+    const playlist_entry_t *e = &p->playlist->entries[entry_index];
+    const playlist_source_t *src = &p->playlist->sources[e->source_index];
+
+    if (e->source_index != p->current_source) {
+        /* ソースをまたぐ: 現在のemuを閉じて開き直す。
+         * これがm3uの複数ファイル参照(SPEC 5.2-2)に対応する箇所。 */
+        close_current_emu(p);
+
+        Music_Emu *emu = NULL;
+        gme_err_t err = gme_open_file(src->fs_path, &emu, p->config.sample_rate);
+        if (err) {
+            LOG_ERR("gme_open_file(%s): %s", src->fs_path, err);
+            return -1;
+        }
+
+        if (src->m3u_text) {
+            err = gme_load_m3u_data(emu, src->m3u_text, (long)src->m3u_len);
+            if (err) {
+                LOG_WARN("m3uの再読み込みに失敗しました(%s): %s", src->display_path, err);
+            }
+        }
+
+        gme_enable_accuracy(emu, 1);
+        gme_set_stereo_depth(emu, p->config.stereo_depth);
+
+        p->emu = emu;
+        p->current_source = e->source_index;
+    }
+
+    if (start_track_at(p, e->track_index) != 0) {
         return -1;
     }
 
-    gme_enable_accuracy(emu, 1);
-    gme_set_stereo_depth(emu, p->config.stereo_depth);
-
-    p->emu = emu;
-    p->track_count = track_count;
-
-    if (start_track_at(p, track_index) != 0) {
-        gme_delete(emu);
-        p->emu = NULL;
-        p->track_count = 0;
-        return -1;
-    }
-
-    LOG_INFO("ファイルを開きました: %s (全%dトラック)", path, track_count);
+    p->current_entry = entry_index;
+    LOG_INFO("再生: [%d/%d] \"%s\" (%s)",
+              entry_index + 1, p->playlist->entry_count, e->title, src->display_path);
     return 0;
 }
 
@@ -139,35 +151,36 @@ int player_is_track_ended(player_t *p) {
 }
 
 int player_next_track(player_t *p) {
-    if (!p->emu) return -1;
+    if (!p->playlist || p->current_entry < 0) return -1;
 
-    int next = p->track_index + 1;
+    int next = p->current_entry + 1;
 
     if (p->config.repeat_mode == REPEAT_ONE) {
         /* SPEC 5.4: REPEAT_ONE は常に同一トラックを再開する。 */
-        next = p->track_index;
-    } else if (next >= p->track_count) {
+        next = p->current_entry;
+    } else if (next >= p->playlist->entry_count) {
         if (p->config.repeat_mode == REPEAT_ALL) {
             next = 0;
         } else {
             LOG_INFO("最終トラックに到達しました (REPEAT_NONE) -> 停止します");
             close_current_emu(p);
+            p->current_entry = -1;
             return -1;
         }
     }
 
-    return start_track_at(p, next);
+    return player_play_entry(p, next);
 }
 
 int player_prev_track(player_t *p) {
-    if (!p->emu) return -1;
+    if (!p->playlist || p->current_entry < 0) return -1;
 
-    int prev = p->track_index - 1;
+    int prev = p->current_entry - 1;
     if (prev < 0) {
-        prev = (p->config.repeat_mode == REPEAT_ALL) ? (p->track_count - 1) : 0;
+        prev = (p->config.repeat_mode == REPEAT_ALL) ? (p->playlist->entry_count - 1) : 0;
     }
 
-    return start_track_at(p, prev);
+    return player_play_entry(p, prev);
 }
 
 int player_seek(player_t *p, int msec) {

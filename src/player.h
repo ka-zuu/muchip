@@ -1,12 +1,14 @@
 /* player.h - 再生状態機械。 (SPEC 4.2, 5.4)
  *
- * STOPPED --open--> LOADED --play--> PLAYING <-> PAUSED
+ * STOPPED --load_playlist--> LOADED --play_entry--> PLAYING <-> PAUSED
  *                                       |
  *                                       +- track_ended -> next_track()
- *                                       +- user next/prev -> start_track()
+ *                                       +- user next/prev -> play_entry()
  *
- * P3 でファイルをまたぐ遷移(m3uの複数ファイル参照)に対応するまでは、
- * 1つの Music_Emu (= 1ファイル) の中でのトラック送りのみを扱う。
+ * player は playlist_t の「エントリ列(entries[])」だけを見て再生する。
+ * エントリが指す source (= ファイル) が現在開いているものと変われば
+ * emu を閉じて開き直す (P3: ファイルをまたぐm3uへの対応)。
+ * playlist_t の所有権は呼び出し側にあり、player は参照するだけ。
  */
 #ifndef MUGBS_PLAYER_H
 #define MUGBS_PLAYER_H
@@ -15,6 +17,7 @@
 
 #include "audio.h"
 #include "config.h"
+#include "playlist.h"
 
 typedef enum {
     PLAYER_STOPPED = 0,
@@ -31,8 +34,9 @@ typedef struct {
     player_state_t state;
     mugbs_config_t config;
 
-    int track_count;       /* 現在開いているファイルの全トラック数 */
-    int track_index;       /* 現在のトラック (0始まり) */
+    const playlist_t *playlist; /* 参照のみ。所有権は呼び出し側 */
+    int current_source;          /* 現在開いている sources[] の添字。-1=未オープン */
+    int current_entry;            /* 現在の entries[] の添字。-1=未選択 */
 } player_t;
 
 /* SDLオーディオデバイスを開いて初期化する。0で成功。 */
@@ -41,10 +45,14 @@ int player_init(player_t *p, const mugbs_config_t *config);
 /* 開いている emu があれば閉じ、オーディオデバイスを閉じる。 */
 void player_shutdown(player_t *p);
 
-/* path を開き、track_index (0始まり) を再生開始する。
- * P1時点では単体 .gbs/.nsf 等のみを想定し、m3u/zip は扱わない (P3/P4で対応)。
- * すでに何か再生中なら、その emu を破棄してから開き直す。 */
-int player_open_and_play(player_t *p, const char *path, int track_index);
+/* 再生対象のプレイリストを差し替える。開いていたemuは閉じる。
+ * pl の所有権は呼び出し側のまま(player_shutdown/次のload_playlistまで
+ * 呼び出し側が生存させ続けること)。まだ何も再生しない。 */
+int player_load_playlist(player_t *p, const playlist_t *pl);
+
+/* entries[entry_index] を再生開始する。source が現在と異なれば
+ * emu を開き直す (m3uが複数ファイルを参照する場合。SPEC 5.4)。 */
+int player_play_entry(player_t *p, int entry_index);
 
 void player_toggle_pause(player_t *p);
 

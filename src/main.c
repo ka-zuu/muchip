@@ -11,6 +11,7 @@
 #include "config.h"
 #include "log.h"
 #include "player.h"
+#include "playlist.h"
 
 typedef struct {
     const char *path;      /* 開く対象 (.gbs/.m3u/.zip) */
@@ -138,29 +139,49 @@ static int run_blank_window(void) {
     return 0;
 }
 
+/* playlist_open() が構築したプレイリストを人間可読な形で列挙する (--list)。
+ * 音は一切出さない。 */
+static void print_playlist(const playlist_t *pl, const char *path) {
+    printf("%s: 全%dトラック%s%s\n", path, pl->entry_count,
+           pl->game && pl->game[0] ? " - " : "", pl->game && pl->game[0] ? pl->game : "");
+    for (int i = 0; i < pl->entry_count; i++) {
+        const playlist_entry_t *e = &pl->entries[i];
+        const playlist_source_t *src = &pl->sources[e->source_index];
+        printf("  %3d. %s  [%s]\n", i + 1, e->title, src->display_path);
+    }
+}
+
 /* ファイルを開いて再生するCLIハーネス。
- * P1時点では単体 .gbs 等のみを直接 player に渡す（m3u/zip対応はP3/P4）。
  * GUI(P5)がまだ無いため、--cli の有無に関わらずこのループで再生する。 */
 static int run_player_cli(const mugbs_args_t *args) {
-    if (args->list_only) {
-        LOG_ERR("--list はまだ実装されていません（P3のplaylist.cで対応予定）");
-        return 1;
-    }
-
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
     if (args->default_length_sec >= 0) cfg.default_length_sec = args->default_length_sec;
     if (args->fade_length_ms >= 0) cfg.fade_length_ms = args->fade_length_ms;
     if (args->repeat_mode >= 0) cfg.repeat_mode = (repeat_mode_t)args->repeat_mode;
 
-    player_t player;
-    if (player_init(&player, &cfg) != 0) {
+    playlist_t *pl = NULL;
+    if (playlist_open(args->path, &cfg, &pl) != 0) {
         return 1;
     }
 
-    int track_index = args->track - 1; /* CLI引数は1始まり、gmeは0始まり */
-    if (player_open_and_play(&player, args->path, track_index) != 0) {
+    if (args->list_only) {
+        print_playlist(pl, args->path);
+        playlist_free(pl);
+        return 0;
+    }
+
+    player_t player;
+    if (player_init(&player, &cfg) != 0) {
+        playlist_free(pl);
+        return 1;
+    }
+    player_load_playlist(&player, pl);
+
+    int entry_index = args->track - 1; /* CLI引数は1始まり、内部は0始まり */
+    if (player_play_entry(&player, entry_index) != 0) {
         player_shutdown(&player);
+        playlist_free(pl);
         return 1;
     }
 
@@ -182,6 +203,7 @@ static int run_player_cli(const mugbs_args_t *args) {
     }
 
     player_shutdown(&player);
+    playlist_free(pl);
     return 0;
 }
 
