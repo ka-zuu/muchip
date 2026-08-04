@@ -58,6 +58,7 @@ add_executable(mugbs
     src/player.c
     src/m3u.c
     src/playlist.c
+    src/archive.c
 )
 
 target_include_directories(mugbs PRIVATE src)

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "archive.h"
 #include "log.h"
 #include "m3u.h"
 
@@ -97,13 +98,15 @@ static int read_file(const char *path, char **out_buf, size_t *out_len) {
 
 /* ---- playlist_t 構築 --------------------------------------------------- */
 
-static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path,
+/* fs_path と zip_entry のどちらか一方だけを指定する(排他)。
+ * zip由来のソースは zip_entry (zip内のエントリ名) を渡し、fs_path は NULL にする。 */
+static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path, char *zip_entry,
                           char *m3u_text, size_t m3u_len) {
     pl->sources = realloc(pl->sources, sizeof(*pl->sources) * (size_t)(pl->source_count + 1));
     playlist_source_t *s = &pl->sources[pl->source_count];
     s->display_path = display_path;
     s->fs_path = fs_path;
-    s->zip_entry = NULL;
+    s->zip_entry = zip_entry;
     s->m3u_text = m3u_text;
     s->m3u_len = m3u_len;
     return pl->source_count++;
@@ -111,15 +114,41 @@ static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path,
 
 /* source_index の指すファイルを実際に開き、gme_track_count() 分だけ
  * gme_track_info() を回して entries[] に追記する。曲長等の重い判定は
- * player.c 側(再生開始時)に任せ、ここではタイトルの収集に徹する。 */
+ * player.c 側(再生開始時)に任せ、ここではタイトルの収集に徹する。
+ * zip由来のソース(zip_entry != NULL)は、その都度zipから展開して
+ * gme_open_data() で開く(SPEC 5.3: 一時ファイルをディスクに書かない)。 */
 static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t *cfg) {
     playlist_source_t *src = &pl->sources[source_index];
 
     Music_Emu *emu = NULL;
-    gme_err_t err = gme_open_file(src->fs_path, &emu, cfg->sample_rate);
-    if (err) {
-        LOG_WARN("開けませんでした: %s: %s", src->fs_path, err);
-        return -1;
+    gme_err_t err;
+
+    if (src->zip_entry) {
+        int idx = archive_find(pl->archive, src->zip_entry);
+        if (idx < 0) {
+            LOG_WARN("zip内にファイルが見つかりません: %s", src->zip_entry);
+            return -1;
+        }
+        void *data = NULL;
+        size_t size = 0;
+        if (archive_extract(pl->archive, idx, &data, &size) != 0) {
+            return -1;
+        }
+        err = gme_open_data(data, (long)size, &emu, cfg->sample_rate);
+        /* gme_open_data はデータをコピーするので、ここで解放してよい
+         * (SPEC 5.1落とし穴3として書かれている「コピーしない場合がある」は
+         * 実際のlibgme(0.6.6)には当てはまらないことをヘッダで確認済み)。 */
+        free(data);
+        if (err) {
+            LOG_WARN("開けませんでした(zip内 %s): %s", src->zip_entry, err);
+            return -1;
+        }
+    } else {
+        err = gme_open_file(src->fs_path, &emu, cfg->sample_rate);
+        if (err) {
+            LOG_WARN("開けませんでした: %s: %s", src->fs_path, err);
+            return -1;
+        }
     }
 
     if (src->m3u_text) {
@@ -188,7 +217,44 @@ static int build_from_m3u_text(playlist_t *pl, const char *text, size_t len,
         }
 
         char *m3u_copy = dup_len(seg->text, seg->text_len);
-        int source_index = pl_add_source(pl, dup_str(resolved), resolved, m3u_copy, seg->text_len);
+        int source_index = pl_add_source(pl, dup_str(resolved), resolved, NULL, m3u_copy, seg->text_len);
+        if (pl_scan_source(pl, source_index, cfg) == 0) {
+            ok_any = 1;
+        }
+    }
+
+    m3u_free_segments(segs, seg_count);
+    return ok_any ? 0 : -1;
+}
+
+/* build_from_m3u_text() のzip版。参照ファイルの解決をファイルシステムの
+ * パス結合ではなく archive_find() (パス区切り・大小文字の揺れを吸収) で行う。
+ * (SPEC 5.3) */
+static int build_from_m3u_text_zip(playlist_t *pl, const char *text, size_t len,
+                                    const char *zip_path, const mugbs_config_t *cfg) {
+    m3u_segment_t *segs = NULL;
+    int seg_count = 0;
+    if (m3u_split_segments(text, len, &segs, &seg_count) != 0) {
+        LOG_ERR("m3uの解析に失敗しました(有効なエントリがありません)");
+        return -1;
+    }
+
+    int ok_any = 0;
+    for (int i = 0; i < seg_count; i++) {
+        m3u_segment_t *seg = &segs[i];
+
+        if (archive_find(pl->archive, seg->filename) < 0) {
+            /* T-13相当: zip内にも参照先が見つからないエントリはスキップする。 */
+            LOG_WARN("m3uが参照するファイルがzip内に見つかりません。スキップします: %s",
+                      seg->filename);
+            continue;
+        }
+
+        char display[600];
+        snprintf(display, sizeof(display), "%s:%s", zip_path, seg->filename);
+        char *m3u_copy = dup_len(seg->text, seg->text_len);
+        int source_index = pl_add_source(pl, dup_str(display), NULL, dup_str(seg->filename),
+                                          m3u_copy, seg->text_len);
         if (pl_scan_source(pl, source_index, cfg) == 0) {
             ok_any = 1;
         }
@@ -250,10 +316,75 @@ static int playlist_open_gbs(playlist_t *pl, const char *path, const mugbs_confi
     if (rc == -2) {
         /* m3u無し: 単体ファイルとして開き、gme_track_count() で全トラックを
          * 自動命名して列挙する (SPEC 5.2-3)。 */
-        int source_index = pl_add_source(pl, dup_str(path), dup_str(path), NULL, 0);
+        int source_index = pl_add_source(pl, dup_str(path), dup_str(path), NULL, NULL, 0);
         rc = pl_scan_source(pl, source_index, cfg);
     }
 
+    return rc;
+}
+
+/* .zip を開く (SPEC 5.3)。
+ *   - .m3u が(1つ以上)含まれる場合: 最初の1つに従い、build_from_m3u_text_zip()
+ *     でセグメントごとにzip内のファイルを解決する。複数ある場合は警告のうえ
+ *     最初の1つのみ使う(SPECに複数時の挙動指定は無いため、実装方針として明記)。
+ *   - m3u が無い場合: zip内の音楽ファイルすべてを列挙し、各々の全トラックを
+ *     自動命名で列挙する。SPEC本文は「1つだけなら即座に開く／複数ならユーザーに
+ *     選択させる」だが、対話選択はUI(P5)の仕事であり、playlist_open()の時点では
+ *     常にこの正規化されたモデルへ落とし込む方が上位(player.c)が単純になるため、
+ *     1つでも複数でも同じコードパスで「常に再生可能なフラットなプレイリスト」を
+ *     構築する(1つの場合はSPECの動作と自然に一致する)。 */
+static int playlist_open_zip(playlist_t *pl, const char *path, const mugbs_config_t *cfg) {
+    if (!file_exists(path)) {
+        LOG_ERR("ファイルが見つかりません: %s", path);
+        return -1;
+    }
+
+    archive_t *ar = NULL;
+    if (archive_open(path, &ar) != 0) {
+        return -1;
+    }
+    pl->archive = ar;
+
+    archive_entry_t *aentries = NULL;
+    int acount = 0;
+    archive_list(ar, &aentries, &acount);
+
+    int m3u_idx = -1;
+    for (int i = 0; i < acount; i++) {
+        if (!aentries[i].is_m3u) continue;
+        if (m3u_idx >= 0) {
+            LOG_WARN("zip内に複数のm3uがあります。最初の1つ(%s)のみ使用します", aentries[m3u_idx].name);
+            break;
+        }
+        m3u_idx = i;
+    }
+
+    int rc;
+    if (m3u_idx >= 0) {
+        void *text = NULL;
+        size_t len = 0;
+        if (archive_extract(ar, aentries[m3u_idx].index, &text, &len) != 0) {
+            archive_free_entries(aentries, acount);
+            return -1;
+        }
+        rc = build_from_m3u_text_zip(pl, (const char *)text, len, path, cfg);
+        free(text);
+    } else {
+        rc = -1;
+        for (int i = 0; i < acount; i++) {
+            if (!aentries[i].is_music) continue;
+            char display[600];
+            snprintf(display, sizeof(display), "%s:%s", path, aentries[i].name);
+            int source_index = pl_add_source(pl, dup_str(display), NULL,
+                                              dup_str(aentries[i].name), NULL, 0);
+            if (pl_scan_source(pl, source_index, cfg) == 0) rc = 0;
+        }
+        if (rc != 0) {
+            LOG_ERR("zip内に再生可能な音楽ファイルがありません: %s", path);
+        }
+    }
+
+    archive_free_entries(aentries, acount);
     return rc;
 }
 
@@ -262,7 +393,9 @@ int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **o
     pl->game = dup_str("");
 
     int rc;
-    if (ends_with_ci(path, ".m3u")) {
+    if (ends_with_ci(path, ".zip")) {
+        rc = playlist_open_zip(pl, path, config);
+    } else if (ends_with_ci(path, ".m3u")) {
         rc = playlist_open_m3u(pl, path, config);
     } else {
         rc = playlist_open_gbs(pl, path, config);
@@ -294,5 +427,6 @@ void playlist_free(playlist_t *pl) {
     }
     free(pl->entries);
     free(pl->game);
+    archive_close(pl->archive); /* NULLなら何もしない */
     free(pl);
 }

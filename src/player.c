@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "archive.h"
 #include "log.h"
 
 /* 曲長判定 (SPEC 5.1 との乖離#1への対応):
@@ -102,14 +103,38 @@ int player_play_entry(player_t *p, int entry_index) {
 
     if (e->source_index != p->current_source) {
         /* ソースをまたぐ: 現在のemuを閉じて開き直す。
-         * これがm3uの複数ファイル参照(SPEC 5.2-2)に対応する箇所。 */
+         * これがm3uの複数ファイル参照(SPEC 5.2-2)や、zip内の複数ファイル
+         * (SPEC 5.3)に対応する箇所。 */
         close_current_emu(p);
 
         Music_Emu *emu = NULL;
-        gme_err_t err = gme_open_file(src->fs_path, &emu, p->config.sample_rate);
-        if (err) {
-            LOG_ERR("gme_open_file(%s): %s", src->fs_path, err);
-            return -1;
+        gme_err_t err;
+
+        if (src->zip_entry) {
+            /* zip由来のソース: その都度展開してメモリから開く。
+             * 一時ファイルはディスクに書かない (SPEC 5.3)。 */
+            int idx = archive_find(p->playlist->archive, src->zip_entry);
+            if (idx < 0) {
+                LOG_ERR("zip内にファイルが見つかりません: %s", src->zip_entry);
+                return -1;
+            }
+            void *data = NULL;
+            size_t size = 0;
+            if (archive_extract(p->playlist->archive, idx, &data, &size) != 0) {
+                return -1;
+            }
+            err = gme_open_data(data, (long)size, &emu, p->config.sample_rate);
+            free(data); /* gme_open_data はデータをコピーするのでここで解放してよい */
+            if (err) {
+                LOG_ERR("gme_open_data(zip内 %s): %s", src->zip_entry, err);
+                return -1;
+            }
+        } else {
+            err = gme_open_file(src->fs_path, &emu, p->config.sample_rate);
+            if (err) {
+                LOG_ERR("gme_open_file(%s): %s", src->fs_path, err);
+                return -1;
+            }
         }
 
         if (src->m3u_text) {

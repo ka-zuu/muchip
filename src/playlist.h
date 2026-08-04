@@ -32,6 +32,10 @@ typedef struct {
     playlist_entry_t *entries;
     int entry_count;
     char *game; /* 表示用ゲーム名。取得できた最初のソースの情報を使う。空文字列もあり得る */
+
+    struct archive *archive; /* .zip から開いた場合のみ非NULL。セッション中保持し、
+                                 sources[].zip_entry の実体展開に使う (P4)。
+                                 所有権はplaylist_tにあり、playlist_free()で閉じる */
 } playlist_t;
 
 /* path (.gbs単体 または .m3u) を開き、統一データモデルを構築する。
