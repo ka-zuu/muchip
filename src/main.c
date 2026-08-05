@@ -225,11 +225,28 @@ int main(int argc, char **argv) {
     char config_path[MUGBS_PATH_MAX];
     build_config(&args, &cfg, config_path, sizeof(config_path));
 
+    /* --duration/--fade-ms/--repeat のいずれかが指定されている場合、
+     * 一回きりのテスト用オーバーライドを config.ini へ永続化しては
+     * ならないため、終了時のオートセーブ(C4で実装)を無効化する。 */
+    int cli_override = (args.default_length_sec >= 0 || args.fade_length_ms >= 0 ||
+                         args.repeat_mode >= 0);
+    if (cli_override) {
+        LOG_INFO("CLI引数で設定を上書きしているため、終了時の自動保存を無効化します");
+    }
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         LOG_ERR("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
-    int rc = app_run(&cfg, args.path, args.start_dir, args.window_w, args.window_h, args.ui_script);
+    app_options_t opt = {
+        .initial_path = args.path,
+        .start_dir = args.start_dir,
+        .window_w = args.window_w,
+        .window_h = args.window_h,
+        .ui_script_path = args.ui_script,
+        .config_path = cli_override ? NULL : config_path,
+    };
+    int rc = app_run(&cfg, &opt);
     SDL_Quit();
     return rc;
 }

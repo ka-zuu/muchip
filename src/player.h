@@ -32,7 +32,15 @@ typedef struct {
                                audio コールバックと共有するため、start_track/seek/
                                delete 等で触るときは必ず audio_lock/unlock で保護する */
     player_state_t state;
-    mugbs_config_t config;
+
+    /* 参照のみ。所有権は呼び出し側(app_t、あるいはCLIハーネスのmain())にあり、
+     * player_shutdown() まで生存させること。P5までは値コピーだったが、
+     * 複数のコピーが独立に書き換えられて食い違う問題(P6で発覚)を避けるため
+     * ポインタ化した。audioコールバックスレッドはこれを一切参照しないため
+     * (audio.c が触るのは a->emu と a->volume のみ)、ポインタ化しても
+     * 新たなスレッド間共有は生じない。値を変えたら player_apply_config() を
+     * 呼ぶこと。 */
+    const mugbs_config_t *config;
 
     const playlist_t *playlist; /* 参照のみ。所有権は呼び出し側 */
     int current_source;          /* 現在開いている sources[] の添字。-1=未オープン */
@@ -90,12 +98,17 @@ int player_tell_ms(player_t *p);
  * 何も再生していなければ0。 (P5: シークバー・シーク上限表示用) */
 int player_current_duration_ms(const player_t *p);
 
-/* 音量を設定する (0-100)。範囲外は丸める。 (SPEC 6.3 D-Pad上下) */
-void player_set_volume(player_t *p, int volume_0_100);
-
-/* リピートモードを変更する。次回の player_next_track()/player_prev_track()
- * から反映される。 (SPEC 6.3 Player画面 Y ボタン) */
-void player_set_repeat_mode(player_t *p, repeat_mode_t mode);
+/* p->config が指す値の変更を、いま反映できる範囲で反映する。
+ * volume は即時、stereo_depth は現在開いている emu へ即時(audio_lock で
+ * 保護。Effects_Buffer::config() は再確保を行わないため再生中に呼んでも
+ * 安全 -- vendor/game-music-emu/gme/Effects_Buffer.cpp 参照)。
+ * repeat_mode は次のトラック送りから、default_length_sec/fade_length_ms は
+ * 次に start_track_at() を通ったとき(=次トラック)から自然に反映される
+ * (config はポインタなので player 側で改めて何かをコピーする必要がない)。
+ * sample_rate はオーディオデバイスを開き直さないと反映されない
+ * (P6では非対応。config.ini編集+再起動)。呼び出し側(Settings画面)で
+ * 値を変更するたびに呼ぶこと。 */
+void player_apply_config(player_t *p);
 
 /* 開いているemuがあれば閉じてSTOPPEDにする。ブラウザへ戻る際に使う。
  * playlist自体は保持したまま(参照ポインタはクリアしない)にはしない -

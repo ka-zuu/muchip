@@ -86,13 +86,20 @@ int browser_open_dir(browser_t *b, const char *path, int show_all) {
     }
     closedir(dir);
 
-    qsort(items, (size_t)count, sizeof(*items), item_cmp);
+    /* count==0 なら items は NULL のまま(realloc が一度も呼ばれない)。
+     * qsort() は base が非NULLであることを要求するため(nmemb==0でも)、
+     * 空ディレクトリでUBSanが未定義動作を報告する。呼ばずに済ませる。 */
+    if (count > 0) qsort(items, (size_t)count, sizeof(*items), item_cmp);
 
     /* ここまで成功して初めて b を更新する。失敗時は呼び出し側が直前の
-     * ディレクトリに留まれるようにする (browser.h の契約)。 */
+     * ディレクトリに留まれるようにする (browser.h の契約)。
+     * path が b->cwd 自身を指している場合がある(show_all_files切り替え時の
+     * 自己呼び出し等)。先に free(b->cwd) すると path がダングリングポインタに
+     * なるため、dup してから free する順序を必ず守ること。 */
+    char *new_cwd = dup_str(path);
     free_items(b->items, b->count);
     free(b->cwd);
-    b->cwd = dup_str(path);
+    b->cwd = new_cwd;
     b->items = items;
     b->count = count;
     b->selected = 0;

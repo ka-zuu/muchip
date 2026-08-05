@@ -28,8 +28,10 @@ typedef struct {
     browser_t browser;
     app_screen_t screen;
 
-    mugbs_config_t cfg;
-    int show_all_files;
+    mugbs_config_t *cfg; /* 参照のみ。所有権は呼び出し側(main())。
+                            プログラム全体で権威あるインスタンスはこれ1つだけ
+                            (player_t は const mugbs_config_t* で同じものを見る)。
+                            show_all_files はここに統合済み(cfg->show_all_files)。 */
 
     int tracklist_sel;
     int tracklist_scroll;
@@ -76,12 +78,27 @@ static int ui_script_load(ui_script_t *script, const char *path) {
     while (fgets(line, sizeof(line), f)) {
         char *p = line;
         while (*p == ' ' || *p == '\t') p++;
+
+        /* 行頭が '#' なら行全体がコメント。行の途中の "空白 + #" も
+         * 行末コメントとして切り落とす(tests/ui_smoke.script は
+         * "A       # 説明" のようにアクション名の後ろへ注釈を書く形式を
+         * 使っているが、以前はここで切り落としていなかったため
+         * parse_action_name() が行全体を渡されて常に不一致になり、
+         * QUIT 以外のアクションがP5から一度も実行されていなかった)。 */
+        if (p[0] == '#') continue;
+        for (char *c = p; *c; c++) {
+            if (*c == '#' && c > p && (c[-1] == ' ' || c[-1] == '\t')) {
+                *c = 0;
+                break;
+            }
+        }
+
         size_t len = strlen(p);
         while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r' ||
                             p[len - 1] == ' ' || p[len - 1] == '\t')) {
             p[--len] = 0;
         }
-        if (len == 0 || p[0] == '#') continue;
+        if (len == 0) continue;
 
         input_action_t a = parse_action_name(p);
         if (a == INPUT_NONE) {
@@ -147,7 +164,7 @@ static void set_status(app_t *app, const char *fmt, ...) {
  * gme_open_data の所有権/ロック順序に注意)差し替える。 */
 static void app_open_path(app_t *app, const char *path) {
     playlist_t *new_pl = NULL;
-    if (playlist_open(path, &app->cfg, &new_pl) != 0) {
+    if (playlist_open(path, app->cfg, &new_pl) != 0) {
         set_status(app, "Failed to open: %s", path);
         return;
     }
@@ -184,7 +201,7 @@ static void app_prev_source(app_t *app) {
         int j = i - 1;
         while (j > 0 && app->pl->entries[j - 1].source_index == prev_source) j--;
         player_play_entry(&app->player, j);
-    } else if (app->cfg.repeat_mode == REPEAT_ALL) {
+    } else if (app->cfg->repeat_mode == REPEAT_ALL) {
         int last = app->pl->entry_count - 1;
         int src = app->pl->entries[last].source_index;
         int j = last;
@@ -202,7 +219,7 @@ static void app_next_source(app_t *app) {
 
     if (i < app->pl->entry_count) {
         player_play_entry(&app->player, i);
-    } else if (app->cfg.repeat_mode == REPEAT_ALL) {
+    } else if (app->cfg->repeat_mode == REPEAT_ALL) {
         player_play_entry(&app->player, 0);
     }
 }
@@ -216,7 +233,7 @@ static void handle_browser_input(app_t *app, input_action_t a) {
         case INPUT_LEFT:  browser_page(&app->browser, -list_visible_rows(app)); break;
         case INPUT_RIGHT: browser_page(&app->browser, list_visible_rows(app)); break;
         case INPUT_A: {
-            if (!browser_enter(&app->browser, app->show_all_files)) {
+            if (!browser_enter(&app->browser, app->cfg->show_all_files)) {
                 char path[4096];
                 if (browser_selected_path(&app->browser, path, sizeof(path)) == 0) {
                     app_open_path(app, path);
@@ -225,7 +242,7 @@ static void handle_browser_input(app_t *app, input_action_t a) {
             break;
         }
         case INPUT_B:
-            browser_up(&app->browser, app->show_all_files);
+            browser_up(&app->browser, app->cfg->show_all_files);
             break;
         default:
             break;
@@ -235,14 +252,14 @@ static void handle_browser_input(app_t *app, input_action_t a) {
 static void handle_player_input(app_t *app, input_action_t a) {
     switch (a) {
         case INPUT_UP:
-            app->cfg.volume += 5;
-            if (app->cfg.volume > 100) app->cfg.volume = 100;
-            player_set_volume(&app->player, app->cfg.volume);
+            app->cfg->volume += 5;
+            if (app->cfg->volume > 100) app->cfg->volume = 100;
+            player_apply_config(&app->player);
             break;
         case INPUT_DOWN:
-            app->cfg.volume -= 5;
-            if (app->cfg.volume < 0) app->cfg.volume = 0;
-            player_set_volume(&app->player, app->cfg.volume);
+            app->cfg->volume -= 5;
+            if (app->cfg->volume < 0) app->cfg->volume = 0;
+            player_apply_config(&app->player);
             break;
         case INPUT_LEFT: {
             int pos = player_tell_ms(&app->player) - 5000;
@@ -268,10 +285,11 @@ static void handle_player_input(app_t *app, input_action_t a) {
             app->screen = SCREEN_TRACKLIST;
             break;
         case INPUT_Y: {
-            repeat_mode_t next = app->cfg.repeat_mode == REPEAT_NONE ? REPEAT_ONE :
-                                  app->cfg.repeat_mode == REPEAT_ONE ? REPEAT_ALL : REPEAT_NONE;
-            app->cfg.repeat_mode = next;
-            player_set_repeat_mode(&app->player, next);
+            repeat_mode_t next = app->cfg->repeat_mode == REPEAT_NONE ? REPEAT_ONE :
+                                  app->cfg->repeat_mode == REPEAT_ONE ? REPEAT_ALL : REPEAT_NONE;
+            /* config はポインタで player と共有しているため、ここへの代入だけで
+             * 次の player_next_track()/player_prev_track() から反映される。 */
+            app->cfg->repeat_mode = next;
             break;
         }
         case INPUT_L1:
@@ -442,13 +460,13 @@ static void draw_player(app_t *app) {
     ui_draw_progress(ui, bar, ratio, accent, bar_bg);
     y += bar.h + ui->metrics.pad * 2;
 
-    const char *repeat_label = app->cfg.repeat_mode == REPEAT_ONE ? "one" :
-                                app->cfg.repeat_mode == REPEAT_ALL ? "all" : "none";
+    const char *repeat_label = app->cfg->repeat_mode == REPEAT_ONE ? "one" :
+                                app->cfg->repeat_mode == REPEAT_ALL ? "all" : "none";
     const char *state_label = app->player.state == PLAYER_PAUSED ? "PAUSED" :
                                app->player.state == PLAYER_PLAYING ? "PLAYING" : "STOPPED";
     char status_line[128];
     snprintf(status_line, sizeof(status_line), "%s  repeat:%s  vol:%d",
-             state_label, repeat_label, app->cfg.volume);
+             state_label, repeat_label, app->cfg->volume);
     ui_text(ui, x, y, UI_TEXT_SMALL, dim, status_line);
     y += ui->metrics.line_h;
 
@@ -492,40 +510,40 @@ static void draw_tracklist(app_t *app) {
 
 /* ---- メインループ ------------------------------------------------------- */
 
-int app_run(const mugbs_config_t *cfg, const char *initial_path, const char *start_dir,
-            int window_w, int window_h, const char *ui_script_path) {
+int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     app_t app;
     memset(&app, 0, sizeof(app));
-    app.cfg = *cfg;
+    app.cfg = cfg; /* コピーしない。app_t/player_t は常にこの1つを参照する (P6) */
     app.running = 1;
     app.screen = SCREEN_BROWSER;
 
-    int fullscreen = (window_w <= 0 || window_h <= 0);
-    if (ui_init(&app.ui, window_w, window_h, fullscreen) != 0) {
+    int fullscreen = (opt->window_w <= 0 || opt->window_h <= 0);
+    if (ui_init(&app.ui, opt->window_w, opt->window_h, fullscreen) != 0) {
         return 1;
     }
     input_init(&app.input);
 
-    if (player_init(&app.player, &app.cfg) != 0) {
+    if (player_init(&app.player, app.cfg) != 0) {
         input_shutdown(&app.input);
         ui_shutdown(&app.ui);
         return 1;
     }
 
-    const char *dir = (start_dir && start_dir[0]) ? start_dir : ".";
-    if (browser_open_dir(&app.browser, dir, app.show_all_files) != 0) {
+    /* last_path(F-13) を使った開始位置の復元は C4 (Settings画面) で追加する。 */
+    const char *dir = (opt->start_dir && opt->start_dir[0]) ? opt->start_dir : ".";
+    if (browser_open_dir(&app.browser, dir, app.cfg->show_all_files) != 0) {
         LOG_WARN("開始ディレクトリを開けません: %s。カレントディレクトリで再試行します", dir);
-        browser_open_dir(&app.browser, ".", app.show_all_files);
+        browser_open_dir(&app.browser, ".", app.cfg->show_all_files);
     }
 
-    if (initial_path) {
-        app_open_path(&app, initial_path);
+    if (opt->initial_path) {
+        app_open_path(&app, opt->initial_path);
     }
 
     int use_script = 0;
     ui_script_t script;
-    if (ui_script_path) {
-        use_script = (ui_script_load(&script, ui_script_path) == 0);
+    if (opt->ui_script_path) {
+        use_script = (ui_script_load(&script, opt->ui_script_path) == 0);
         if (!use_script) {
             player_shutdown(&app.player);
             browser_free(&app.browser);

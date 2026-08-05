@@ -108,6 +108,15 @@ int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *c
     return cfg->default_length_sec * 1000;
 }
 
+void playlist_apply_default_length(playlist_t *pl, const mugbs_config_t *cfg) {
+    for (int i = 0; i < pl->entry_count; i++) {
+        playlist_entry_t *e = &pl->entries[i];
+        if (!e->length_known) {
+            e->duration_ms = cfg->default_length_sec * 1000;
+        }
+    }
+}
+
 /* ---- playlist_t 構築 --------------------------------------------------- */
 
 /* fs_path と zip_entry のどちらか一方だけを指定する(排他)。

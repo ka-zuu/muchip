@@ -40,14 +40,14 @@ static int start_track_at(player_t *p, int track_index) {
     int fade_at, fade_len;
     err = gme_track_info(p->emu, &info, track_index);
     if (!err) {
-        fade_at = playlist_effective_length_ms(info, &p->config, NULL);
-        fade_len = info->fade_length > 0 ? info->fade_length : p->config.fade_length_ms;
+        fade_at = playlist_effective_length_ms(info, p->config, NULL);
+        fade_len = info->fade_length > 0 ? info->fade_length : p->config->fade_length_ms;
         gme_free_info(info); /* gme_track_info はヒープを返すので必ず解放する */
     } else {
         LOG_WARN("gme_track_info: %s。既定長 %d 秒でフェード開始します",
-                  err, p->config.default_length_sec);
-        fade_at = p->config.default_length_sec * 1000;
-        fade_len = p->config.fade_length_ms;
+                  err, p->config->default_length_sec);
+        fade_at = p->config->default_length_sec * 1000;
+        fade_len = p->config->fade_length_ms;
     }
 
     audio_lock(&p->audio);
@@ -70,7 +70,7 @@ static int start_track_at(player_t *p, int track_index) {
 
 int player_init(player_t *p, const mugbs_config_t *config) {
     memset(p, 0, sizeof(*p));
-    p->config = *config;
+    p->config = config;
     p->state = PLAYER_STOPPED;
     p->current_source = -1;
     p->current_entry = -1;
@@ -127,14 +127,14 @@ int player_play_entry(player_t *p, int entry_index) {
             if (archive_extract(p->playlist->archive, idx, &data, &size) != 0) {
                 return -1;
             }
-            err = gme_open_data(data, (long)size, &emu, p->config.sample_rate);
+            err = gme_open_data(data, (long)size, &emu, p->config->sample_rate);
             free(data); /* gme_open_data はデータをコピーするのでここで解放してよい */
             if (err) {
                 LOG_ERR("gme_open_data(zip内 %s): %s", src->zip_entry, err);
                 return -1;
             }
         } else {
-            err = gme_open_file(src->fs_path, &emu, p->config.sample_rate);
+            err = gme_open_file(src->fs_path, &emu, p->config->sample_rate);
             if (err) {
                 LOG_ERR("gme_open_file(%s): %s", src->fs_path, err);
                 return -1;
@@ -149,7 +149,7 @@ int player_play_entry(player_t *p, int entry_index) {
         }
 
         gme_enable_accuracy(emu, 1);
-        gme_set_stereo_depth(emu, p->config.stereo_depth);
+        gme_set_stereo_depth(emu, p->config->stereo_depth);
 
         p->emu = emu;
         p->current_source = e->source_index;
@@ -184,11 +184,11 @@ int player_next_track(player_t *p) {
 
     int next = p->current_entry + 1;
 
-    if (p->config.repeat_mode == REPEAT_ONE) {
+    if (p->config->repeat_mode == REPEAT_ONE) {
         /* SPEC 5.4: REPEAT_ONE は常に同一トラックを再開する。 */
         next = p->current_entry;
     } else if (next >= p->playlist->entry_count) {
-        if (p->config.repeat_mode == REPEAT_ALL) {
+        if (p->config->repeat_mode == REPEAT_ALL) {
             next = 0;
         } else {
             LOG_INFO("最終トラックに到達しました (REPEAT_NONE) -> 停止します");
@@ -206,7 +206,7 @@ int player_prev_track(player_t *p) {
 
     int prev = p->current_entry - 1;
     if (prev < 0) {
-        prev = (p->config.repeat_mode == REPEAT_ALL) ? (p->playlist->entry_count - 1) : 0;
+        prev = (p->config->repeat_mode == REPEAT_ALL) ? (p->playlist->entry_count - 1) : 0;
     }
 
     return player_play_entry(p, prev);
@@ -244,18 +244,26 @@ int player_current_duration_ms(const player_t *p) {
     return p->playlist->entries[p->current_entry].duration_ms + p->fade_len_ms;
 }
 
-void player_set_volume(player_t *p, int volume_0_100) {
-    if (volume_0_100 < 0) volume_0_100 = 0;
-    if (volume_0_100 > 100) volume_0_100 = 100;
-    p->config.volume = volume_0_100;
-    audio_set_volume(&p->audio, volume_0_100);
+void player_apply_config(player_t *p) {
+    /* volume: atomic なのでロック不要。 */
+    audio_set_volume(&p->audio, p->config->volume);
+
+    /* stereo_depth: 現在開いているemuへ即時反映する。Effects_Buffer::config()は
+     * 再確保を行わないため、再生中に呼んでも安全(vendor/game-music-emu/gme/
+     * Effects_Buffer.cpp 参照)。emuが無い(未再生)場合は何もしない -- 次に
+     * player_play_entry() が開くときに p->config->stereo_depth を読む。 */
+    if (p->emu) {
+        audio_lock(&p->audio);
+        gme_set_stereo_depth(p->emu, p->config->stereo_depth);
+        audio_unlock(&p->audio);
+    }
+
+    /* repeat_mode / default_length_sec / fade_length_ms は config がポインタに
+     * 変わったため、player側で何もしなくても次にそれぞれを読む箇所
+     * (player_next_track / start_track_at)が自然に新しい値を見る。 */
 }
 
 void player_stop(player_t *p) {
     close_current_emu(p);
     p->current_entry = -1;
-}
-
-void player_set_repeat_mode(player_t *p, repeat_mode_t mode) {
-    p->config.repeat_mode = mode;
 }

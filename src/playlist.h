@@ -83,4 +83,11 @@ void playlist_free(playlist_t *pl);
 int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *cfg,
                                   int *out_known);
 
+/* cfg->default_length_sec が変わったとき、フォールバックで曲長を決めていた
+ * エントリ(length_known==0)だけ duration_ms を付け替える。実測値
+ * (length_known!=0)には触らない。libgmeを呼び直さないので安価で、
+ * ファイルを開き直す必要がない (P6 Settings画面用)。既に再生中のトラックの
+ * 既に armed 済みのフェードはこれだけでは変わらない(次トラックから反映)。 */
+void playlist_apply_default_length(playlist_t *pl, const mugbs_config_t *cfg);
+
 #endif /* MUGBS_PLAYLIST_H */

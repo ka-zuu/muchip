@@ -145,6 +145,28 @@ static int test_root_boundary(void) {
     return 0;
 }
 
+/* P6: Settings画面が show_all_files を切り替えたとき、呼び出し側は
+ * browser_open_dir(&browser, browser.cwd, new_show_all) のように
+ * b->cwd 自身を path として渡して同じディレクトリを再走査する
+ * (browser_select_by_name 等を挟まない最短経路)。実装は一時
+ * free(b->cwd) してから dup_str(path) していたため、path==b->cwd の
+ * ときに解放済みメモリを読むuse-after-freeがあった(P6で発見・修正)。
+ * ここでは実際に b->cwd を path として渡し、ASan下で回帰しないことを見る。 */
+static int test_self_refresh_same_cwd_pointer(void) {
+    browser_t b;
+    memset(&b, 0, sizeof(b));
+    CHECK(browser_open_dir(&b, g_tmpdir, 0) == 0);
+    CHECK(b.count == 4);
+
+    /* path として b.cwd 自身のポインタを渡す。 */
+    CHECK(browser_open_dir(&b, b.cwd, 1) == 0);
+    CHECK(b.count == 5); /* show_all=1 で readme.txt が増える */
+    CHECK_STREQ(b.cwd, g_tmpdir);
+
+    browser_free(&b);
+    return 0;
+}
+
 int main(void) {
     setup_tmpdir();
 
@@ -152,6 +174,7 @@ int main(void) {
     if (test_move_and_page()) return 1;
     if (test_enter_and_up()) return 1;
     if (test_root_boundary()) return 1;
+    if (test_self_refresh_same_cwd_pointer()) return 1;
 
     printf("test_browser: すべて成功\n");
     return 0;
