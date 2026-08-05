@@ -1,20 +1,22 @@
 /* main.c - エントリポイント。
  *
- * P0 時点では引数パースと SDL の起動確認のみを行う。
- * 実際の再生ロジック（audio.c / player.c 経由）は P1 以降で追加する。
+ * 引数を解釈し、--list / --cli (CLIハーネス、CI・自動検証用) と、
+ * それ以外(GUI本体。app.c の Browser/Player/TrackList)に分岐する。
+ * P0 時点にあった run_blank_window() は app_run() に置き換わったため削除した。
  */
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "app.h"
 #include "config.h"
 #include "log.h"
 #include "player.h"
 #include "playlist.h"
 
 typedef struct {
-    const char *path;      /* 開く対象 (.gbs/.m3u/.zip) */
+    const char *path;      /* 開く対象 (.gbs/.m3u/.zip)。GUIモードでは省略可(Browserから開始) */
     int list_only;         /* --list: プレイリストを列挙して終了 */
     int cli_mode;          /* --cli: SDL ウィンドウを開かずコンソールのみで動作 */
     int track;             /* --track N: 開始トラック (0始まり内部表現へは後段で変換) */
@@ -25,6 +27,11 @@ typedef struct {
     int default_length_sec; /* --duration SEC */
     int fade_length_ms;      /* --fade-ms MS */
     int repeat_mode;         /* --repeat none|one|all (repeat_mode_t にキャスト) */
+
+    /* P5: GUI(app.c)向けのオプション。 */
+    const char *start_dir;   /* --start-dir DIR: Browserの開始ディレクトリ */
+    int window_w, window_h;   /* --window WxH: ホストでのレイアウト確認用。0以下=実機と同じく検出解像度でフルスクリーン */
+    const char *ui_script;     /* --ui-script FILE: 非公開。ヘッドレスUIスモークテスト用 */
 } mugbs_args_t;
 
 static void print_usage(const char *prog) {
@@ -36,6 +43,8 @@ static void print_usage(const char *prog) {
         "  --fade-ms MS        フェード長を上書きする (config.fade_length_ms)\n"
         "  --repeat MODE      none|one|all でリピートモードを上書きする\n"
         "  --cli              SDL ウィンドウを開かずコンソールのみで動作する\n"
+        "  --start-dir DIR    GUI起動時、Browserの開始ディレクトリを指定する\n"
+        "  --window WxH       GUIをこのウィンドウサイズで起動する(未指定なら検出した解像度でフルスクリーン)\n"
         "  -h, --help         このヘルプを表示する\n",
         prog);
 }
@@ -53,6 +62,21 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
             out->list_only = 1;
         } else if (strcmp(a, "--cli") == 0) {
             out->cli_mode = 1;
+        } else if (strcmp(a, "--start-dir") == 0) {
+            if (i + 1 >= argc) { LOG_ERR("--start-dir にはディレクトリ引数が必要です"); return -1; }
+            out->start_dir = argv[++i];
+        } else if (strcmp(a, "--window") == 0) {
+            if (i + 1 >= argc) { LOG_ERR("--window には WxH 形式の引数が必要です"); return -1; }
+            const char *wh = argv[++i];
+            if (sscanf(wh, "%dx%d", &out->window_w, &out->window_h) != 2 ||
+                out->window_w <= 0 || out->window_h <= 0) {
+                LOG_ERR("--window の値が不正です: %s (例: 720x720)", wh);
+                return -1;
+            }
+        } else if (strcmp(a, "--ui-script") == 0) {
+            /* 非公開オプション: ヘッドレスUIスモークテスト用(tests/参照)。usageには出さない。 */
+            if (i + 1 >= argc) { LOG_ERR("--ui-script にはファイル引数が必要です"); return -1; }
+            out->ui_script = argv[++i];
         } else if (strcmp(a, "--track") == 0) {
             if (i + 1 >= argc) { LOG_ERR("--track には数値引数が必要です"); return -1; }
             out->track = atoi(argv[++i]);
@@ -82,63 +106,6 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
     return 0;
 }
 
-/* 空ウィンドウを表示し、閉じるイベントか Esc/Q で終了する。
- * P0 の完了条件（空ウィンドウが出る）を満たすための最小実装。
- * P5 で ui.c による本格描画に置き換える。 */
-static int run_blank_window(void) {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        LOG_ERR("SDL_Init failed: %s", SDL_GetError());
-        return 1;
-    }
-
-    SDL_DisplayMode mode;
-    if (SDL_GetCurrentDisplayMode(0, &mode) != 0) {
-        LOG_WARN("SDL_GetCurrentDisplayMode failed: %s (640x480にフォールバック)", SDL_GetError());
-        mode.w = 640;
-        mode.h = 480;
-    }
-    LOG_INFO("検出した解像度: %dx%d", mode.w, mode.h);
-
-    SDL_Window *win = SDL_CreateWindow(
-        "muGBS",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        mode.w, mode.h,
-        SDL_WINDOW_SHOWN);
-    if (!win) {
-        LOG_ERR("SDL_CreateWindow failed: %s", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
-    if (!ren) {
-        ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
-    }
-
-    int running = 1;
-    while (running) {
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            if (ev.type == SDL_QUIT) running = 0;
-            if (ev.type == SDL_KEYDOWN &&
-                (ev.key.keysym.sym == SDLK_ESCAPE || ev.key.keysym.sym == SDLK_q)) {
-                running = 0;
-            }
-        }
-        if (ren) {
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            SDL_RenderClear(ren);
-            SDL_RenderPresent(ren);
-        }
-        SDL_Delay(16);
-    }
-
-    if (ren) SDL_DestroyRenderer(ren);
-    SDL_DestroyWindow(win);
-    SDL_Quit();
-    return 0;
-}
-
 /* playlist_open() が構築したプレイリストを人間可読な形で列挙する (--list)。
  * 音は一切出さない。 */
 static void print_playlist(const playlist_t *pl, const char *path) {
@@ -151,8 +118,8 @@ static void print_playlist(const playlist_t *pl, const char *path) {
     }
 }
 
-/* ファイルを開いて再生するCLIハーネス。
- * GUI(P5)がまだ無いため、--cli の有無に関わらずこのループで再生する。 */
+/* ファイルを開いて再生するCLIハーネス(--list/--cli)。CI・自動検証や
+ * SDLウィンドウ無しでの動作確認用に、GUI(app.c)とは独立に維持している。 */
 static int run_player_cli(const mugbs_args_t *args) {
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
@@ -214,21 +181,35 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    if (!args.path) {
-        /* ファイル指定なし: P0 の疎通確認用に空ウィンドウを出す。
-         * --cli 指定時はウィンドウなしで即終了する。 */
-        if (args.cli_mode) {
-            LOG_INFO("muGBS --cli: ファイル未指定のため何もせず終了します");
-            return 0;
+    if (args.list_only || args.cli_mode) {
+        /* CLIハーネス(CI・自動検証用)。P1〜P4から変わらず、必ずファイル指定が要る。 */
+        if (!args.path) {
+            LOG_ERR("--list/--cli にはファイルを指定してください");
+            print_usage(argv[0]);
+            return 2;
         }
-        return run_blank_window();
+        if (SDL_Init(SDL_INIT_AUDIO) != 0) {
+            LOG_ERR("SDL_Init(AUDIO) failed: %s", SDL_GetError());
+            return 1;
+        }
+        int rc = run_player_cli(&args);
+        SDL_Quit();
+        return rc;
     }
 
-    if (SDL_Init(SDL_INIT_AUDIO) != 0) {
-        LOG_ERR("SDL_Init(AUDIO) failed: %s", SDL_GetError());
+    /* GUI本体 (P5): Browser/Player/TrackList。ファイル指定が無ければ
+     * Browserから始める(app_run()内部でplaylist_openの成否を処理する)。 */
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    if (args.default_length_sec >= 0) cfg.default_length_sec = args.default_length_sec;
+    if (args.fade_length_ms >= 0) cfg.fade_length_ms = args.fade_length_ms;
+    if (args.repeat_mode >= 0) cfg.repeat_mode = (repeat_mode_t)args.repeat_mode;
+
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
+        LOG_ERR("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
-    int rc = run_player_cli(&args);
+    int rc = app_run(&cfg, args.path, args.start_dir, args.window_w, args.window_h, args.ui_script);
     SDL_Quit();
     return rc;
 }

@@ -6,16 +6,11 @@
 #include "archive.h"
 #include "log.h"
 
-/* 曲長判定 (SPEC 5.1 との乖離#1への対応):
- * gme_info_t.play_length は曲長不明時に -1 ではなく 150000(既定150秒)を
- * 返してしまうため、これだけでは「本当に不明か」を判定できない。
- * 判定には length（総曲長）と intro_length/loop_length（ループ構造）を使う。
- * どちらも無ければ真に不明 → config の default_length_sec を使う (F-08)。 */
-static int fade_start_ms(const gme_info_t *info, const mugbs_config_t *cfg) {
-    if (info->length > 0) return info->length;
-    if (info->intro_length > 0 && info->loop_length > 0) return info->play_length;
-    return cfg->default_length_sec * 1000;
-}
+/* 曲長判定(SPEC 5.1 との乖離#1への対応)は playlist.c の
+ * playlist_effective_length_ms() に一本化されている。playlist_open() の
+ * スキャン時と、ここでの再生開始時の双方が同じ関数を呼ぶことで、
+ * playlist_entry_t.duration_ms(UI表示用)と実際のフェード開始時刻が
+ * 常に一致することを保証する。 */
 
 static void close_current_emu(player_t *p) {
     if (!p->emu) return;
@@ -45,7 +40,7 @@ static int start_track_at(player_t *p, int track_index) {
     int fade_at, fade_len;
     err = gme_track_info(p->emu, &info, track_index);
     if (!err) {
-        fade_at = fade_start_ms(info, &p->config);
+        fade_at = playlist_effective_length_ms(info, &p->config, NULL);
         fade_len = info->fade_length > 0 ? info->fade_length : p->config.fade_length_ms;
         gme_free_info(info); /* gme_track_info はヒープを返すので必ず解放する */
     } else {
@@ -58,6 +53,13 @@ static int start_track_at(player_t *p, int track_index) {
     audio_lock(&p->audio);
     gme_set_fade_msecs(p->emu, fade_at, fade_len);
     audio_unlock(&p->audio);
+
+    /* gme_track_ended() が真になる(=曲が本当に終わる)のは fade_at + fade_len
+     * 時点。UI表示・シーク上限は「フェード開始時刻」だけの duration_ms では
+     * なく、この実際の終了時刻を見る必要がある(player_current_duration_ms
+     * 参照)。そうしないと経過時間がフェード中に表示上の「合計時間」を
+     * 追い越して見える(実際にバグとして発見された)。 */
+    p->fade_len_ms = fade_len;
 
     p->state = PLAYER_PLAYING;
     /* track_ended フラグをクリアしつつ再設定する（emuポインタ自体は不変）。 */
@@ -76,6 +78,7 @@ int player_init(player_t *p, const mugbs_config_t *config) {
     if (audio_init(&p->audio, config->sample_rate) != 0) {
         return -1;
     }
+    audio_set_volume(&p->audio, config->volume);
     return 0;
 }
 
@@ -222,4 +225,37 @@ int player_seek(player_t *p, int msec) {
 
     audio_clear_track_ended(&p->audio);
     return 0;
+}
+
+int player_tell_ms(player_t *p) {
+    if (!p->emu || p->state == PLAYER_STOPPED) return 0;
+
+    audio_lock(&p->audio);
+    int ms = gme_tell(p->emu);
+    audio_unlock(&p->audio);
+    return ms;
+}
+
+int player_current_duration_ms(const player_t *p) {
+    if (!p->playlist || p->current_entry < 0) return 0;
+    /* duration_ms(フェード開始時刻)だけでなく、フェードの分(fade_len_ms)を
+     * 足した「実際に無音になる時刻」を返す。フェード中の経過時間が
+     * ここで返す合計を追い越して見えるのを防ぐ(start_track_at()参照)。 */
+    return p->playlist->entries[p->current_entry].duration_ms + p->fade_len_ms;
+}
+
+void player_set_volume(player_t *p, int volume_0_100) {
+    if (volume_0_100 < 0) volume_0_100 = 0;
+    if (volume_0_100 > 100) volume_0_100 = 100;
+    p->config.volume = volume_0_100;
+    audio_set_volume(&p->audio, volume_0_100);
+}
+
+void player_stop(player_t *p) {
+    close_current_emu(p);
+    p->current_entry = -1;
+}
+
+void player_set_repeat_mode(player_t *p, repeat_mode_t mode) {
+    p->config.repeat_mode = mode;
 }

@@ -24,6 +24,16 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         return;
     }
 
+    /* ソフトウェア音量。100(既定)のときは乗算を一切行わず、
+     * 従来(P1〜P4)と完全に同一の出力にする。 */
+    int volume = SDL_AtomicGet(&a->volume);
+    if (volume < 100) {
+        short *samples = (short *)stream;
+        for (int i = 0; i < count; i++) {
+            samples[i] = (short)((samples[i] * volume) / 100);
+        }
+    }
+
     if (gme_track_ended(a->emu)) {
         SDL_AtomicSet(&a->track_ended, 1);
     }
@@ -32,6 +42,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
 int audio_init(mugbs_audio_t *a, int sample_rate) {
     memset(a, 0, sizeof(*a));
     SDL_AtomicSet(&a->track_ended, 0);
+    SDL_AtomicSet(&a->volume, 100);
 
     if (SDL_WasInit(SDL_INIT_AUDIO) == 0) {
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
@@ -91,6 +102,12 @@ void audio_set_emu(mugbs_audio_t *a, Music_Emu *emu) {
 
 void audio_set_pause(mugbs_audio_t *a, int paused) {
     SDL_PauseAudioDevice(a->dev, paused ? 1 : 0);
+}
+
+void audio_set_volume(mugbs_audio_t *a, int volume_0_100) {
+    if (volume_0_100 < 0) volume_0_100 = 0;
+    if (volume_0_100 > 100) volume_0_100 = 100;
+    SDL_AtomicSet(&a->volume, volume_0_100);
 }
 
 int audio_poll_track_ended(mugbs_audio_t *a) {

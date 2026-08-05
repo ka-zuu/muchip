@@ -4,9 +4,10 @@
 詳細な設計判断・SPECとの乖離点は各フェーズのコミットログおよび
 `docs/` (追加され次第) を参照。
 
-現在のスコープ: **P0〜P4（コア再生エンジン）**。
-UI (P5)・入力抽象化と設定ファイル (P6)・クロスコンパイルとmuxappパッケージング (P7)・
-SHOULD/NICE要件 (P8) は次段の別プランとする。
+現在のスコープ: **P0〜P5（コア再生エンジン + UI）**。
+入力抽象化の残り(config.iniマッピング上書き)と設定ファイル (P6)・
+クロスコンパイルとmuxappパッケージング (P7)・SHOULD/NICE要件 (P8) は
+次段の別プランとする。
 
 ## SPEC からの既知の乖離（実装前に libgme 本体を確認して判明）
 
@@ -56,10 +57,105 @@ SHOULD/NICE要件 (P8) は次段の別プランとする。
       .gbs/.m3uファイルを削除した状態でzipから正常に列挙・再生できる
       ことをCLIで実測し、ディスクへの一時展開が発生していないことを
       確認した
-- [ ] P5 — UI（Browser / Player / TrackList）… 別プランで着手
+- [x] **P5** — UI（Browser / Player / TrackList）
+      完了条件: ホスト上でキーボード操作だけでBrowser→ファイルを開く→
+      Player→TrackList→トラックジャンプ→Browser、という一連の操作が
+      完結することを確認済み（後述「P5の設計判断」参照）。
+      T-01/T-02/T-06/T-07/T-11/T-12 をGUI経由でも実機さながらの手順
+      （ASan/UBSanビルド + `--ui-script`によるヘッドレス操作列注入）で
+      再検証し、クラッシュ・リークが無いことを確認した。
+      **実機（muOS 2601.0 JACARANDA）でも実際に確認済み**: `/dev/fb0`を
+      直接ダンプしてBrowser/Player画面が実機の`mali`ドライバ上で正しく
+      描画されることをスクリーンショットで確認した（内蔵ビットマップ
+      フォント・レイアウト・リストハイライト・プログレスバーすべて実機で
+      正常動作）。この過程で **P5の実装バグを1件発見・修正した**
+      （下記「実機確認で発見したバグ」参照）。TrackList画面は実機の
+      物理ボタンがまだGameControllerとして未認識(P6予定)のため、実機上
+      では未撮影(Browser/TrackListは共通コード`ui_draw_list()`を使うため
+      リスクは低いと判断)。
 - [ ] P6 — 入力抽象化、解像度非依存化、設定ファイル … 別プランで着手
 - [ ] P7 — クロスコンパイル、muxappパッケージング … 別プランで着手
 - [ ] P8 — チャンネルミュート、ビジュアライザ、EQ … 別プランで着手
+
+## P5の設計判断（SPEC 4.2/6章 との差分・前倒し）
+
+- **`src/app.c`/`app.h` を新規追加した。** SPEC 4.2 のモジュール構成表には
+  無い。`ui.c` を「解像度非依存の描画プリミティブ」に徹させ、画面遷移
+  （Browser/Player/TrackList の状態機械）・入力ディスパッチ・レイアウトの
+  組み立ては `app.c` に集約した。`main.c` は引数解釈とCLIハーネス
+  （`--list`/`--cli`。CI・自動検証用に維持）のままで、GUI起動時は
+  `app_run()` に委譲するだけになっている。
+- **解像度非依存化(SPEC 6.2)とSDL_GameController対応をP6から前倒しした。**
+  座標をハードコードしてから後で直すのは手戻りが大きいため、`ui.c` の
+  `ui_metrics_t`（`scale = min(w/640, h/480)` から全座標を導出）を最初から
+  導入した。入力も `input.c` でSDL_GameControllerの論理ボタン名
+  （`SDL_CONTROLLER_BUTTON_*`）に対応済み。P6に残っているのは
+  「GameControllerとして認識されないJoystickへのフォールバック実装」と
+  「config.iniによるマッピング上書き」で、`input.c` は未対応Joystickの
+  名前とボタン番号を`LOG_INFO`に出す仕込みだけ済ませてある。
+- **文字描画はSDL2_ttf等を使わず内蔵ビットマップフォント。**
+  `vendor/font8x8/font8x8_basic.h`（dhepper/font8x8、パブリックドメイン、
+  basic latin U+0000-U+007Fのみ）を起動時に1枚のテクスチャへ展開して使う。
+  実機の`sysroot/`にはlibSDL2の`.so`しか置いておらず、SDL2_ttf(+freetype)
+  が実機に存在するか未確認だったため、新規の実行時依存を増やさない選択を
+  した。UI文言は英語、GBSメタデータもほぼASCIIのため実用上問題ない。
+  非対応文字は`?`にフォールバックする。
+- **音量調整(D-Pad上下)をP5で先取り実装した。** SPECの機能要件表には無いが
+  SPEC 6.3の入力表がPlayer画面のD-Pad上下に音量を明記しているため、
+  `audio.c`にソフトウェアミキシング（整数ゲイン、100%時は無演算で
+  従来と完全に同一出力）を追加した。
+- **`playlist.c`の曲長判定ロジックを一本化した。** 元々`player.c`内の
+  `static fade_start_ms()`にあった判定（PLAN.md記載の乖離#1:
+  `gme_info_t.play_length`は不明時-1でなく150000を返す）を
+  `playlist_effective_length_ms()`として`playlist.c`へ切り出し、
+  `pl_scan_source()`（UI表示用の`playlist_entry_t.duration_ms`を
+  スキャン時点で確定）と`player.c`の再生開始時の両方から呼ぶようにした。
+  これにより表示される曲長とフェード開始時刻が常に一致する。
+- **検証範囲**: ホストでのASan/UBSanビルド + `--ui-script`
+  （非公開オプション。テキストで列挙したアクション名を注入するヘッドレス
+  実行モード）で画面遷移・ファイル切り替え・エラー系（壊れたGBS）を
+  一通り走らせ、クラッシュ・リーク無しを確認した。CTestにも
+  `test_browser`（ディレクトリ走査の単体テスト）と
+  `test_ui_smoke`（`SDL_VIDEODRIVER=dummy`/`SDL_AUDIODRIVER=dummy`下で
+  `--ui-script`を使い、Browser→ファイルを開く→TrackList→ジャンプ→
+  Player→Browserの一巡を毎ビルドで回帰確認する）を追加した。
+  その後、実機（muOS 2601.0 JACARANDA、192.168.0.20）にSSHでアクセスでき
+  たため、P7で確立済みの`fetch-sysroot.sh`→クロスビルド→転送手順で
+  実際にBrowser/Player画面を`/dev/fb0`のダンプ経由でスクリーンショット
+  撮影し、見た目を確認した（下記「実機確認で発見したバグ」参照）。
+
+## 実機確認で発見したバグ: Player画面の合計時間表示がフェード分を含んでいなかった
+
+実機でのPlayer画面スクリーンショットで、経過時間が表示上の合計時間を
+追い越して見える不具合（例: `0:12 / 0:08`）をユーザーが発見した。
+
+**原因**: `player.c`の`start_track_at()`は`gme_set_fade_msecs(emu, fade_at,
+fade_len)`を呼び、`fade_at`(=`playlist_entry_t.duration_ms`、UIの「合計
+時間」表示に使っていた値)からフェードを開始し、そこからさらに`fade_len`
+(既定8秒)かけてフェードアウトする。実際に`gme_track_ended()`が真になり
+次トラックへ進むのは`fade_at + fade_len`時点であり、`fade_at`だけでは
+ない。そのため:
+- Player画面の「経過/合計」表示・シークバーの`duration_ms`が`fade_at`
+  のままだと、フェード中(`fade_at`〜`fade_at+fade_len`)の間、経過時間が
+  表示上の合計を追い越して見える
+- 同じ`duration_ms`をシークの上限クランプにも使っていたため、
+  右シーク(+5秒)がフェード開始時刻で頭打ちになり、実際には再生中の
+  フェード区間へシークできないという実害もあった
+
+**修正**: `player_t`に`fade_len_ms`フィールドを追加し、`start_track_at()`
+で計算済みの`fade_len`をそこへ保持。`player_current_duration_ms()`は
+`entries[current_entry].duration_ms`ではなく
+`entries[current_entry].duration_ms + fade_len_ms`(=実際に無音になる時刻)
+を返すよう変更した(`src/player.h`/`player.c`)。Player画面・シーク上限は
+このアクセサ経由でしか値を取らないため、呼び出し側(`app.c`)の変更は
+不要だった。
+
+**検証**: 修正後に実機で再クロスビルド・転送し、同じ`0:08`宣言のm3uの
+トラックを再生してスクリーンショットを2枚撮影。4秒経過時点で
+`0:04 / 0:16`(合計がフェード込みの16秒=8+8になっている)、14秒経過時点で
+`0:14 / 0:16`となり、経過が合計を追い越さないこと・プログレスバーが
+正しく部分的に埋まることを確認した。ホスト側のCTest(全5件)も再実行し
+影響が無いことを確認済み。
 
 ## m3u の設計方針（SPEC 5.2 の解釈）
 
@@ -177,6 +273,23 @@ SSHで接続し、上記の暫定方針を実際に検証した。
 - 複数デバイス（RG35XX H/SP, RG40XX, RG CubeXX等）での動作差異
 - `sysroot/` の内容の版管理方針（バイナリはgit管理しない。再現性は
   `fetch-sysroot.sh` の再実行に依存する）
+- **P5で追加したGUIのTrackList画面**は実機で未撮影
+  （物理ボタンがGameControllerとして未認識のためP6以降で確認予定。
+  Browser/Playerは実機確認済み。「実機確認で発見したバグ」節参照）
+- **P5の実機スクリーンショットに、muOS側の時計/ステータス表示らしき
+  小さなオーバーレイが画面左上に薄く写り込んでいた（要再確認）。**
+  原因調査で `GET_VAR system foreground_process` が `muxfrontend` の
+  ままだったことを確認した。これは今回`mux_launch.sh`を経由せずSSH経由で
+  バイナリを直接起動したため、`func.sh`の`SETUP_APP()`が行う
+  `SET_VAR "system" "foreground_process" "$1"`（「今このアプリが前面にいる」
+  とOSへ伝える処理）が一度も呼ばれておらず、`muxfrontend`が自身を
+  バックグラウンドに退避させないまま何らかの表示更新(時計等)を
+  `/dev/fb0`へ直接続けていたためと推測される(表示されていた数字が
+  実時間の経過に合わせて変化していたことからも時計表示の可能性が高い)。
+  `mugbs`側の描画バグではなく、SSH直接起動という検証手順固有の副作用と
+  考えられるが、**`.muxapp`化して`mux_launch.sh`経由で正式に起動した
+  状態で再現しないことをP7で必ず確認すること**（`SETUP_APP`呼び出しで
+  `foreground_process`が`mugbs`に切り替わるかを見る）。
 
 ## 検証手順
 
@@ -197,6 +310,12 @@ ctest --test-dir build --output-on-failure
 # 実再生（要 .gbs 実素材）
 ./build/mugbs --cli Game.gbs
 ./build/mugbs --cli --duration 8 Game.gbs
+
+# GUI (P5): Browser/Player/TrackList をキーボードで操作する
+./build/mugbs                         # カレントディレクトリのBrowserから開始
+./build/mugbs --start-dir /path/to/music
+./build/mugbs --window 720x720        # 別解像度でレイアウト確認(ホストのみ)
+./build/mugbs Game.gbs                # 指定ファイルを直接Playerで開いて開始
 ```
 
 ### クロスビルド・実機検証（実証済みの手順）

@@ -10,6 +10,7 @@
 #include "archive.h"
 #include "log.h"
 #include "m3u.h"
+#include "util.h"
 
 /* ---- 小さな文字列/パスヘルパ ------------------------------------------ */
 
@@ -58,15 +59,6 @@ static int file_exists(const char *path) {
     return stat(path, &st) == 0;
 }
 
-static int ends_with_ci(const char *s, const char *suffix) {
-    size_t sl = strlen(s), xl = strlen(suffix);
-    if (xl > sl) return 0;
-    for (size_t i = 0; i < xl; i++) {
-        if (tolower((unsigned char)s[sl - xl + i]) != tolower((unsigned char)suffix[i])) return 0;
-    }
-    return 1;
-}
-
 /* Windows由来のm3uはパス区切りに '\' を使うことがあるため正規化する。
  * 絶対パスならそのまま、相対パスなら base_dir と結合する。 */
 static char *resolve_relative(const char *base_dir, const char *ref) {
@@ -96,6 +88,26 @@ static int read_file(const char *path, char **out_buf, size_t *out_len) {
     return 0;
 }
 
+/* gme_info_t.play_length は曲長不明時に -1 ではなく 150000(既定150秒)を
+ * 返してしまう(PLAN.md 記載の乖離#1)ため、これだけでは「本当に不明か」を
+ * 判定できない。length(総曲長)/intro_length+loop_length(ループ構造)の
+ * 有無で判定し、どちらも無ければ config の default_length_sec を使う (F-08)。
+ * playlist.c(スキャン時)と player.c(再生開始時)の双方が同じ判定を
+ * 必要とするため、ここに一本化する(元は player.c 内の static実装)。 */
+int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *cfg,
+                                  int *out_known) {
+    if (info->length > 0) {
+        if (out_known) *out_known = 1;
+        return info->length;
+    }
+    if (info->intro_length > 0 && info->loop_length > 0) {
+        if (out_known) *out_known = 1;
+        return info->play_length;
+    }
+    if (out_known) *out_known = 0;
+    return cfg->default_length_sec * 1000;
+}
+
 /* ---- playlist_t 構築 --------------------------------------------------- */
 
 /* fs_path と zip_entry のどちらか一方だけを指定する(排他)。
@@ -109,6 +121,9 @@ static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path, char
     s->zip_entry = zip_entry;
     s->m3u_text = m3u_text;
     s->m3u_len = m3u_len;
+    s->author = dup_str("");
+    s->copyright = dup_str("");
+    s->system = dup_str("");
     return pl->source_count++;
 }
 
@@ -178,11 +193,34 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
         e->title = dup_str(title);
         e->source_index = source_index;
         e->track_index = i;
+        if (info) {
+            e->duration_ms = playlist_effective_length_ms(info, cfg, &e->length_known);
+        } else {
+            e->duration_ms = cfg->default_length_sec * 1000;
+            e->length_known = 0;
+        }
         pl->entry_count++;
 
-        if ((!pl->game || !pl->game[0]) && info && info->game[0]) {
-            free(pl->game);
-            pl->game = dup_str(info->game);
+        if (info) {
+            if ((!pl->game || !pl->game[0]) && info->game[0]) {
+                free(pl->game);
+                pl->game = dup_str(info->game);
+            }
+            /* ソース単位のメタデータ(SPEC 6.1)は最初に取得できたトラックの
+             * ものを採用する。GBSの著作権・作者はファイル全体で共通なのが
+             * 通例のため、トラックごとに上書きし続ける必要はない。 */
+            if (!src->author[0] && info->author[0]) {
+                free(src->author);
+                src->author = dup_str(info->author);
+            }
+            if (!src->copyright[0] && info->copyright[0]) {
+                free(src->copyright);
+                src->copyright = dup_str(info->copyright);
+            }
+            if (!src->system[0] && info->system[0]) {
+                free(src->system);
+                src->system = dup_str(info->system);
+            }
         }
 
         if (info) gme_free_info(info); /* gme_track_info はヒープを返すので必ず解放する */
@@ -420,6 +458,9 @@ void playlist_free(playlist_t *pl) {
         free(pl->sources[i].fs_path);
         free(pl->sources[i].zip_entry);
         free(pl->sources[i].m3u_text);
+        free(pl->sources[i].author);
+        free(pl->sources[i].copyright);
+        free(pl->sources[i].system);
     }
     free(pl->sources);
     for (int i = 0; i < pl->entry_count; i++) {

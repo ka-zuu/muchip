@@ -37,6 +37,11 @@ typedef struct {
     const playlist_t *playlist; /* 参照のみ。所有権は呼び出し側 */
     int current_source;          /* 現在開いている sources[] の添字。-1=未オープン */
     int current_entry;            /* 現在の entries[] の添字。-1=未選択 */
+
+    /* 現在のトラックで gme_set_fade_msecs() に渡したフェード長(ms)。
+     * player_current_duration_ms() が「本当に無音になる時刻」
+     * (=entries[].duration_ms + fade_len_ms) を返すために保持する。 */
+    int fade_len_ms;
 } player_t;
 
 /* SDLオーディオデバイスを開いて初期化する。0で成功。 */
@@ -73,5 +78,28 @@ int player_prev_track(player_t *p);
 
 /* 現在のトラック内でシークする。 */
 int player_seek(player_t *p, int msec);
+
+/* 現在の再生位置(ms)。emuが無い/STOPPEDなら0。 (P5: シークバー表示用) */
+int player_tell_ms(player_t *p);
+
+/* 現在のエントリが実際に無音になる(gme_track_ended()が真になる)時刻(ms)。
+ * playlist側が確定させた playlist_entry_t.duration_ms(フェード開始時刻)
+ * に、再生開始時に設定したフェード長を足したもの。duration_msだけを
+ * 返すと、フェード中(duration_ms 〜 この値の間)に経過時間が表示上の
+ * 「合計時間」を追い越して見えてしまうため注意(実機確認で発見した不具合)。
+ * 何も再生していなければ0。 (P5: シークバー・シーク上限表示用) */
+int player_current_duration_ms(const player_t *p);
+
+/* 音量を設定する (0-100)。範囲外は丸める。 (SPEC 6.3 D-Pad上下) */
+void player_set_volume(player_t *p, int volume_0_100);
+
+/* リピートモードを変更する。次回の player_next_track()/player_prev_track()
+ * から反映される。 (SPEC 6.3 Player画面 Y ボタン) */
+void player_set_repeat_mode(player_t *p, repeat_mode_t mode);
+
+/* 開いているemuがあれば閉じてSTOPPEDにする。ブラウザへ戻る際に使う。
+ * playlist自体は保持したまま(参照ポインタはクリアしない)にはしない -
+ * 呼び出し側が別ファイルを開く前の後始末として使う想定。 */
+void player_stop(player_t *p);
 
 #endif /* MUGBS_PLAYER_H */

@@ -4,9 +4,12 @@ muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック�
 （曲名・曲長・ループ指定）を正しく扱う。詳細仕様は [`SPEC.md`](./SPEC.md)、
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
-現在のスコープは **コア再生エンジン（P0〜P4）** で、SDL によるホスト上の
-CLI ハーネスから動作確認できる。GUI（Browser/Player/TrackList）と実機向けの
-クロスビルド・パッケージングは別プランで扱う。
+現在のスコープは **コア再生エンジン + GUI（P0〜P5）**。SDL2 の
+Browser/Player/TrackList 画面をホスト上でキーボード操作から通しで確認でき、
+CLI ハーネス（`--list`/`--cli`。CI・自動検証用）も引き続き使える。
+入力抽象化の残り・設定ファイル（P6）と実機向けのクロスビルド・
+パッケージング自体（P7、クロスビルド手順自体は下記の通り確立済み）は
+別プランで扱う。
 
 ## ビルド（ホスト / 開発機）
 
@@ -45,10 +48,45 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs       # 1トラック目を再生
 ```
 
+## GUI (Browser / Player / TrackList)
+
+引数無し、または `--list`/`--cli` 以外の起動でGUI本体が立ち上がる。
+
+```sh
+./build/mugbs                       # カレントディレクトリのBrowserから開始
+./build/mugbs --start-dir /path/to/music
+./build/mugbs Game.gbs              # 指定ファイルを直接Playerで開いて開始
+./build/mugbs --window 720x720      # ホストでの別解像度レイアウト確認用
+                                     # (省略時は検出した解像度でフルスクリーン)
+```
+
+キーボード操作（実機ではSDL_GameControllerのボタンに対応。SPEC 6.3参照）:
+
+| キー | Browser | Player | TrackList |
+|---|---|---|---|
+| `↑` `↓` | カーソル移動 | 音量 +/- | カーソル移動 |
+| `←` `→` | ページ送り | シーク -5s/+5s | ページ送り |
+| `Z` (A相当) | 開く | 再生/一時停止 | ジャンプ再生 |
+| `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る |
+| `A` (X相当) | — | TrackListを開く | Playerへ戻る |
+| `S` (Y相当) | — | リピートモード切替 | — |
+| `Q`/`W` (L1/R1) | — | 前/次トラック | — |
+| `1`/`2` (L2/R2) | — | 前/次ファイル | — |
+| `Esc` | 終了 | 終了 | 終了 |
+
+文字描画は外部フォントライブラリを使わず、内蔵のビットマップフォント
+(`vendor/font8x8`) を使う。実機の `sysroot/` には SDL2 の `.so` しか
+含まれておらず、SDL2_ttf が実機に存在するか未確認のため、新規の実行時
+依存を増やさない選択をしている。UI文言は英語のみ対応（GBSのメタデータは
+basic latin 以外は `?` にフォールバックする）。
+
 ## 実機（muOS）向けクロスビルドについて【実機で検証済み】
 
 muOS 2601.0 (JACARANDA) 実機（Cortex-A53 aarch64）で、クロスビルドした
-`mugbs` が実際に映像・音声とも正常動作することを確認済み。詳細な調査経緯は
+`mugbs` が実際に映像・音声とも正常動作することを確認済み。GUI
+(Browser/Player画面) も実機の`mali`ドライバ上での描画を
+スクリーンショットで確認済み（TrackListは物理ボタン未対応のため未確認。
+`PLAN.md`「実機確認で発見したバグ」節参照）。詳細な調査経緯は
 [`PLAN.md`](./PLAN.md) の「P7準備メモ: SDL2の扱いに関する調査」節を参照。
 
 muOS の SDL2 は独自のビデオドライバ（Allwinner H700系デバイス共通のMali
@@ -90,6 +128,8 @@ sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能し�
    ```sh
    scp build-aarch64/mugbs root@<実機のIP>:/root/
    ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
+   # GUI(P5)を実機のボタンで確認する場合:
+   ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --start-dir /mnt/mmc/MUSIC'
    ```
 
 `sysroot/` はバイナリを含むため git 管理しない（`.gitignore` 済み）。
@@ -105,6 +145,11 @@ muxappパッケージング（`mux_launch.sh` の実配置、`.muxapp` 化）自
   委譲している。自前で GB APU は実装していない。
 - `vendor/miniz`: MIT ライセンス。zip 展開に使用（P4 以降）。
   https://github.com/richgel999/miniz より split-file ソースを vendoring。
+- `vendor/font8x8`: パブリックドメイン。UI (P5) の文字描画に使用。
+  https://github.com/dhepper/font8x8 より `font8x8_basic.h`
+  （basic latin, U+0000-U+007F）のみを vendoring。
+  オリジナルは Marcel Sondaar / IBM の public domain VGA フォントを
+  Daniel Hepper が整理したもの。
 
 ## 依存関係とアーキテクチャ上の注意
 
@@ -115,3 +160,7 @@ muxappパッケージング（`mux_launch.sh` の実配置、`.muxapp` 化）自
 - `gme_*` API はスレッドセーフでない。オーディオコールバックとメインスレッド
   の両方から `Music_Emu*` に触るため、`SDL_LockAudioDevice()` /
   `SDL_UnlockAudioDevice()` で保護する。
+- 画面座標・文字サイズは `src/ui.c` の `ui_metrics_t`（`scale = min(w/640,
+  h/480)` から導出）経由でのみ扱い、直接ハードコードしない（SPEC 6.2, 13）。
+- GameController のボタン判定は `SDL_CONTROLLER_BUTTON_*` の論理名のみを
+  使い、生のボタン番号を決め打ちしない（`src/input.c`。SPEC 13）。

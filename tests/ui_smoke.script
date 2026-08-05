@@ -1,0 +1,15 @@
+# ui_smoke.script - ヘッドレスUIスモークテスト用のアクション列 (--ui-script)。
+#
+# tests/CMakeLists.txt が gen_fixture_gbs で生成する Game.gbs (2トラック)
+# だけが置かれたディレクトリを --start-dir に指定して実行する想定。
+# Browser -> ファイルを開く -> Player -> TrackList -> ジャンプ -> Player ->
+# Browser -> 終了、という画面遷移をひととおり踏む。
+# SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy 下で実行され、表示は見えない
+# (画面遷移・ライフサイクルのクラッシュ回帰をCIで拾うためのもの)。
+
+A       # Browser: Game.gbs を開く -> Player
+X       # Player -> TrackList
+DOWN    # カーソルをトラック2へ
+A       # トラック2へジャンプ再生 -> Player
+B       # Player -> Browser
+QUIT
