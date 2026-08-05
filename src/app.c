@@ -577,7 +577,7 @@ static void draw_browser(app_t *app) {
         ui_text_clipped(ui, ui->metrics.pad, fy, ui->screen_w - ui->metrics.pad * 2,
                          UI_TEXT_SMALL, err, app->status);
     } else {
-        ui_text(ui, ui->metrics.pad, fy, UI_TEXT_SMALL, dim, "A:Open  B:Up  Esc:Quit");
+        ui_text(ui, ui->metrics.pad, fy, UI_TEXT_SMALL, dim, "A:Open  B:Up  Start:Menu  Start+Select:Quit");
     }
 }
 
@@ -651,8 +651,13 @@ static void draw_player(app_t *app) {
     }
 
     int footer_y = ui->screen_h - ui->metrics.footer_h + (ui->metrics.footer_h - ui->metrics.glyph) / 2;
-    ui_text_clipped(ui, x, footer_y, content_w, UI_TEXT_SMALL, dim,
-                     src ? src->display_path : "");
+    /* 終了操作(SPEC 6.3「Menu長押し=終了」+ P6で追加したStart+Select代替)を
+     * 常に見えるようにする。GUIDEボタンはmuOS側のオーバーレイに吸われて
+     * 効かない可能性があるため、Start+Selectの方をここに明記する。 */
+    char footer_text[512];
+    snprintf(footer_text, sizeof(footer_text), "Start+Select:Quit  %s",
+             src ? src->display_path : "");
+    ui_text_clipped(ui, x, footer_y, content_w, UI_TEXT_SMALL, dim, footer_text);
 }
 
 static void draw_tracklist(app_t *app) {
@@ -794,7 +799,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     if (ui_init(&app.ui, opt->window_w, opt->window_h, fullscreen) != 0) {
         return 1;
     }
-    input_init(&app.input);
+    input_init(&app.input, app.cfg);
 
     if (player_init(&app.player, app.cfg) != 0) {
         input_shutdown(&app.input);

@@ -6,16 +6,31 @@
  * 経由では SDL_CONTROLLER_BUTTON_* の論理名を使い、生のボタン番号を
  * 直接比較しない。
  *
- * P5時点のスコープ: キーボード(ホスト確認用) + SDL_GameController の
- * 既定マッピングのみ。SDL_Joystickへのフォールバックと config.ini による
- * マッピング上書きはP6で追加する。GameControllerとして認識されなかった
- * Joystickは、名前とボタン番号をLOG_INFOに出すだけに留める
- * (P6のマッピング表を作るための実機データになる)。
+ * P6での方針転換: 当初は「GameControllerとして認識されないJoystickは
+ * 生イベントを自前でconfig.iniのマッピング表に従って解釈する」計画
+ * だったが、実際に公開されているmuOS向けアプリ(XMPlayer v0.2.1)の
+ * .muxappを展開して調べたところ、そのような自前実装はしていなかった。
+ * muOSは /usr/lib/gamecontrollerdb.txt を実機に同梱しており、
+ * mux_launch.sh が SDL_GAMECONTROLLERCONFIG_FILE を export するだけで
+ * 物理ボタンが SDL_GameController として認識される(XMPlayerはこれに加え
+ * gptokeyb2でキーボードへも変換しているが、mugbsは元々キーボードにも
+ * 対応済みなのでgptokeyb2は不要)。よってP6では:
+ *   - SDL_GameControllerAddMappingsFromFile()/AddMapping() で
+ *     config.ini の [input] gamecontroller_db/controller_mapping を
+ *     読み込む経路を用意する(mux_launch.sh を経由しない開発時や、
+ *     DBに載っていない機種向けの上書き手段)
+ *   - GameControllerとして認識されなかったJoystickは、名前・GUID・
+ *     ボタン/軸/ハット数をLOG_INFOに出すだけに留める(生イベントの
+ *     自前解釈はしない)
+ * SPEC 6.3 の「SDL_Joystickにフォールバックし、config.iniでマッピング
+ * 上書きを可能にする」は、この形で満たす(PLAN.mdに乖離として記録)。
  */
 #ifndef MUGBS_INPUT_H
 #define MUGBS_INPUT_H
 
 #include <SDL.h>
+
+#include "config.h"
 
 typedef enum {
     INPUT_NONE = 0,
@@ -48,6 +63,13 @@ typedef struct {
     int trigger_l_down;
     int trigger_r_down;
 
+    /* START+SELECT同時押しでの終了(SPEC 6.3「Menu長押し=終了」の代替)用。
+     * GameController の GUIDE ボタン(muOSのMENU相当)は muOS 側のオーバーレイに
+     * 吸われてSDLへ届かない可能性があるため、二重の終了手段として持つ。
+     * 長押しにはタイマーが要るが、input_poll()はイベント駆動のみなので
+     * 同時押しの方が安く実装できる。 */
+    unsigned held_mask;
+
     /* SDL_WINDOWEVENT_SIZE_CHANGED を受けたら1。input_take_window_resized()で
      * 読んでクリアする。ウィンドウリサイズは input_action_t の語彙に
      * 入れない(action表は[input]設定と--ui-scriptの語彙も兼ねており、
@@ -56,11 +78,14 @@ typedef struct {
     int window_resized;
 } input_t;
 
-/* 起動時に一度呼ぶ。SDL_GameControllerOpen()を試み、開けたコントローラを
- * 保持する。GameControllerとして開けないJoystickが接続されていれば、
- * その名前をLOG_INFOに出す(P6用の情報収集)。失敗しても致命的ではないため
- * 戻り値はなく、常にキーボード操作は有効なまま続行する。 */
-void input_init(input_t *in);
+/* 起動時に一度呼ぶ。cfg->gamecontroller_db/controller_mapping があれば
+ * デバイス走査より先に SDL へ登録し、その後 SDL_GameControllerOpen()を
+ * 試みる。開けたコントローラを保持する。GameControllerとして開けない
+ * Joystickが接続されていれば、名前・GUID・ボタン/軸/ハット数を
+ * LOG_INFOに出す(config.ini の controller_mapping を書くための情報)。
+ * cfgがNULLならマッピング登録をスキップする(テスト用)。失敗しても
+ * 致命的ではないため戻り値はなく、常にキーボード操作は有効なまま続行する。 */
+void input_init(input_t *in, const mugbs_config_t *cfg);
 void input_shutdown(input_t *in);
 
 /* 保留中のSDLイベントを1件処理し、対応する論理アクションを *out に書く。

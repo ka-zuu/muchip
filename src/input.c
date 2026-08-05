@@ -11,6 +11,10 @@
  * 防ぐため、直前の押下状態を input_t 側に保持する。 */
 #define TRIGGER_THRESHOLD 16384
 
+/* START+SELECT同時押しでの終了検出用ビット(input_t.held_mask)。 */
+#define HELD_START  (1u << 0)
+#define HELD_SELECT (1u << 1)
+
 static input_action_t key_to_action(SDL_Keycode k) {
     switch (k) {
         case SDLK_UP:     return INPUT_UP;
@@ -48,6 +52,10 @@ static input_action_t controller_button_to_action(Uint8 button) {
         case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:  return INPUT_R1;
         case SDL_CONTROLLER_BUTTON_START:          return INPUT_START;
         case SDL_CONTROLLER_BUTTON_BACK:           return INPUT_SELECT;
+        /* muOSのMENUボタン相当(SPEC 6.3「Menu長押し=終了」)。ただしmuOS側の
+         * オーバーレイに吸われてSDLへ届かない可能性があるため、
+         * START+SELECT同時押しでも終了できるようにしてある(下記参照)。 */
+        case SDL_CONTROLLER_BUTTON_GUIDE:          return INPUT_QUIT;
         default:                                   return INPUT_NONE;
     }
 }
@@ -59,7 +67,7 @@ static int is_log_joystick(input_t *in, SDL_JoystickID id) {
     return 0;
 }
 
-void input_init(input_t *in) {
+void input_init(input_t *in, const mugbs_config_t *cfg) {
     memset(in, 0, sizeof(*in));
 
     if (SDL_WasInit(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) !=
@@ -71,28 +79,76 @@ void input_init(input_t *in) {
         }
     }
 
+    /* デバイス走査より前にマッピングDBを読み込む必要がある。
+     * mux_launch.sh 経由で SDL_GAMECONTROLLERCONFIG_FILE が export
+     * されていれば実機ではこれ自体は不要だが(muOSが/usr/lib/
+     * gamecontrollerdb.txtを同梱している)、SSH直接起動等それを経由
+     * しない場合や、DBに載っていない機種向けの上書き手段として
+     * config.iniからも読めるようにしてある(SPEC 6.3)。 */
+    if (cfg && cfg->gamecontroller_db[0]) {
+        int added = SDL_GameControllerAddMappingsFromFile(cfg->gamecontroller_db);
+        if (added < 0) {
+            LOG_WARN("gamecontroller_db を読み込めません: %s (%s)",
+                      cfg->gamecontroller_db, SDL_GetError());
+        } else {
+            LOG_INFO("gamecontroller_db から%d件のマッピングを読み込みました: %s",
+                      added, cfg->gamecontroller_db);
+        }
+    }
+    if (cfg && cfg->controller_mapping[0]) {
+        int rc = SDL_GameControllerAddMapping(cfg->controller_mapping);
+        if (rc < 0) {
+            LOG_WARN("controller_mapping が不正です: %s", SDL_GetError());
+        } else {
+            LOG_INFO("controller_mapping を%s", rc == 1 ? "追加しました" : "更新しました");
+        }
+    }
+
     int n = SDL_NumJoysticks();
     int max_log = (int)(sizeof(in->log_joysticks) / sizeof(in->log_joysticks[0]));
     for (int i = 0; i < n; i++) {
+        int opened_as_controller = 0;
         if (SDL_IsGameController(i)) {
             if (!in->controller) {
                 in->controller = SDL_GameControllerOpen(i);
                 if (in->controller) {
                     LOG_INFO("GameControllerを検出しました: %s", SDL_GameControllerName(in->controller));
+                    opened_as_controller = 1;
+                } else {
+                    /* SDL_IsGameController()がtrueでもOpen()が失敗することがある
+                     * (P6で発見したバグ: 以前はここでcontinueしてしまい、
+                     * Joystickとしても開かれず入力が完全に死んでいた)。
+                     * この場合は下の生Joystickパスへフォールスルーする。 */
+                    LOG_WARN("SDL_GameControllerOpen(index=%d)に失敗しました: %s "
+                              "-> Joystickとして開きます", i, SDL_GetError());
                 }
+            } else {
+                /* 既に1台GameControllerを開いている。複数コントローラの
+                 * 同時使用はP6のスコープ外(muOSの携帯機はコントローラ1台が前提)。 */
+                opened_as_controller = 1;
             }
-            continue;
         }
-        /* GameControllerとして認識されなかったJoystick。実機のボタン配置は
-         * デバイスごとに異なるため決め打ちせず(SPEC 13)、実際に押された
-         * ボタン番号をログへ出すことでP6のマッピング表作成に使う。
-         * ここではログ収集のためだけに開き、アクションへは変換しない。 */
+        if (opened_as_controller) continue;
+
+        /* GameControllerとして認識されなかった(または開けなかった)Joystick。
+         * 実機のボタン配置はデバイスごとに異なるため決め打ちせず(SPEC 13)、
+         * 名前・GUID・ボタン/軸/ハット数をログへ出すだけに留める
+         * (P6の方針転換: 生イベントの自前解釈はしない。input.h冒頭参照)。
+         * ユーザーがconfig.iniの[input] controller_mappingを書く際、
+         * このGUIDが必要になる。 */
         if (in->log_joystick_count < max_log) {
             SDL_Joystick *j = SDL_JoystickOpen(i);
             if (j) {
-                LOG_INFO("Joystick(GameController未対応)を検出: \"%s\" button数=%d "
-                          "-> config.iniでのマッピングが必要です(P6)",
-                          SDL_JoystickName(j), SDL_JoystickNumButtons(j));
+                char guid_str[64];
+                SDL_JoystickGUID guid = SDL_JoystickGetGUID(j);
+                SDL_JoystickGetGUIDString(guid, guid_str, sizeof(guid_str));
+                LOG_INFO("Joystick(GameController未対応)を検出: \"%s\" GUID=%s "
+                          "button数=%d axis数=%d hat数=%d "
+                          "-> config.iniの[input] gamecontroller_db/controller_mapping "
+                          "で対応させてください",
+                          SDL_JoystickName(j), guid_str,
+                          SDL_JoystickNumButtons(j), SDL_JoystickNumAxes(j),
+                          SDL_JoystickNumHats(j));
                 in->log_joysticks[in->log_joystick_count++] = j;
             }
         }
@@ -133,8 +189,25 @@ int input_poll(input_t *in, input_action_t *out) {
             return 1;
         }
 
-        case SDL_CONTROLLERBUTTONDOWN:
-            *out = controller_button_to_action(ev.cbutton.button);
+        case SDL_CONTROLLERBUTTONDOWN: {
+            input_action_t a = controller_button_to_action(ev.cbutton.button);
+
+            /* START+SELECT同時押しでの終了検出(GUIDEがmuOS側に吸われて
+             * 届かない場合の代替。SPEC 6.3「Menu長押し=終了」相当)。 */
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) in->held_mask |= HELD_START;
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) in->held_mask |= HELD_SELECT;
+            if ((in->held_mask & (HELD_START | HELD_SELECT)) == (HELD_START | HELD_SELECT)) {
+                a = INPUT_QUIT;
+            }
+
+            *out = a;
+            return 1;
+        }
+
+        case SDL_CONTROLLERBUTTONUP:
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) in->held_mask &= ~HELD_START;
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) in->held_mask &= ~HELD_SELECT;
+            *out = INPUT_NONE;
             return 1;
 
         case SDL_CONTROLLERAXISMOTION: {
