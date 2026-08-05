@@ -53,4 +53,10 @@ int browser_enter(browser_t *b, int show_all);
  * count==0(空ディレクトリ)なら空文字列を書いて-1を返す。 */
 int browser_selected_path(const browser_t *b, char *out, unsigned long out_size);
 
+/* items[] から name に一致する要素を探し、見つかれば selected をそこへ
+ * 動かして1を返す。見つからなければ0を返しselectedは変えない
+ * (F-13: last_pathがファイルだった場合に、そのファイルへカーソルを
+ * 合わせた状態でBrowserを開始するために使う)。 */
+int browser_select_by_name(browser_t *b, const char *name);
+
 #endif /* MUGBS_BROWSER_H */

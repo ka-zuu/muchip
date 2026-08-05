@@ -3,7 +3,8 @@
 # tests/CMakeLists.txt が gen_fixture_gbs で生成する Game.gbs (2トラック)
 # だけが置かれたディレクトリを --start-dir に指定して実行する想定。
 # Browser -> ファイルを開く -> Player -> TrackList -> ジャンプ -> Player ->
-# Browser -> 終了、という画面遷移をひととおり踏む。
+# Settings(値変更) -> Player -> Browser -> Settings -> Browser -> 終了、
+# という画面遷移をひととおり踏む。
 # SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy 下で実行され、表示は見えない
 # (画面遷移・ライフサイクルのクラッシュ回帰をCIで拾うためのもの)。
 
@@ -11,5 +12,18 @@ A       # Browser: Game.gbs を開く -> Player
 X       # Player -> TrackList
 DOWN    # カーソルをトラック2へ
 A       # トラック2へジャンプ再生 -> Player
+START   # Player -> Settings (P6)
+DOWN    # Volume -> Repeat
+RIGHT   # Repeat の値を変える(none/one/all を循環)
+DOWN    # Repeat -> Stereo depth
+RIGHT   # Stereo depth を変える(再生中のemuへ即時反映されるパス)
+DOWN    # Stereo depth -> Default length
+RIGHT   # Default length を変える(playlist_apply_default_lengthを通す)
+DOWN    # Default length -> Fade
+DOWN    # Fade -> Show all files
+RIGHT   # show_all_files を切り替える(browser_open_dirの自己呼び出しを通す)
+B       # Settings -> Player (ここでconfig_pathがあれば保存される)
 B       # Player -> Browser
+START   # Browser -> Settings (SPEC 6.3からの逸脱。PLAN.md参照)
+B       # Settings -> Browser
 QUIT

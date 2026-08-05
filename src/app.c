@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +19,7 @@ typedef enum {
     SCREEN_BROWSER,
     SCREEN_PLAYER,
     SCREEN_TRACKLIST,
+    SCREEN_SETTINGS, /* P6: SPEC 6.1。START で Browser/Player どちらからも開く */
 } app_screen_t;
 
 typedef struct {
@@ -32,9 +34,14 @@ typedef struct {
                             プログラム全体で権威あるインスタンスはこれ1つだけ
                             (player_t は const mugbs_config_t* で同じものを見る)。
                             show_all_files はここに統合済み(cfg->show_all_files)。 */
+    const char *config_path; /* Settings退出時・終了時の自動保存先。NULL=保存しない */
 
     int tracklist_sel;
     int tracklist_scroll;
+
+    int settings_sel;
+    int settings_scroll;
+    app_screen_t settings_return; /* Settingsを抜けたら戻る画面(Browser/Player) */
 
     char status[256];   /* Browserのフッタ/Playerに一時表示するエラー等 */
     Uint32 status_until; /* SDL_GetTicks()がこれを超えたら消える */
@@ -160,6 +167,21 @@ static void set_status(app_t *app, const char *fmt, ...) {
     app->status_until = SDL_GetTicks() + 4000;
 }
 
+/* ---- last_path (F-13) --------------------------------------------------- */
+
+/* cfg->last_path へ書く。バッファ長を超える場合は警告して何もしない
+ * (中途半端に切り詰めたパスを次回起動時の開始位置として使うのは
+ * 誤動作の元になるため、載せないほうが安全)。 */
+static void set_last_path(app_t *app, const char *path) {
+    if (!path) return;
+    size_t n = strlen(path);
+    if (n >= sizeof(app->cfg->last_path)) {
+        LOG_WARN("last_path が長すぎるため記憶しません: %s", path);
+        return;
+    }
+    memcpy(app->cfg->last_path, path, n + 1);
+}
+
 /* ---- ファイルを開く ---------------------------------------------------- */
 
 /* playlist_open() が失敗しても現在の再生・プレイリストには一切触れない
@@ -185,6 +207,7 @@ static void app_open_path(app_t *app, const char *path) {
         return;
     }
 
+    set_last_path(app, path); /* F-13: 直近に開いたファイルを記憶する */
     app->tracklist_sel = 0;
     app->tracklist_scroll = 0;
     app->screen = SCREEN_PLAYER;
@@ -237,7 +260,9 @@ static void handle_browser_input(app_t *app, input_action_t a) {
         case INPUT_LEFT:  browser_page(&app->browser, -list_visible_rows(app)); break;
         case INPUT_RIGHT: browser_page(&app->browser, list_visible_rows(app)); break;
         case INPUT_A: {
-            if (!browser_enter(&app->browser, app->cfg->show_all_files)) {
+            if (browser_enter(&app->browser, app->cfg->show_all_files)) {
+                set_last_path(app, app->browser.cwd); /* F-13 */
+            } else {
                 char path[4096];
                 if (browser_selected_path(&app->browser, path, sizeof(path)) == 0) {
                     app_open_path(app, path);
@@ -246,7 +271,18 @@ static void handle_browser_input(app_t *app, input_action_t a) {
             break;
         }
         case INPUT_B:
-            browser_up(&app->browser, app->cfg->show_all_files);
+            if (browser_up(&app->browser, app->cfg->show_all_files)) {
+                set_last_path(app, app->browser.cwd); /* F-13 */
+            }
+            break;
+        case INPUT_START:
+            /* SPEC 6.3 の表はStartをPlayer画面専用としているが、ファイルを
+             * 開くまでSettingsへ入れないのは初回体験として悪いため、
+             * Browserからも開けるようにした(P6での逸脱。PLAN.md参照)。 */
+            app->settings_return = SCREEN_BROWSER;
+            app->settings_sel = 0;
+            app->settings_scroll = 0;
+            app->screen = SCREEN_SETTINGS;
             break;
         default:
             break;
@@ -308,6 +344,12 @@ static void handle_player_input(app_t *app, input_action_t a) {
         case INPUT_R2:
             app_next_source(app);
             break;
+        case INPUT_START:
+            app->settings_return = SCREEN_PLAYER;
+            app->settings_sel = 0;
+            app->settings_scroll = 0;
+            app->screen = SCREEN_SETTINGS;
+            break;
         default:
             break;
     }
@@ -343,6 +385,135 @@ static void handle_tracklist_input(app_t *app, input_action_t a) {
     }
 }
 
+/* ---- Settings画面 (P6, SPEC 6.1) --------------------------------------
+ *
+ * mugbs_config_t のフィールドをoffsetofで指す1枚の表で駆動する。
+ * SET_INT/SET_DOUBLE/SET_BOOL/SET_ENUMの4種のみをここで扱い、
+ * sample_rate(デバイス再オープンが必要)・eq_bass/eq_treble/
+ * voice_mute_mask(P8で未実装)は意図的に含めない -- 変更しても何も
+ * 起きないコントロールを見せるのは、無い方がまし。 */
+
+typedef enum {
+    SET_INT,
+    SET_DOUBLE,
+    SET_BOOL,
+    SET_ENUM,
+} setting_kind_t;
+
+typedef struct {
+    const char *label;
+    setting_kind_t kind;
+    size_t offset;    /* offsetof(mugbs_config_t, ...) */
+    double min, max, step; /* SET_ENUM/SET_BOOL は 0..(選択肢数-1)、step=1 */
+    const char *const *enum_names; /* SET_ENUMのみ非NULL */
+    int enum_count;
+    const char *note; /* 反映タイミングの注記("next track"等)。無ければNULL */
+} setting_def_t;
+
+static const char *const REPEAT_MODE_NAMES[] = { "none", "one", "all" };
+
+static const setting_def_t SETTINGS[] = {
+    { "Volume",          SET_INT,    offsetof(mugbs_config_t, volume),             0,   100,   5, NULL, 0, NULL },
+    { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3, NULL },
+    { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0, NULL },
+    { "Default length",     SET_INT,    offsetof(mugbs_config_t, default_length_sec), 10,  600,  10, NULL, 0, "next track" },
+    { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0, "next track" },
+    { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0, NULL },
+};
+#define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
+
+static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
+    const void *field = (const char *)cfg + s->offset;
+    switch (s->kind) {
+        case SET_INT:    return *(const int *)field;
+        case SET_DOUBLE: return *(const double *)field;
+        case SET_BOOL:   return *(const int *)field;
+        case SET_ENUM:   return *(const repeat_mode_t *)field;
+    }
+    return 0;
+}
+
+static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
+    void *field = (char *)cfg + s->offset;
+    switch (s->kind) {
+        case SET_INT:    *(int *)field = (int)v; break;
+        case SET_DOUBLE: *(double *)field = v; break;
+        case SET_BOOL:   *(int *)field = (int)v; break;
+        case SET_ENUM:   *(repeat_mode_t *)field = (repeat_mode_t)(int)v; break;
+    }
+}
+
+/* Settingsで変更した値を、いま反映できる範囲で反映する。呼び出し側
+ * (adjust_setting)が値変更のたびに呼ぶ。stereo_depth/volumeは
+ * player_apply_config()経由で即時、default_length_secはlength_known==0の
+ * エントリのduration_msだけをplaylist_apply_default_length()で
+ * 再計算する(次トラックからフェード自体が新しい値になるのは
+ * player.cのstart_track_at()が毎回p->configを読むため。詳細はplayer.h)。 */
+static void app_apply_settings(app_t *app) {
+    player_apply_config(&app->player);
+    if (app->pl) playlist_apply_default_length(app->pl, app->cfg);
+}
+
+static void adjust_setting(app_t *app, int direction) {
+    const setting_def_t *s = &SETTINGS[app->settings_sel];
+    double before = setting_get(app->cfg, s);
+    double v = before + (double)direction * s->step;
+
+    if (s->kind == SET_ENUM || s->kind == SET_BOOL) {
+        /* enum/boolは端で折り返す(SPEC 6.3: LEFT/RIGHTでの循環に馴染む)。 */
+        int n = (s->kind == SET_BOOL) ? 2 : s->enum_count;
+        int iv = ((int)v % n + n) % n;
+        v = iv;
+    } else {
+        if (v < s->min) v = s->min;
+        if (v > s->max) v = s->max;
+    }
+
+    setting_set(app->cfg, s, v);
+    app_apply_settings(app);
+
+    /* show_all_filesが実際に変わった場合のみBrowserを再走査する。
+     * 無条件に呼ぶと他の項目を弄るたびに毎回ディレクトリを読み直し、
+     * カーソル位置(selected/scroll)がbrowser_open_dir()によって
+     * 0へリセットされてしまう(browser.cの契約)。 */
+    if (s->offset == offsetof(mugbs_config_t, show_all_files) && v != before) {
+        browser_open_dir(&app->browser, app->browser.cwd, app->cfg->show_all_files);
+    }
+}
+
+/* Settingsを抜けて呼び出し元の画面へ戻る。config_pathが設定されていれば
+ * ここで保存する(終了を待たず、変更のたびに実機の電源断耐性を持たせる)。 */
+static void app_leave_settings(app_t *app) {
+    app->screen = app->settings_return;
+    if (app->config_path) {
+        config_save(app->cfg, app->config_path);
+    }
+}
+
+static void handle_settings_input(app_t *app, input_action_t a) {
+    switch (a) {
+        case INPUT_UP:
+            if (app->settings_sel > 0) app->settings_sel--;
+            break;
+        case INPUT_DOWN:
+            if (app->settings_sel < SETTINGS_COUNT - 1) app->settings_sel++;
+            break;
+        case INPUT_LEFT:
+            adjust_setting(app, -1);
+            break;
+        case INPUT_RIGHT:
+        case INPUT_A: /* 親指1本で右方向へ回せるようにする */
+            adjust_setting(app, 1);
+            break;
+        case INPUT_B:
+        case INPUT_START:
+            app_leave_settings(app);
+            break;
+        default:
+            break;
+    }
+}
+
 static void app_dispatch(app_t *app, input_action_t a) {
     if (a == INPUT_NONE) return;
     if (a == INPUT_QUIT) {
@@ -353,6 +524,7 @@ static void app_dispatch(app_t *app, input_action_t a) {
         case SCREEN_BROWSER:    handle_browser_input(app, a); break;
         case SCREEN_PLAYER:     handle_player_input(app, a); break;
         case SCREEN_TRACKLIST:  handle_tracklist_input(app, a); break;
+        case SCREEN_SETTINGS:   handle_settings_input(app, a); break;
     }
 }
 
@@ -512,12 +684,109 @@ static void draw_tracklist(app_t *app) {
             UI_TEXT_SMALL, dim, "A:Play  B/X:Back");
 }
 
+static const char *settings_item_text(void *ctx, int index) {
+    app_t *app = (app_t *)ctx;
+    static char buf[300];
+    const setting_def_t *s = &SETTINGS[index];
+    double v = setting_get(app->cfg, s);
+
+    char valbuf[64];
+    switch (s->kind) {
+        case SET_INT:
+            snprintf(valbuf, sizeof(valbuf), "%d", (int)v);
+            break;
+        case SET_DOUBLE:
+            snprintf(valbuf, sizeof(valbuf), "%.2f", v);
+            break;
+        case SET_BOOL:
+            snprintf(valbuf, sizeof(valbuf), "%s", ((int)v) ? "on" : "off");
+            break;
+        case SET_ENUM: {
+            int iv = (int)v;
+            const char *name = (iv >= 0 && iv < s->enum_count) ? s->enum_names[iv] : "?";
+            snprintf(valbuf, sizeof(valbuf), "%s", name);
+            break;
+        }
+    }
+    /* 等幅8x8フォントなので固定幅のラベル列が ui.c を触らずに揃う。 */
+    snprintf(buf, sizeof(buf), "%-18s %s", s->label, valbuf);
+    return buf;
+}
+
+static void draw_settings(app_t *app) {
+    ui_t *ui = &app->ui;
+    const SDL_Color bg = { 18, 18, 26, 255 };
+    const SDL_Color bar_bg = { 30, 30, 42, 255 };
+    const SDL_Color fg = { 230, 230, 230, 255 };
+    const SDL_Color dim = { 150, 150, 160, 255 };
+
+    ui_clear(ui, bg);
+
+    ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
+    ui_fill_rect(ui, header, bar_bg);
+    ui_text(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
+            UI_TEXT_BODY, fg, "Settings");
+
+    ui_rect_t list = list_rect(app);
+    ui_draw_list(ui, list, SETTINGS_COUNT, app->settings_sel, -1,
+                 &app->settings_scroll, settings_item_text, app);
+
+    ui_rect_t footer = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
+    ui_fill_rect(ui, footer, bar_bg);
+    const char *note = SETTINGS[app->settings_sel].note;
+    char footer_text[128];
+    if (note) {
+        snprintf(footer_text, sizeof(footer_text), "L/R:Adjust  B/START:Back  (%s)", note);
+    } else {
+        snprintf(footer_text, sizeof(footer_text), "L/R:Adjust  B/START:Back");
+    }
+    ui_text(ui, ui->metrics.pad, footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2,
+            UI_TEXT_SMALL, dim, footer_text);
+}
+
+/* ---- 起動時のBrowser開始位置 (F-13) ------------------------------------- */
+
+/* last_path をまずディレクトリとして開いてみて、失敗したら「ファイルの
+ * パスだった」とみなし、親ディレクトリを開いてそのファイルへカーソルを
+ * 合わせる(自動再生はしない -- 起動と同時に音が出る驚きを避けるため、
+ * SPEC 7 のlast_pathサンプル値もディレクトリである)。
+ * それも失敗する場合(削除された等)はカレントディレクトリにフォールバック
+ * する。 */
+static void restore_last_path(app_t *app, const char *last_path) {
+    if (browser_open_dir(&app->browser, last_path, app->cfg->show_all_files) == 0) {
+        return;
+    }
+
+    char dir[4096];
+    snprintf(dir, sizeof(dir), "%s", last_path);
+    char *slash = strrchr(dir, '/');
+    if (!slash) {
+        /* スラッシュを含まない相対パス。カレントディレクトリを親とみなす。 */
+        if (browser_open_dir(&app->browser, ".", app->cfg->show_all_files) == 0) {
+            browser_select_by_name(&app->browser, last_path);
+        }
+        return;
+    }
+    const char *base = slash + 1;
+    if (slash == dir) dir[1] = 0; /* "/foo.gbs" -> "/" */
+    else *slash = 0;
+
+    if (browser_open_dir(&app->browser, dir, app->cfg->show_all_files) == 0) {
+        browser_select_by_name(&app->browser, base);
+        return;
+    }
+
+    LOG_WARN("last_path を復元できません: %s。カレントディレクトリで開始します", last_path);
+    browser_open_dir(&app->browser, ".", app->cfg->show_all_files);
+}
+
 /* ---- メインループ ------------------------------------------------------- */
 
 int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     app_t app;
     memset(&app, 0, sizeof(app));
     app.cfg = cfg; /* コピーしない。app_t/player_t は常にこの1つを参照する (P6) */
+    app.config_path = opt->config_path;
     app.running = 1;
     app.screen = SCREEN_BROWSER;
 
@@ -533,12 +802,21 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         return 1;
     }
 
-    /* last_path(F-13) を使った開始位置の復元は C4 (Settings画面) で追加する。 */
-    const char *dir = (opt->start_dir && opt->start_dir[0]) ? opt->start_dir : ".";
-    if (browser_open_dir(&app.browser, dir, app.cfg->show_all_files) != 0) {
-        LOG_WARN("開始ディレクトリを開けません: %s。カレントディレクトリで再試行します", dir);
+    /* Browserの開始位置(F-13): --start-dir > last_path > カレントディレクトリ。
+     * --start-dirが明示されたときは、以後それが記憶される対象になる
+     * (次回起動時にlast_pathとして使われる)。 */
+    if (opt->start_dir && opt->start_dir[0]) {
+        if (browser_open_dir(&app.browser, opt->start_dir, app.cfg->show_all_files) != 0) {
+            LOG_WARN("開始ディレクトリを開けません: %s。カレントディレクトリで再試行します",
+                      opt->start_dir);
+            browser_open_dir(&app.browser, ".", app.cfg->show_all_files);
+        }
+    } else if (app.cfg->last_path[0]) {
+        restore_last_path(&app, app.cfg->last_path);
+    } else {
         browser_open_dir(&app.browser, ".", app.cfg->show_all_files);
     }
+    if (app.browser.cwd) set_last_path(&app, app.browser.cwd);
 
     if (opt->initial_path) {
         app_open_path(&app, opt->initial_path);
@@ -590,10 +868,20 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
             case SCREEN_BROWSER:   draw_browser(&app); break;
             case SCREEN_PLAYER:    draw_player(&app); break;
             case SCREEN_TRACKLIST: draw_tracklist(&app); break;
+            case SCREEN_SETTINGS:  draw_settings(&app); break;
         }
         ui_present(&app.ui);
 
         if (!use_script) SDL_Delay(16);
+    }
+
+    /* 終了時の自動保存。Settings画面を一度も開かずに終了した場合でも
+     * last_path(F-13)は最新化されているため、config_pathがあれば
+     * ここでも保存する(Settings退出時の保存(app_leave_settings)と
+     * 合わせて二重に保存されることがあるが、config_save()は冪等なので
+     * 無害)。 */
+    if (app.config_path) {
+        config_save(app.cfg, app.config_path);
     }
 
     if (use_script) ui_script_free(&script);

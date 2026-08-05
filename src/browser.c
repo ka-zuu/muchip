@@ -182,3 +182,13 @@ int browser_selected_path(const browser_t *b, char *out, unsigned long out_size)
     join_path(out, (size_t)out_size, b->cwd, b->items[b->selected].name);
     return 0;
 }
+
+int browser_select_by_name(browser_t *b, const char *name) {
+    for (int i = 0; i < b->count; i++) {
+        if (strcmp(b->items[i].name, name) == 0) {
+            b->selected = i;
+            return 1;
+        }
+    }
+    return 0;
+}

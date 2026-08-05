@@ -167,6 +167,27 @@ static int test_self_refresh_same_cwd_pointer(void) {
     return 0;
 }
 
+/* P6: F-13(last_pathの復元)がファイルを指していた場合、app.cの
+ * restore_last_path()は親ディレクトリを開いてからこの関数でカーソルを
+ * そのファイルへ合わせる。 */
+static int test_select_by_name(void) {
+    browser_t b;
+    memset(&b, 0, sizeof(b));
+    CHECK(browser_open_dir(&b, g_tmpdir, 0) == 0);
+    CHECK(b.count == 4); /* sub, apple.m3u, Archive.zip, Zoo.gbs */
+
+    CHECK(browser_select_by_name(&b, "Archive.zip") == 1);
+    CHECK(b.selected == 2);
+
+    /* 見つからない名前ではselectedを変えず0を返す。 */
+    b.selected = 0;
+    CHECK(browser_select_by_name(&b, "does_not_exist.gbs") == 0);
+    CHECK(b.selected == 0);
+
+    browser_free(&b);
+    return 0;
+}
+
 int main(void) {
     setup_tmpdir();
 
@@ -175,6 +196,7 @@ int main(void) {
     if (test_enter_and_up()) return 1;
     if (test_root_boundary()) return 1;
     if (test_self_refresh_same_cwd_pointer()) return 1;
+    if (test_select_by_name()) return 1;
 
     printf("test_browser: すべて成功\n");
     return 0;
