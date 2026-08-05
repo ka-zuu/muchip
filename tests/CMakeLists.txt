@@ -76,3 +76,20 @@ foreach(res ${UI_SMOKE_RESOLUTIONS})
     set_tests_properties(test_ui_smoke_${res} PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
 endforeach()
+
+# --- .muxapp パッケージ構造の検証 (P7) ---------------------------------------
+# scripts/package.sh の出力が muOS (JACARANDA/2601世代) が要求する構造に
+# なっていることを、クロスビルド成果物 (build-aarch64/mugbs) が無いホストや
+# CI でも確認する。package.sh が守るべき不変条件はバイナリの中身と無関係な
+# ので、テスト側がダミーファイルを --bin で渡し、aarch64向け strip は
+# --no-strip で回避する。
+#
+# PROJECT_VERSION を渡すのは、CMake が解釈した版番号と package.sh が
+# CMakeLists.txt から sed で読み取る版番号が食い違わないことを見るため。
+# zip/unzip が無い環境ではテスト側が 77 を返してスキップ扱いになる。
+add_test(NAME test_package
+    COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_package.sh
+            ${CMAKE_SOURCE_DIR}
+            ${CMAKE_CURRENT_BINARY_DIR}/package_test
+            ${PROJECT_VERSION})
+set_tests_properties(test_package PROPERTIES SKIP_RETURN_CODE 77)
