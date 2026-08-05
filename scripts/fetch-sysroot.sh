@@ -11,8 +11,8 @@
 # 実機のlibcも合わせて取得する。
 #
 # 使い方:
-#   ./scripts/fetch-sysroot.sh root@192.168.0.20
-#   ./scripts/fetch-sysroot.sh root@192.168.0.20 22   # ポート指定
+#   ./scripts/fetch-sysroot.sh root@<実機のIP>
+#   ./scripts/fetch-sysroot.sh root@<実機のIP> 22   # ポート指定
 #
 # パスワード認証の場合は scp/ssh がその都度プロンプトを出す
 # (このスクリプトにパスワードは埋め込まない)。
