@@ -2,7 +2,15 @@ cmake_minimum_required(VERSION 3.13)
 # libgme は C++ で書かれている (SPEC 4.1)。mugbs 自体のソースは C だが、
 # libgme を静的リンクする最終リンクは C++ ランタイム(libstdc++)を要求するため
 # CXX も有効化し、mugbs のリンカドライバを g++ に切り替える(下記 LINKER_LANGUAGE)。
-project(mugbs C CXX)
+#
+# VERSION は muGBS の唯一のバージョン情報源。scripts/package.sh が .muxapp の
+# ファイル名 (muGBS-<version>.muxapp) を決めるためにこの行を sed で直接読むので、
+# 「project(mugbs VERSION x.y.z ...)」を1行で書く形を崩さないこと
+# (tests/test_package.sh が CMake の解釈と package.sh の解釈の一致を検証する)。
+#
+# 0.9.x = MUST要件(F-01〜F-08)を満たし実機で動作する状態。SHOULD/NICE要件
+# (F-10 チャンネルミュート / F-14 ビジュアライザ / F-20 EQ 等、P8) が入ったら 1.0.0。
+project(mugbs VERSION 0.9.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -59,6 +67,13 @@ add_executable(mugbs
 )
 
 target_include_directories(mugbs PRIVATE src)
+
+# 実機の log.txt からどのビルドか判別できるように、バージョンを埋め込む。
+target_compile_definitions(mugbs PRIVATE MUGBS_VERSION="${PROJECT_VERSION}")
+
+# install() は意図的に用意していない。scripts/package.sh が packaging/muGBS/ の
+# 資材とクロスビルド済みバイナリを直接ステージングして .muxapp を作るため、
+# CMake の install ツリーを経由すると中間層が1つ増えるだけで得が無い。
 
 # --- SDL2 -----------------------------------------------------------------
 if(TARGET_HOST)

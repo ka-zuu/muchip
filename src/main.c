@@ -15,6 +15,13 @@
 #include "player.h"
 #include "playlist.h"
 
+/* CMakeLists.txt の project(mugbs VERSION ...) から
+ * target_compile_definitions() で渡される。tests/ から main.c を単体ビルドする
+ * ことは無いが、保険として既定値を持たせておく。 */
+#ifndef MUGBS_VERSION
+#define MUGBS_VERSION "0.0.0-dev"
+#endif
+
 typedef struct {
     const char *path;      /* 開く対象 (.gbs/.m3u/.zip)。GUIモードでは省略可(Browserから開始) */
     int list_only;         /* --list: プレイリストを列挙して終了 */
@@ -51,7 +58,8 @@ static void print_usage(const char *prog) {
         "                     (環境変数 MUGBS_START_DIR でも指定できるが、そちらは\n"
         "                      config.ini の last_path が無いときだけ使われる)\n"
         "  --window WxH       GUIをこのウィンドウサイズで起動する(未指定なら検出した解像度でフルスクリーン)\n"
-        "  -h, --help         このヘルプを表示する\n",
+        "  -h, --help         このヘルプを表示する\n"
+        "  --version          バージョンを表示して終了する\n",
         prog);
 }
 
@@ -102,6 +110,9 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
             else if (strcmp(m, "one") == 0) out->repeat_mode = REPEAT_ONE;
             else if (strcmp(m, "all") == 0) out->repeat_mode = REPEAT_ALL;
             else { LOG_ERR("--repeat の値が不正です: %s (none|one|all)", m); return -1; }
+        } else if (strcmp(a, "--version") == 0) {
+            printf("muGBS %s\n", MUGBS_VERSION);
+            exit(0);
         } else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
             print_usage(argv[0]);
             exit(0);
@@ -204,6 +215,10 @@ int main(int argc, char **argv) {
         print_usage(argv[0]);
         return 2;
     }
+
+    /* 実機では mux_launch.sh が出力を log.txt へリダイレクトするため、
+     * この1行がユーザーから送られてきたログのビルド特定に使える。 */
+    LOG_INFO("muGBS %s", MUGBS_VERSION);
 
     if (args.list_only || args.cli_mode) {
         /* CLIハーネス(CI・自動検証用)。P1〜P4から変わらず、必ずファイル指定が要る。 */
