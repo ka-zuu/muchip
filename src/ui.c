@@ -104,7 +104,14 @@ int ui_init(ui_t *ui, int req_w, int req_h, int fullscreen) {
     LOG_INFO("UI解像度: %dx%d%s", w, h, fullscreen ? " (fullscreen)" : "");
 
     Uint32 flags = SDL_WINDOW_SHOWN;
-    if (fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    if (fullscreen) {
+        flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    } else {
+        /* --window での起動時のみリサイズ可能にする(実機は常にfullscreen)。
+         * ホストでウィンドウを掴んで伸縮させ、複数解像度でのレイアウトを
+         * 手軽に確認できるようにするため(P6)。 */
+        flags |= SDL_WINDOW_RESIZABLE;
+    }
 
     ui->win = SDL_CreateWindow("muGBS", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                 w, h, flags);
@@ -143,17 +150,19 @@ int ui_init(ui_t *ui, int req_w, int req_h, int fullscreen) {
 
     /* SPEC 6.2: 640x480 を基準にスケールする。フォントサイズ・余白・行高
      * すべてをこの scale から導出し、以降どこにも座標を決め打ちしない。 */
-    ui->metrics.scale = SDL_min((float)ui->screen_w / 640.0f, (float)ui->screen_h / 480.0f);
-    if (ui->metrics.scale <= 0.0f) ui->metrics.scale = 1.0f;
-
-    ui->metrics.glyph = ui_glyph_size(ui, UI_TEXT_BODY);
-    ui->metrics.pad = ui_glyph_size(ui, UI_TEXT_SMALL) / 2;
-    if (ui->metrics.pad < 2) ui->metrics.pad = 2;
-    ui->metrics.line_h = ui->metrics.glyph + ui->metrics.pad;
-    ui->metrics.header_h = ui->metrics.line_h + ui->metrics.pad * 2;
-    ui->metrics.footer_h = ui->metrics.line_h + ui->metrics.pad * 2;
+    ui_metrics_compute(ui->screen_w, ui->screen_h, &ui->metrics);
 
     return 0;
+}
+
+void ui_handle_resize(ui_t *ui) {
+    int w = ui->screen_w, h = ui->screen_h;
+    if (SDL_GetRendererOutputSize(ui->ren, &w, &h) == 0) {
+        ui->screen_w = w;
+        ui->screen_h = h;
+    }
+    ui_metrics_compute(ui->screen_w, ui->screen_h, &ui->metrics);
+    LOG_INFO("UI解像度を再計算しました: %dx%d", ui->screen_w, ui->screen_h);
 }
 
 void ui_shutdown(ui_t *ui) {
@@ -186,10 +195,44 @@ void ui_draw_rect(ui_t *ui, ui_rect_t r, SDL_Color color) {
     SDL_RenderDrawRect(ui->ren, &sr);
 }
 
-int ui_glyph_size(const ui_t *ui, ui_text_size_t size) {
-    int px = (int)(GLYPH_PX * (int)size * ui->metrics.scale + 0.5f);
+int ui_glyph_size_for(float scale, ui_text_size_t size) {
+    int px = (int)(GLYPH_PX * (int)size * scale + 0.5f);
     if (px < GLYPH_PX) px = GLYPH_PX;
     return px;
+}
+
+int ui_glyph_size(const ui_t *ui, ui_text_size_t size) {
+    return ui_glyph_size_for(ui->metrics.scale, size);
+}
+
+void ui_metrics_compute(int screen_w, int screen_h, ui_metrics_t *out) {
+    float scale = SDL_min((float)screen_w / 640.0f, (float)screen_h / 480.0f);
+    if (scale <= 0.0f) scale = 1.0f;
+    out->scale = scale;
+
+    out->glyph = ui_glyph_size_for(scale, UI_TEXT_BODY);
+
+    /* pad は「クランプ後のUI_TEXT_SMALLのグリフサイズ/2」ではなく scale から
+     * 直接導出する。以前の実装(ui_glyph_size(ui, UI_TEXT_SMALL)/2)は
+     * ui_glyph_size_for() の8px下限のせいで scale∈[0.5, 1.18) の全域で
+     * pad=4に固定されてしまい、320x240等の小さい解像度で余白が
+     * 詰まりすぎる不具合があった(P6で発見)。 */
+    out->pad = (int)(4.0f * scale + 0.5f);
+    if (out->pad < 2) out->pad = 2;
+
+    out->line_h = out->glyph + out->pad;
+    out->header_h = out->line_h + out->pad * 2;
+    out->footer_h = out->line_h + out->pad * 2;
+
+    /* header_h+footer_h が screen_h 以上になると、app.c の list_rect() が
+     * 負の高さを返してしまう(極端に低い解像度で発生し得る)。
+     * その場合は両者の合計を screen_h の半分に収める(比率1:1を維持)。 */
+    if (screen_h > 0 && out->header_h + out->footer_h >= screen_h) {
+        int budget = screen_h / 2;
+        if (budget < 2) budget = screen_h > 1 ? screen_h - 1 : 0;
+        out->header_h = budget / 2;
+        out->footer_h = budget - out->header_h;
+    }
 }
 
 int ui_text_width(const ui_t *ui, ui_text_size_t size, const char *s) {

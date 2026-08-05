@@ -139,6 +139,10 @@ static ui_rect_t list_rect(app_t *app) {
     r.y = app->ui.metrics.header_h;
     r.w = app->ui.screen_w - app->ui.metrics.pad * 2;
     r.h = app->ui.screen_h - app->ui.metrics.header_h - app->ui.metrics.footer_h;
+    /* ui_metrics_compute() 側でクランプしているため通常は起きないが、
+     * 呼び出し側の防御としても負値を許さない。 */
+    if (r.w < 0) r.w = 0;
+    if (r.h < 0) r.h = 0;
     return r;
 }
 
@@ -567,6 +571,14 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
                 app_dispatch(&app, a);
                 if (!app.running) break;
             }
+        }
+
+        /* --window で起動した場合、ウィンドウをドラッグして伸縮できる
+         * (ui.cのSDL_WINDOW_RESIZABLE)。--ui-scriptはinput_pollを経由しない
+         * ためこのフラグは立たないが、ヘッドレステストはウィンドウ操作を
+         * 行わないので実害は無い。 */
+        if (input_take_window_resized(&app.input)) {
+            ui_handle_resize(&app.ui);
         }
 
         if (app.pl && player_is_track_ended(&app.player)) {

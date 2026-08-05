@@ -173,6 +173,16 @@ int input_poll(input_t *in, input_action_t *out) {
             *out = INPUT_NONE;
             return 1;
 
+        case SDL_WINDOWEVENT:
+            if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                /* SDL_WINDOWEVENT_RESIZED ではなくこちらを見る: ドラッグでの
+                 * リサイズだけでなく、プログラムによるサイズ変更・
+                 * フルスクリーン切り替えでも発火するため。 */
+                in->window_resized = 1;
+            }
+            *out = INPUT_NONE;
+            return 1;
+
         case SDL_JOYBUTTONDOWN:
             /* GameControllerとして開けているデバイスからのJOYBUTTONDOWNは
              * CONTROLLERBUTTONDOWNと二重に届く(SDLがGameControllerを
@@ -190,4 +200,10 @@ int input_poll(input_t *in, input_action_t *out) {
             *out = INPUT_NONE;
             return 1;
     }
+}
+
+int input_take_window_resized(input_t *in) {
+    int v = in->window_resized;
+    in->window_resized = 0;
+    return v;
 }

@@ -55,6 +55,23 @@ typedef struct {
 int ui_init(ui_t *ui, int req_w, int req_h, int fullscreen);
 void ui_shutdown(ui_t *ui);
 
+/* scale だけからグリフ1文字分の正方形ピクセルサイズを求める純関数。
+ * ui_t を必要としないため、SDL_Init無しでテストできる(tests/test_ui_metrics.c)。
+ * ui_glyph_size(ui, size) はこれの薄いラッパ。 */
+int ui_glyph_size_for(float scale, ui_text_size_t size);
+
+/* 出力解像度(ピクセル)から ui_metrics_t を導出する純関数。SPEC 6.2 の
+ * scale = min(w/640, h/480) を基準に、フォントサイズ・余白・行高すべてを
+ * ここから導出する。header_h+footer_h が screen_h を超えないよう
+ * クランプする(極端に低い解像度で list_rect() の高さが負にならないため)。 */
+void ui_metrics_compute(int screen_w, int screen_h, ui_metrics_t *out);
+
+/* レンダラの出力サイズを取り直して metrics を再計算する。
+ * レイアウトは毎フレーム metrics から導出されキャッシュを持たないため、
+ * これを呼ぶだけで次フレームから新しい解像度になる
+ * (SDL_WINDOWEVENT_SIZE_CHANGED を受けたときに呼ぶ。P6)。 */
+void ui_handle_resize(ui_t *ui);
+
 void ui_clear(ui_t *ui, SDL_Color color);
 void ui_present(ui_t *ui);
 

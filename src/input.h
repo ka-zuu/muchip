@@ -47,6 +47,13 @@ typedef struct {
     /* L2/R2(アナログトリガー軸)のエッジ検出用の直前の押下状態。 */
     int trigger_l_down;
     int trigger_r_down;
+
+    /* SDL_WINDOWEVENT_SIZE_CHANGED を受けたら1。input_take_window_resized()で
+     * 読んでクリアする。ウィンドウリサイズは input_action_t の語彙に
+     * 入れない(action表は[input]設定と--ui-scriptの語彙も兼ねており、
+     * リサイズはユーザーが割り当てる操作ではないため)。フラグ方式なら
+     * ドラッグ中に大量に飛ぶイベントも1フレーム1回の再計算にまとまる。 */
+    int window_resized;
 } input_t;
 
 /* 起動時に一度呼ぶ。SDL_GameControllerOpen()を試み、開けたコントローラを
@@ -61,5 +68,9 @@ void input_shutdown(input_t *in);
  * 論理アクションに対応しない場合は INPUT_NONE を書いて非0を返す
  * (呼び出し側はループでポーリングを続ければよい)。 */
 int input_poll(input_t *in, input_action_t *out);
+
+/* 直前の input_poll() の呼び出し群の間にウィンドウサイズ変更があれば1を
+ * 返し、内部フラグをクリアする(呼び出し側はui_handle_resize()を呼ぶ)。 */
+int input_take_window_resized(input_t *in);
 
 #endif /* MUGBS_INPUT_H */

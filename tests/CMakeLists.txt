@@ -29,6 +29,21 @@ add_executable(test_browser test_browser.c ../src/browser.c)
 target_include_directories(test_browser PRIVATE . ../src)
 add_test(NAME test_browser COMMAND test_browser)
 
+# P6で追加した ui_metrics_compute()/ui_glyph_size_for() (SDL_Init不要な純関数)の
+# 単体テスト。ui.c 全体をリンクする必要があるためSDL2は要るが、SDL_Initは
+# 一度も呼ばない。SDL2の解決方法はルートCMakeLists.txtのmugbs本体と同じ
+# (find_package はそちらで既に呼ばれておりTARGET SDL2::SDL2/SDL2_LIBRARIES は
+# このサブディレクトリからも見える)。
+add_executable(test_ui_metrics test_ui_metrics.c ../src/ui.c)
+target_include_directories(test_ui_metrics PRIVATE . ../src)
+if(TARGET SDL2::SDL2)
+    target_link_libraries(test_ui_metrics PRIVATE SDL2::SDL2)
+else()
+    target_include_directories(test_ui_metrics PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_ui_metrics PRIVATE ${SDL2_LIBRARIES})
+endif()
+add_test(NAME test_ui_metrics COMMAND test_ui_metrics)
+
 # --- ヘッドレスUIスモークテスト (P5) ----------------------------------------
 # app.c の画面遷移(Browser/Player/TrackList)がクラッシュしないことを、
 # 実際にmugbs本体をSDL_VIDEODRIVER=dummy/SDL_AUDIODRIVER=dummyの下で
@@ -47,8 +62,17 @@ add_custom_command(
 )
 add_custom_target(ui_smoke_fixture ALL DEPENDS ${UI_SMOKE_GBS})
 
-add_test(NAME test_ui_smoke
-    COMMAND mugbs --window 320x240 --start-dir ${UI_SMOKE_DIR}
-                  --ui-script ${CMAKE_CURRENT_SOURCE_DIR}/ui_smoke.script)
-set_tests_properties(test_ui_smoke PROPERTIES
-    ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+# P6: SPEC 6.2「解像度非依存」の完了条件(複数解像度でレイアウトが破綻しない)を
+# CTestでも見るため、実機やその他muOS対応機種を代表する複数の解像度で
+# 同じスクリプトを回す。640x480=実機(RG35XX PRO)、720x720=RG CubeXX相当、
+# 1024x768=TrimUI Brick相当。--config は必ず個別に指定する
+# (省略するとカレントディレクトリに config.ini を書き出してしまう)。
+set(UI_SMOKE_RESOLUTIONS 320x240 480x320 640x480 720x720 1024x768 1280x720)
+foreach(res ${UI_SMOKE_RESOLUTIONS})
+    add_test(NAME test_ui_smoke_${res}
+        COMMAND mugbs --window ${res} --start-dir ${UI_SMOKE_DIR}
+                      --config ${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_${res}.ini
+                      --ui-script ${CMAKE_CURRENT_SOURCE_DIR}/ui_smoke.script)
+    set_tests_properties(test_ui_smoke_${res} PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+endforeach()
