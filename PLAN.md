@@ -72,6 +72,67 @@ SPEC 5.2 は「参照ファイルが複数なら自前でプレイリストエ�
 薄い前処理に徹する。トラック番号解釈・曲名・曲長の抽出は常に libgme に委譲される。
 参照ファイルが1種類だけの場合はセグメントが1つになるため、特別扱いの分岐は不要。
 
+## P7準備メモ: SDL2の扱いに関する調査（実装前の事前調査）
+
+P7（クロスコンパイル・muxappパッケージング）に本格着手する前に、SPEC 8.3 が
+警告する「実機から SDL2 を抜かないと動かない可能性が高い」を、実際に検証
+する／裏付けを取る調査を行った。まだ実機での検証（sysroot抽出・実機ビルド）
+はしていないが、机上調査の結論を記録する。
+
+### 調査した選択肢と結果
+
+1. **Debian bullseye の `libsdl2-dev:arm64` をそのままクロスリンクする案**
+   `libSDL2-2.0.so.0` の `NEEDED` を実際に `readelf -d` で確認したところ、
+   X11 / Wayland / PulseAudio / libdrm / libgbm 等のデスクトップ環境向け
+   ライブラリに**直接リンク**されていた（dlopenベースの遅延ロードではない）。
+   ELFの仕様上、これらが1つでも実機に無ければ `libSDL2.so` 自体のロードが
+   失敗する。muOSのようなヘッドレス組み込みLinuxにX11/Waylandフルスタックが
+   入っている可能性は低く、**この案は成立しない可能性が高いと判断し、
+   実機での検証(tools/sdl_probe.c を使った比較実験)は行わずに見送った**。
+
+2. **`rg35xx-cfw`（Batocera系）の SDK** (`arm-buildroot-linux-gnueabihf_sdk`)
+   armhf（32bit）向けであり、SPEC が指定する aarch64（64bit）と
+   アーキテクチャが異なるため不採用。
+
+3. **`simotek/rg35xx-plus-aarch64-SDL2-SDK`**（RG35XX plus/H向け、aarch64）
+   README に "The SDL2 implementation on the device is different from the
+   standard ubuntu one" と明記されており、**同系統デバイスで実機SDL2が
+   標準ディストリのものと異なる**ことが実例として確認できた
+   （SPEC 8.3の警告を裏付ける）。ただしこれはRG35XX plus/Hの(muOSとは限らない)
+   OS環境向けであり、そのまま流用はしない。`find_dev_packages.sh` で実機の
+   インストール済みパッケージを列挙し `download_and_extract_debs.sh` で
+   対応するdevパッケージを取得する、という自動化アプローチは参考になる。
+
+4. **XMPlayer (`atalaygrgn/XMPlayer`) の実際の `.muxapp` を展開して検証**
+   （最も参考になった）。`v0.2.1` の `.muxapp` を実際にダウンロード・展開し、
+   同梱バイナリの `NEEDED` を確認した:
+   - `bin/love` → `liblove-11.5.so` に依存
+   - `libs/liblove-11.5.so` → `libSDL2-2.0.so.0` に依存**するが、
+     `libs/` フォルダには libSDL2 自体は同梱されていない**
+   - muOS純正の入力ヘルパー `bin/gptokeyb2` も同様に `libSDL2-2.0.so.0` を
+     動的リンクで要求するが同梱していない
+
+   **結論**: muOSは標準の共有ライブラリ検索パス上に、動作するSDL2を
+   既に提供している。実際に公開され動作している複数のバイナリ（XMPlayer、
+   muOS純正 gptokeyb2）がこれを裏付けている。
+
+### 現時点での方針（実機検証前の暫定結論）
+
+- **クロスビルド時の sysroot には、実機から抜いた SDL2 のヘッダ＋`.so`
+  （リンク用）が引き続き必要**（SPEC 8.3の方針通り。上記1の理由で
+  Debian標準品では代替できない可能性が高い）
+- **一方、`.muxapp` の `lib/` に SDL2 自体を同梱する必要は無さそう**。
+  実機に既にあるものへ動的リンクするだけでよい（SPEC 9.1 の `lib/`
+  コメント「静的リンクできなかった依存があれば」の対象から SDL2 は外れる、
+  という解釈になる）。muxappパッケージがシンプルになる
+- `tools/sdl_probe.c` / `docker/Dockerfile.sdl-probe`
+  （video/audioドライバ名を出力する診断バイナリ）は、上記1の実験用に
+  用意したが未使用。sysroot抽出後のビルドが実機で正しく動くかの
+  確認ツールとして P7 で引き続き使う予定
+- **未検証・次のアクション**: 実機にSSHで入り、`/usr/lib/libSDL2*` と
+  `/usr/include/SDL2/` の実在・バージョンを確認し、sysroot/ を構成する
+  （SSH接続情報待ち）
+
 ## 検証手順
 
 ```sh
