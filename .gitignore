@@ -5,6 +5,9 @@ sysroot/
 log.txt
 config.ini
 config.ini.tmp
+# 上の config.ini はスラッシュを含まないので全階層にマッチする。パッケージに
+# 同梱する設定テンプレだけは追跡する(実行時に生成される config.ini とは別物)。
+!/packaging/muGBS/config.ini
 *.o
 *.a
 compile_commands.json

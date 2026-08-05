@@ -15,7 +15,14 @@ typedef struct {
                                   留まる。T-12)。NULLならBrowser画面から始める
                                   (--start-dir/last_pathの優先順はapp.c参照)。 */
     const char *start_dir;    /* Browserの開始ディレクトリ。NULLならlast_path、
+                                  それも無ければ fallback_start_dir、
                                   それも無ければカレントディレクトリ。 */
+    const char *fallback_start_dir; /* 環境変数 MUGBS_START_DIR (P7)。last_path が
+                                  まだ無い初回起動時だけ使われる開始ディレクトリ。
+                                  実機では mux_launch.sh が音楽フォルダを自動検出して
+                                  ここへ渡す。start_dir(--start-dir)と違い last_path
+                                  より優先度が低いため、F-13(前回の続きから開く)を
+                                  毎回上書きしてしまうことがない。 */
 
     int window_w, window_h;   /* 両方正なら、その解像度の非フルスクリーンウィンドウで
                                   起動する(--window。ホストでの複数解像度レイアウト

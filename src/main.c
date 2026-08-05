@@ -48,6 +48,8 @@ static void print_usage(const char *prog) {
         "                     (既定: 環境変数 MUGBS_CONFIG、無ければ ./config.ini)\n"
         "  --cli              SDL ウィンドウを開かずコンソールのみで動作する\n"
         "  --start-dir DIR    GUI起動時、Browserの開始ディレクトリを指定する\n"
+        "                     (環境変数 MUGBS_START_DIR でも指定できるが、そちらは\n"
+        "                      config.ini の last_path が無いときだけ使われる)\n"
         "  --window WxH       GUIをこのウィンドウサイズで起動する(未指定なら検出した解像度でフルスクリーン)\n"
         "  -h, --help         このヘルプを表示する\n",
         prog);
@@ -238,9 +240,13 @@ int main(int argc, char **argv) {
         LOG_ERR("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
+    /* 実機の mux_launch.sh は音楽フォルダを自動検出して MUGBS_START_DIR で渡してくる
+     * (P7)。--start-dir と違い last_path より優先度が低いので、F-13(前回の続きから
+     * 開く)を毎回潰さずに「初回起動時だけ音楽フォルダから始める」を実現できる。 */
     app_options_t opt = {
         .initial_path = args.path,
         .start_dir = args.start_dir,
+        .fallback_start_dir = getenv("MUGBS_START_DIR"),
         .window_w = args.window_w,
         .window_h = args.window_h,
         .ui_script_path = args.ui_script,
