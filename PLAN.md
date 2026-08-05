@@ -89,7 +89,13 @@ SHOULD/NICE要件 (P8) は次段の別プランとする。
       呼ばれずmuxfrontendがフロントに残ったままになるため
       (下記「P6実機確認の制約」参照)、`.muxapp`化してmux_launch.sh
       経由で起動できるようになってから確認する
-- [ ] P7 — クロスコンパイル、muxappパッケージング … 別プランで着手
+- [x] **P7** — クロスコンパイル、muxappパッケージング
+      完了条件: 実機で起動・再生できる。**達成**: `.muxapp`化し、muOS本番の
+      `extract.sh`（Archive Managerが内部で呼ぶのと同じスクリプト）経由での
+      インストール、`mux_launch.sh`経由での正式起動、物理ボタンだけでの
+      Browser→ファイルを開く→Player→TrackList→トラックジャンプ→Player→
+      Settingsで値変更→GUIDE単体で終了→再起動→F-13復元、まで実機で
+      すべて実測確認した。詳細は下記「P7の設計判断」参照
 - [ ] P8 — チャンネルミュート、ビジュアライザ、EQ … 別プランで着手
 
 ## P5の設計判断（SPEC 4.2/6章 との差分・前倒し）
@@ -455,6 +461,153 @@ SSHで接続し、上記の暫定方針を実際に検証した。
   （`SETUP_APP`呼び出しで`foreground_process`が`mugbs`に切り替わるか
   を見る）。
 
+## P7の設計判断
+
+### SPEC 9章からの逸脱（muOSの実装ソースと実物の`.muxapp`で裏取り済み）
+
+SPEC.md 9章は現行世代(JACARANDA/2601)に対して誤っている箇所がある。
+`MustardOS/internal`・`MustardOS/frontend`のソースと、実際に動作している
+`XMPlayer v0.2.1`の`.muxapp`を展開して確認した結果:
+
+1. **zip内トップは`mnt/mmc/MUOS/application/muGBS/`ではなく`muGBS/`**。
+   `internal/script/mux/extract.sh`が
+   `EXTRACT_ARCHIVE "Application" "$ARCHIVE" "$MUOS_STORE_DIR/application"`
+   (= `unzip -d /run/muos/storage/application`)に展開するため。XMPlayerの
+   全118エントリも`XMPlayer/`始まりだった。SPEC通りにすると
+   `.../application/mnt/mmc/MUOS/application/muGBS/`に展開されて動かない。
+   実機の`extract.sh`でも同じ実装であることを直接確認した。
+2. **`assets/font.ttf`は同梱しない**。`src/ui.c:7`が`vendor/font8x8`を
+   コンパイル時埋め込みしており、実行時の外部アセットロードはゼロ
+   (P5から既知)。
+3. **`lib/`は同梱しない**。SDL2だけが実機の動的ライブラリで、libgme/miniz
+   は静的、libstdc++/libgccも`-static-*`済み。
+4. **`SETUP_APP "$APP_BIN" ""`**とした(SPECのコードブロックは`"retro"`)。
+   第2引数はgamecontrollerdbのレイアウト強制で、retro/modernの差はA/B・
+   X/Yの入れ替えだけ。mugbsは論理ボタン(`SDL_CONTROLLER_BUTTON_*`)で
+   解釈するため、ユーザーがmuOS全体で選んでいるレイアウトを尊重すべき。
+   XMPlayerも`""`。SPEC 9.2自体がコードブロック(`"retro"`)と散文(`""`)で
+   自己矛盾している。
+5. **`glyph/`だけでなく`grid/`も必要**。`frontend/common/ui/glyph.c`の
+   `apply_app_glyph()`が`<app>/glyph/<ICON>.png`を、
+   `get_app_grid_glyph()`が`<app>/grid/<ICON>.png`を引く。既定テーマの
+   640x480はグリッド表示ではなくリスト表示だったため実機では`glyph/`側
+   が使われることを確認したが、テーマによってはグリッド表示になるため
+   両方同梱する判断は維持した。
+
+### `MUGBS_START_DIR`環境変数の追加(F-13を潰さないため)
+
+`mux_launch.sh`は起動のたびに音楽ディレクトリを自動検出する
+(`GET_VAR device storage/{rom,sdcard,usb}/mount`から候補を組み立て、
+`/mnt/mmc`等のハードコードはしない。`/run/muos/storage/music`はmuOSの
+BGM(.ogg)置き場でユーザーの音楽ライブラリではないので候補から除外)。
+
+これを`--start-dir`で渡すと`app.c`の優先順位が`--start-dir > last_path`の
+ため、P6で実装したF-13(前回開いた場所の復元)が実機で永久に発火しなく
+なる。そこで優先度の低い環境変数`MUGBS_START_DIR`を追加し、
+`--start-dir > last_path > MUGBS_START_DIR > "."`とした
+(`src/app.c`/`app.h`/`main.c`)。実機での再起動テストで、初回相当の
+起動時のみ自動検出フォルダから始まり、2回目以降は前回終了時の場所
+(ファイル単位で)に戻ることを実測確認した。
+
+### バージョン管理とパッケージング
+
+`CMakeLists.txt`の`project(mugbs VERSION 0.9.0 ...)`を唯一のバージョン
+情報源とした。0.9.0とした理由: MUST要件(F-01〜F-08)は満たしているが
+SHOULD/NICE要件(F-10チャンネルミュート/F-14ビジュアライザ/F-20 EQ等、
+P8)が未実装のため。P8完了で1.0.0に上げる想定。
+
+`scripts/package.sh`はSPEC 9.4の`cd package_root && zip -r ../x.muxapp .`
+をそのまま使わなかった。`./`エントリが混ざりトップレベル名も入らないため、
+上記の「zip内トップはmuGBS/」を満たせない。代わりに
+`(cd "$STAGE" && zip -r -X -q "$OUT" muGBS -x '.*' '*/.*' '__MACOSX/*')`
+とした。strip(実測: 3,710,736 -> 587,536バイト)はホストにクロスbinutils
+が無いため、無ければクロスビルド用Dockerイメージ経由で実行し、どちらも
+使えなければエラーで止める(黙ってstrip無しを出荷しない)。
+
+`tests/test_package.sh`はクロスビルド成果物が無いホスト/CIでも動くよう
+ダミーバイナリで構造だけを検証する。`# ICON:`の値と`glyph/`/`grid/`の
+ファイル名照合など、実機に持って行くまで気づけない種類のバグを機械的に
+潰す設計にした。
+
+### P7実機検証の結果(すべて確認済み)
+
+実機(muOS 2601.0 JACARANDA、192.168.0.20)で以下を確認した。
+
+**インストール**: `.muxapp`を`/mnt/mmc/ARCHIVE/`に置き、muOS本番の
+`/opt/muos/script/mux/extract.sh`(Archive Managerが内部で呼ぶのと同じ
+スクリプト)経由でインストールした。`/run/muos/storage/application/muGBS/`
+(実体は`/mnt/sdcard/MUOS/application/muGBS/`。`storage/rom/mount`=`/mnt/mmc`
+ではなく`/mnt/sdcard`側にbind mountされていた)に正しいレイアウト・
+パーミッション(`mux_launch.sh`/`bin/mugbs`とも`-rwxr-xr-x`)で展開された。
+
+**P5/P6の未解決問題(オーバーレイ・入力不達)の解消を確認**: アプリ一覧
+から物理ボタンでmuGBSを起動したところ、
+`cat /opt/muos/config/system/foreground_process`が`mugbs`を返し
+(`muxfrontend`ではない)、`pidof muxfrontend`が失敗する(プロセスが
+存在しない)ことを確認した。`/dev/fb0`のスクリーンショットでもmuOSの
+UIの重なりは一切無く、P5/P6で記録した不具合が`mux_launch.sh`経由の
+正式起動で完全に解消することを実機で裏付けた。
+
+**物理ボタンでの一連の操作(すべてユーザーが実機で操作、Claudeは
+SSH側でfb0スクリーンショット取得とログ確認を担当)**:
+Browser(`GB`フォルダ)→合成GBS+m3u(4トラック)を開く→Player(再生中の
+経過時間が進むことを確認)→X でTrackList(**P5から実機未確認だった
+持ち越し項目。今回初めて実機で撮影・動作確認できた**)→トラックへ
+ジャンプ(Track 1→Track 3、ログの`再生: [3/4] "Track 03"`で確認)→
+Player→Start でSettings→LEFT/RIGHTでVolumeを80→60に変更→B で戻る
+(`config.ini`に`volume = 60`が保存される)→**GUIDE単体ボタンで終了**
+(muOSのアプリ一覧`アプリケーション`に戻り、`muGBS プレーヤー`が
+アイコン付き・日本語名で表示されることを確認)。
+
+**F-13(前回の続きから開く)の実機確認**: 再度起動したところ、
+`last_path`に保存されていた`/mnt/sdcard/ROMS/GB/Game.m3u`から
+「ディレクトリとして開こうとして失敗→ファイルとして扱いカーソルを
+合わせる」というフォールバック(`src/app.c`の`restore_last_path()`)が
+実機でも正しく動作し、`GB`フォルダが開いて`Game.m3u`にカーソルが
+合った状態(終了直前と同じ状態)で復元された。`volume = 60`も維持
+されていた。
+
+**SIGTERM(スリープ・電源断相当)での終了確認**: `kill -TERM $(pidof mugbs)`
+を送ったところ1秒以内に終了し、`config.ini`が保存され(`md5sum`で変化を
+確認)、`foreground_process`が`muxfrontend`に正常復帰した。`quit.sh`が
+スリープ・電源断時にこの経路を通るため、正常系と同じ結果になることを
+確認できた。
+
+**アプリ一覧でのグリフ・言語表示**: `アプリケーション`一覧に
+`glyph/mugbs.png`のアイコンと`mux_lang.ini`の日本語名
+`muGBS プレーヤー`が正しく表示されることを確認した。
+
+**未実施(GUIDE単体で終了が確認できたため優先度を下げた)**:
+Start+Select同時押しでの終了は別経路として実装済みだが、今回は未検証
+のまま。
+
+**発見した副産物**: 実機のSD2(`/mnt/sdcard`、`storage/sdcard/mount`)
+には`ROMS/GB`等コンソール別のジャンルフォルダはあるが、専用の
+`MUSIC`/`ROMS/GBS`フォルダは無かった。`mux_launch.sh`の自動検出は
+候補が無い場合`ROMS`直下にフォールバックする設計だったため、実機でも
+`start dir: /mnt/sdcard/ROMS`とログに出て正しくフォールバックすることを
+確認した(汎用ROMSフォルダしか無い機体では、ユーザーは手動で該当フォルダ
+まで潜る必要がある。P8以降でメディアライブラリのディレクトリ指定機能を
+実装する際に解消する想定)。
+
+### 実機検証中に発生したインシデントと安全策(記録として残す)
+
+C5の当初計画では「muOSの内部制御ファイル(`/tmp/app_go`/`/tmp/act_go`)を
+直接書き換えてアプリ起動をトリガーする」ことで物理ボタン操作を代替
+しようとしたが、`frontend.sh`のループが想定外の状態でスタックし、
+画面が固まる事象が発生した(`frontend.sh`を再起動することで実機は
+正常復旧し、データ破損等は無かった)。原因は特定できていない
+(`EXEC_MUX`が同期実行のため、実行中のUIモジュールプロセスを
+外部から`kill`すると、次のループ反復に必要な状態が壊れる可能性がある
+と推測している)。
+
+この経験を踏まえ、**物理ボタン操作が必要な検証はユーザーに実機で
+直接操作してもらい、Claudeはその間SSH側でスクリーンショット取得・
+ログ確認・状態確認を並行して行う**という分担に切り替えた。以降の
+検証(TrackList〜終了確認まで)はすべてこの方式で安全に完了できた。
+**今後、muOSの内部制御ファイルを外部から書き換えてUI遷移を
+トリガーする手法は、たとえ実機アクセス権があっても使わないこと。**
+
 ## 検証手順
 
 ```sh
@@ -488,33 +641,32 @@ cat /tmp/test.ini                     # 変更が保存されていることを�
 ./build/mugbs --config /tmp/test.ini  # last_path 等が復元されることを確認
 ```
 
-### クロスビルド・実機検証（実証済みの手順）
+### クロスビルド・パッケージング・実機検証（P7で確立。実証済みの手順）
 
 ```sh
 # 1. 実機からsysrootを構成 (初回のみ。実機のIP/ユーザーに合わせる)
 ./scripts/fetch-sysroot.sh root@<実機のIP>
 
-# 2. クロスビルド用Dockerイメージを作成 (sysroot/を上書き取り込みする)
-docker build -f docker/Dockerfile -t mugbs-crossbuild .
+# 2. クロスビルド (Dockerイメージが無ければ自動で作る)
+./scripts/build-aarch64.sh
+#   sysroot/ を更新した場合は ./scripts/build-aarch64.sh --rebuild-image
 
-# 3. クロスビルド
-docker run --rm -v "$(pwd):/work" -w /work mugbs-crossbuild bash -c '
-  cmake -B build-aarch64 -DTARGET_HOST=OFF -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake
-  cmake --build build-aarch64 -j$(nproc)
-'
+# 3. .muxapp を作る (strip・バージョン付けまで自動)
+./scripts/package.sh
+#   -> ./muGBS-0.9.0.muxapp
 
-# 4. 実機へ転送して実行 (mux_launch.sh経由でない場合はXDG_RUNTIME_DIRの手動exportが必要)
-scp build-aarch64/mugbs root@<実機のIP>:/root/
-ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
+# 4. 実機へ転送してインストール (正式ルート: Archive Manager)
+scp muGBS-0.9.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+# 実機で Applications > Archive Manager > muGBS-0.9.0 を選んで展開する
+# (SSH越しに /opt/muos/script/mux/extract.sh /mnt/mmc/ARCHIVE/muGBS-0.9.0.muxapp
+#  を直接叩いても同じ結果になる。Archive Managerが内部で呼ぶのと同一スクリプト)
 
-# 5. GUIをSDL_GameControllerとして実機のボタンで確認する場合 (P6):
-#    func.shが export する2つの環境変数を手動で再現する。
-#    ただしSETUP_APPを経由しないためmuxfrontendがフロントに残ったままになり、
-#    実際の物理ボタン対話操作はできない(「P6実機確認の制約」参照。P7で解消予定)。
-ssh root@<実機のIP> '. /opt/muos/script/var/func.sh; \
-  export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; \
-  export SDL_GAMECONTROLLERCONFIG_FILE=/usr/lib/gamecontrollerdb.txt; \
-  export SDL_GAMECONTROLLERCONFIG="$(grep "$(GET_VAR device sdl/name)" "$SDL_GAMECONTROLLERCONFIG_FILE")"; \
-  /root/mugbs --config /root/config.ini --start-dir /mnt/mmc/MUSIC'
-# ログに "GameControllerを検出しました: <デバイス名>" が出れば認識成功。
+# 5. アプリ一覧(Applications)から物理ボタンで起動する
+#    ログは実機の /run/muos/storage/application/muGBS/log.txt (=SD上の
+#    MUOS/application/muGBS/log.txt) に出る
 ```
+
+P6以前にあった「SSH直接起動でXDG_RUNTIME_DIR等を手動exportする」手順は、
+`mux_launch.sh`経由の正式起動であれば`func.sh`が自動で行うため不要になった。
+CLIハーネス(`--cli`)での単発確認だけしたい場合は、以前どおり手動exportが必要
+(`mux_launch.sh`を経由しないため)。

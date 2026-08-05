@@ -4,12 +4,15 @@ muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック�
 （曲名・曲長・ループ指定）を正しく扱う。詳細仕様は [`SPEC.md`](./SPEC.md)、
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
-現在のスコープは **コア再生エンジン + GUI + 設定ファイル + 解像度非依存化
-（P0〜P6）**。SDL2 の Browser/Player/TrackList/Settings 画面をホスト上で
-キーボード操作から通しで確認でき、`config.ini` の読み書き（終了時オート
-セーブ・直近パスの記憶）にも対応した。CLI ハーネス（`--list`/`--cli`。
-CI・自動検証用）も引き続き使える。実機向けのクロスビルド・パッケージング
-自体（P7、クロスビルド手順自体は下記の通り確立済み）は別プランで扱う。
+現在のスコープは **コア再生エンジン + GUI + 設定ファイル + 解像度非依存化 +
+muOS向けパッケージング（P0〜P7）**。SDL2 の Browser/Player/TrackList/Settings
+画面をホスト上でキーボード操作から通しで確認でき、`config.ini` の読み書き
+（終了時オートセーブ・直近パスの記憶）にも対応した。CLI ハーネス
+（`--list`/`--cli`。CI・自動検証用）も引き続き使える。`.muxapp` へパッケージ
+して実機の Archive Manager からインストールし、物理ボタンだけで
+Browser→Player→TrackList→Settings→終了まで一巡できることを実機で確認済み
+（下記「muOS へのインストール」参照）。チャンネルミュート・ビジュアライザ・
+EQ（P8）は別プランで扱う。
 
 ## ビルド（ホスト / 開発機）
 
@@ -136,20 +139,19 @@ v0.2.1）の `.muxapp` を展開して調べたところ、そのような自前
 ## 実機（muOS）向けクロスビルドについて【実機で検証済み】
 
 muOS 2601.0 (JACARANDA) 実機（Cortex-A53 aarch64）で、クロスビルドした
-`mugbs` が実際に映像・音声とも正常動作することを確認済み。GUI
-(Browser/Player画面) も実機の`mali`ドライバ上での描画を
-スクリーンショットで確認済み。P6では物理ボタンが`SDL_GameController`
-として認識されること（`GameControllerを検出しました: muOS-Keys`）も
-実機で確認した。詳細な調査経緯は [`PLAN.md`](./PLAN.md) の
-「P7準備メモ: SDL2の扱いに関する調査」節を参照。
+`mugbs` が実際に映像・音声とも正常動作することを確認済み。`.muxapp` に
+パッケージして実機の Archive Manager からインストールし、
+`mux_launch.sh` 経由の正式起動で、物理ボタンだけで
+Browser→ファイルを開く→Player→TrackList→トラックジャンプ→Player→
+Settingsで値変更→GUIDE単体ボタンで終了→再起動→前回の続きから復元、
+という一連の操作が実機で完結することを確認した（P7）。詳細な調査経緯・
+発見事項は [`PLAN.md`](./PLAN.md) の「P7の設計判断」節を参照。
 
-**未確認（P7で対応）:** SSHから直接バイナリを起動する検証方法では
-`SETUP_APP`（`func.sh`）を経由しないため `foreground_process` が
-`muxfrontend` のままになり、muOS側のUIがフロントに残って物理ボタンでの
-対話操作ができない（画面が薄く重なって描画される）。TrackList画面の
-実機確認、および物理ボタンでのBrowser/Player/Settings操作・終了の
-実地検証は、`.muxapp` 化して `mux_launch.sh` 経由で正式に起動できる
-ようになってから（P7）行う。
+P5/P6の時点では SSH から直接バイナリを起動する検証方法で `SETUP_APP`
+（`func.sh`）を経由しないため `foreground_process` が `muxfrontend` の
+ままになり、muOS側のUIがフロントに残って物理ボタンでの対話操作ができない
+という制約があった。`.muxapp` 化して `mux_launch.sh` 経由で正式に起動する
+ことでこの問題が解消することを実機で確認済み。
 
 muOS の SDL2 は独自のビデオドライバ（Allwinner H700系デバイス共通のMali
 GPU直結フレームバッファドライバ `mali`）を内蔵しており、**Debian の
@@ -188,30 +190,67 @@ sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能し�
    `readelf -d` の `NEEDED` を表示するので、libstdc++ が動的リンクに
    紛れ込む回帰（実機で `GLIBCXX_3.4.xx not found` になる）にすぐ気づける。
    期待する `NEEDED` は `libSDL2-2.0.so.0` / `libm.so.6` / `libc.so.6` の3つだけ
-3. 実機へ転送して実行する。`mux_launch.sh` 経由なら `func.sh` が
-   `XDG_RUNTIME_DIR`/`PIPEWIRE_RUNTIME_DIR` を自動でexportするが、
-   SSH生シェルから直接実行する場合は手動でexportが必要
-   （実機のオーディオはPipeWire経由のため）
+3. `.muxapp` を作る（strip・バージョン付けまで自動。詳細は次節）
    ```sh
-   scp build-aarch64/mugbs root@<実機のIP>:/root/
-   ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
-   # GUIを実機のボタンで確認する場合(P6): SDL_GameControllerとして認識させるため
-   # func.shが export する2つの環境変数を手動で再現する(値は実機の
-   # /usr/lib/gamecontrollerdb.txt から「muOS-Keys」等のデバイス名で引く)。
-   # ただしSETUP_APPを経由しないため muxfrontend がフロントに残ったままになり、
-   # 実際の対話操作はできない(上記「未確認」参照。.muxapp化後のP7で確認する)。
-   ssh root@<実機のIP> '. /opt/muos/script/var/func.sh; \
-     export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; \
-     export SDL_GAMECONTROLLERCONFIG_FILE=/usr/lib/gamecontrollerdb.txt; \
-     export SDL_GAMECONTROLLERCONFIG="$(grep "$(GET_VAR device sdl/name)" "$SDL_GAMECONTROLLERCONFIG_FILE")"; \
-     /root/mugbs --config /root/config.ini --start-dir /mnt/mmc/MUSIC'
+   ./scripts/package.sh    # -> ./muGBS-0.9.0.muxapp
    ```
 
 `sysroot/` はバイナリを含むため git 管理しない（`.gitignore` 済み）。
 再現性は `scripts/fetch-sysroot.sh` の再実行に依存する。
 
-muxappパッケージング（`mux_launch.sh` の実配置、`.muxapp` 化）自体は
-まだ未着手（P7本格着手時に対応）。
+SDLウィンドウを開かないCLIハーネス（`--cli`）だけを単発で試したい場合は、
+`mux_launch.sh` を経由せず直接転送して実行してもよい（実機のオーディオは
+PipeWire経由のため `XDG_RUNTIME_DIR`/`PIPEWIRE_RUNTIME_DIR` の手動exportが
+必要。`mux_launch.sh` 経由ならこれらは `func.sh` が自動で行う）:
+
+```sh
+scp build-aarch64/mugbs root@<実機のIP>:/root/
+ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
+```
+
+## muOS へのインストール（P7、実機で検証済み）
+
+```sh
+scp muGBS-0.9.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+```
+
+実機で **Applications > Archive Manager** から `muGBS-0.9.0` を選んで
+展開するとインストールされる（`/run/muos/storage/application/muGBS/`
+に配置される。実体の物理パスは機種のSD構成によって変わるため
+`/mnt/mmc` 等をコードにハードコードしていない）。以後はアプリ一覧
+（Applications）に「muGBS プレーヤー」がアイコン付きで表示され、
+物理ボタンで起動できる。
+
+`config.ini` はアプリディレクトリ直下に置かれ、終了時にオートセーブ
+される（前回開いた場所・音量などの設定が復元される。F-13）。
+`mux_launch.sh` は起動のたびに実機のSDカードから音楽ディレクトリを
+自動検出し（`MUSIC`/`Music`/`ROMS/GBS`等を優先的に探索、無ければ
+`ROMS`直下にフォールバック）、`config.ini` にまだ `last_path` が
+無い初回起動時だけそこから始まる。
+
+終了は **GUIDEボタン単体**、または **Start+Select同時押し**（実機で
+GUIDE単体を確認済み）。
+
+### `.muxapp` を自分でビルドする
+
+`packaging/muGBS/` にアプリ本体以外の資材（`mux_launch.sh`・
+`mux_lang.ini`・`config.ini`・アイコン）が入っている。
+`scripts/package.sh` がこれとクロスビルド済みバイナリを合わせて
+`.muxapp`（実体はzip）を作る。
+
+```sh
+./scripts/build-aarch64.sh   # -> build-aarch64/mugbs
+./scripts/package.sh         # -> ./muGBS-<version>.muxapp
+```
+
+バージョンは `CMakeLists.txt` の `project(mugbs VERSION x.y.z ...)`
+が唯一の情報源（`./build/mugbs --version` でも確認できる）。
+`scripts/package.sh --bin PATH` で任意のバイナリを、`--no-strip` で
+strip無し生成も指定できる（`ctest -R test_package` が構造検証に使う）。
+
+アイコン（`packaging/muGBS/{glyph,grid}/mugbs.png`）は
+`tools/make_glyph.py`（Pillow使用）で生成したものをコミット済み。
+図案を変えたいときだけ再実行する。
 
 ## ライセンス / 同梱ソースについて
 
