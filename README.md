@@ -45,34 +45,58 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs       # 1トラック目を再生
 ```
 
-## 実機（muOS）向けクロスビルドについて【現時点では未検証】
+## 実機（muOS）向けクロスビルドについて【実機で検証済み】
 
-SPEC.md 8.3 節が定める重要な注意点をここに転記する。**実装が進み P7
-（クロスコンパイル・パッケージング）に着手する際は、必ずこの手順を実機で
-再確認してから進めること。**
+muOS 2601.0 (JACARANDA) 実機（Cortex-A53 aarch64）で、クロスビルドした
+`mugbs` が実際に映像・音声とも正常動作することを確認済み。詳細な調査経緯は
+[`PLAN.md`](./PLAN.md) の「P7準備メモ: SDL2の扱いに関する調査」節を参照。
 
-muOS の SDL2 はデバイス固有のバックエンド（KMS/DRM, fbdev, 回転処理）を
-含むため、**Debian の `libsdl2-dev:arm64` でビルドしたバイナリは実機で
-正しく動かない可能性が高い。**
+muOS の SDL2 は独自のビデオドライバ（Allwinner H700系デバイス共通のMali
+GPU直結フレームバッファドライバ `mali`）を内蔵しており、**Debian の
+`libsdl2-dev:arm64` でビルドしたバイナリは実機で正しく動かない**
+（依存する X11/Wayland/PulseAudio 等が実機に存在しないため、そもそも
+ロードに失敗する）。
 
-推奨手順（P7 で実施予定）:
+さらに実機の glibc (2.38) は Debian bullseye のクロスツールチェインが
+持つ glibc (2.31) より新しく、素朴にリンクすると実機SDL2が要求する
+新しいシンボルが解決できない。**Debian の `crossbuild-essential-arm64`
+は `--sysroot` フラグを無視し、常に `/usr/aarch64-linux-gnu` を
+sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能しない。
 
-1. 実機に SSH で入り、以下を取得してホスト側 `sysroot/` に配置する
+手順:
+
+1. 実機からSSH/SCPで `sysroot/` を構成する（SDL2のバージョンを実機の
+   `.so` から自動検出し、対応する upstream SDL2 のヘッダも取得する）
+   ```sh
+   ./scripts/fetch-sysroot.sh root@<実機のIP>
    ```
-   /usr/lib/libSDL2-2.0.so*
-   /usr/lib/libSDL2_ttf*.so*      (使う場合)
-   /usr/include/SDL2/             (無ければ同バージョンのヘッダをGitHubから取得)
+2. `docker/Dockerfile` がビルド時に `sysroot/` の内容を
+   `/usr/aarch64-linux-gnu/{lib,include/SDL2}` へ上書きコピーする
+   ```sh
+   docker build -f docker/Dockerfile -t mugbs-crossbuild .
    ```
-2. `cmake/toolchain-aarch64.cmake` の `CMAKE_SYSROOT` がこの `sysroot/` を
-   指すようにする（既にそう書いてある）
-3. リンクは動的（実機の SDL2 をそのまま使う）
-4. `docker/Dockerfile` のクロスビルド環境で
-   `cmake -B build-aarch64 -DTARGET_HOST=OFF -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake`
-   してビルドし、実機で起動確認する
+3. クロスビルド（`cmake/toolchain-aarch64.cmake` はコンパイラ指定のみ。
+   SDL2は `/usr/aarch64-linux-gnu/include/SDL2` を直接参照する）
+   ```sh
+   docker run --rm -v "$(pwd):/work" -w /work mugbs-crossbuild bash -c '
+     cmake -B build-aarch64 -DTARGET_HOST=OFF -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake
+     cmake --build build-aarch64 -j$(nproc)
+   '
+   ```
+4. 実機へ転送して実行する。`mux_launch.sh` 経由なら `func.sh` が
+   `XDG_RUNTIME_DIR`/`PIPEWIRE_RUNTIME_DIR` を自動でexportするが、
+   SSH生シェルから直接実行する場合は手動でexportが必要
+   （実機のオーディオはPipeWire経由のため）
+   ```sh
+   scp build-aarch64/mugbs root@<実機のIP>:/root/
+   ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
+   ```
 
-現時点（P0〜P4）ではこの経路は**まだ一度もビルドしていない**。
-`docker/Dockerfile` と `cmake/toolchain-aarch64.cmake` は SPEC の骨子を
-そのまま置いてあるだけの未検証状態である。
+`sysroot/` はバイナリを含むため git 管理しない（`.gitignore` 済み）。
+再現性は `scripts/fetch-sysroot.sh` の再実行に依存する。
+
+muxappパッケージング（`mux_launch.sh` の実配置、`.muxapp` 化）自体は
+まだ未着手（P7本格着手時に対応）。
 
 ## ライセンス / 同梱ソースについて
 
@@ -87,7 +111,7 @@ muOS の SDL2 はデバイス固有のバックエンド（KMS/DRM, fbdev, 回�
 - `gme_play()` の第2引数は **ステレオインタリーブされた `short` の個数**
   であり、フレーム数でもバイト数でもない。SDL オーディオコールバックが
   渡す `len`（バイト数）は `len / sizeof(short)` で変換する。
-  `len / 4` を渡すと倍速再生になる（`src/audio.c` 参照、P1 で追加予定）。
+  `len / 4` を渡すと倍速再生になる（`src/audio.c` 参照）。
 - `gme_*` API はスレッドセーフでない。オーディオコールバックとメインスレッド
   の両方から `Music_Emu*` に触るため、`SDL_LockAudioDevice()` /
   `SDL_UnlockAudioDevice()` で保護する。

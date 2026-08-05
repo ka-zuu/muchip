@@ -116,22 +116,67 @@ P7（クロスコンパイル・muxappパッケージング）に本格着手す
    既に提供している。実際に公開され動作している複数のバイナリ（XMPlayer、
    muOS純正 gptokeyb2）がこれを裏付けている。
 
-### 現時点での方針（実機検証前の暫定結論）
+### 実機検証結果（確定）
 
-- **クロスビルド時の sysroot には、実機から抜いた SDL2 のヘッダ＋`.so`
-  （リンク用）が引き続き必要**（SPEC 8.3の方針通り。上記1の理由で
-  Debian標準品では代替できない可能性が高い）
-- **一方、`.muxapp` の `lib/` に SDL2 自体を同梱する必要は無さそう**。
-  実機に既にあるものへ動的リンクするだけでよい（SPEC 9.1 の `lib/`
-  コメント「静的リンクできなかった依存があれば」の対象から SDL2 は外れる、
-  という解釈になる）。muxappパッケージがシンプルになる
-- `tools/sdl_probe.c` / `docker/Dockerfile.sdl-probe`
-  （video/audioドライバ名を出力する診断バイナリ）は、上記1の実験用に
-  用意したが未使用。sysroot抽出後のビルドが実機で正しく動くかの
-  確認ツールとして P7 で引き続き使う予定
-- **未検証・次のアクション**: 実機にSSHで入り、`/usr/lib/libSDL2*` と
-  `/usr/include/SDL2/` の実在・バージョンを確認し、sysroot/ を構成する
-  （SSH接続情報待ち）
+ユーザーの実機（**muOS 2601.0 JACARANDA、RG35XX PRO相当、Cortex-A53 aarch64**）に
+SSHで接続し、上記の暫定方針を実際に検証した。
+
+**実機の環境:**
+- OS: `MustardOS 2601.0 (JACARANDA)`、カーネル `4.9.170`
+- glibc: **2.38**（Buildroot、2024年ビルド）— Debian bullseyeの
+  crossbuild-essential-arm64が持つ glibc **2.31 より新しい**。
+  SPEC 8.2 は「新しすぎるglibcでリンクすると実機の古いglibcで動かない」
+  前提で「古めのベースイメージを使う」よう指示していたが、**実際は逆**
+  だった。この差分により、素朴にDebianのクロスgccでリンクすると
+  実機のSDL2が要求する新しいシンボル(`GLIBC_2.34`以降。pthread/dlopen等が
+  libc.so.6に統合された影響)が `undefined reference` になりリンクが通らない
+- SDL2: **バージョン2.28.5**、`NEEDED`は `libc.so.6`/`libm.so.6` のみという
+  極めてミニマルなビルド（X11/Wayland/PulseAudio等への依存なし）。
+  ビデオドライバは独自の **`mali`**（Allwinner H700系デバイス共通の
+  Mali GPU直結フレームバッファドライバ。`knulli-cfw/knulli-linux` に
+  同種のパッチが公開されている: `add-video-malifb-driver` 等）
+- オーディオ: ALSAの `default` PCM が **PipeWire** 経由
+  （`/etc/asound.conf`: `pcm.!default { slave.pcm { type pipewire } } }`）。
+  `func.sh` が `XDG_RUNTIME_DIR=/run` / `PIPEWIRE_RUNTIME_DIR=/run` を
+  exportしており、`mux_launch.sh` 経由の起動ではこれが自動的に設定される
+  （SSH生シェルから検証する際は手動でexportが必要）
+
+**クロスビルドで判明した重要な制約（Debian crossbuild-essential-arm64 固有）:**
+`aarch64-linux-gnu-gcc --sysroot=X` を指定しても、libc/libm等の暗黙リンクに
+使われるsysrootは無視され、常に `/usr/aarch64-linux-gnu`
+（パッケージビルド時に固定）が使われる
+（`gcc --sysroot=X -print-file-name=libc.so` で実測確認）。
+そのため **`CMAKE_SYSROOT` では正しく機能しない**。回避策として、
+実機から取得した `libc.so.6` / `libm.so.6` / `libpthread.so.0` /
+`libdl.so.2` / `ld-linux-aarch64.so.1` / `libSDL2*` を
+`/usr/aarch64-linux-gnu/{lib,include/SDL2}` へ直接上書き配置する
+（`docker/Dockerfile` の `COPY` で実施）。
+
+**検証結果:** `tools/sdl_probe.c` をこの方式でビルドし実機で実行したところ、
+映像（`mali`ドライバ、640x480@60Hz、ウィンドウ/レンダラ作成）・音声
+（`XDG_RUNTIME_DIR`設定後、ALSA経由で44100Hz/2ch再生）とも正常動作を確認。
+さらに **`mugbs` 本体**（合成GBS、2トラック）も実機で実際にクロスビルド・
+転送・実行し、正しくプレイリストを再生してトラック送りすることを確認した。
+
+**確立した構成要素:**
+- `scripts/fetch-sysroot.sh` — 実機からSSH/SCPで `sysroot/` を構成する
+  スクリプト（パスワード等は埋め込まない。SDL2バージョンを実機の`.so`から
+  自動検出し、対応するupstream SDL2のヘッダを取得する）
+- `docker/Dockerfile` — `sysroot/` の内容をクロスツールチェイン既定の
+  sysrootへ上書きコピーする
+- `cmake/toolchain-aarch64.cmake` — コンパイラ指定のみ
+  （`CMAKE_SYSROOT`は使わない。上記の理由をコメントに明記）
+- ルート `CMakeLists.txt` — クロスビルド時のSDL2は `find_package` を使わず
+  `/usr/aarch64-linux-gnu/include/SDL2` を直接参照する
+- `tools/sdl_probe.c` は実機検証で実際に使用（video/audioドライバの
+  診断に有効だったため、`docker/Dockerfile.sdl-probe`
+  （Debian標準SDL2実験用、未使用のまま）は削除した
+
+**まだ未検証（P7本格着手時に対応）:**
+- muxappパッケージング（`mux_launch.sh`, `lib/`構成, `.muxapp`化）
+- 複数デバイス（RG35XX H/SP, RG40XX, RG CubeXX等）での動作差異
+- `sysroot/` の内容の版管理方針（バイナリはgit管理しない。再現性は
+  `fetch-sysroot.sh` の再実行に依存する）
 
 ## 検証手順
 
@@ -152,4 +197,24 @@ ctest --test-dir build --output-on-failure
 # 実再生（要 .gbs 実素材）
 ./build/mugbs --cli Game.gbs
 ./build/mugbs --cli --duration 8 Game.gbs
+```
+
+### クロスビルド・実機検証（実証済みの手順）
+
+```sh
+# 1. 実機からsysrootを構成 (初回のみ。実機のIP/ユーザーに合わせる)
+./scripts/fetch-sysroot.sh root@<実機のIP>
+
+# 2. クロスビルド用Dockerイメージを作成 (sysroot/を上書き取り込みする)
+docker build -f docker/Dockerfile -t mugbs-crossbuild .
+
+# 3. クロスビルド
+docker run --rm -v "$(pwd):/work" -w /work mugbs-crossbuild bash -c '
+  cmake -B build-aarch64 -DTARGET_HOST=OFF -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake
+  cmake --build build-aarch64 -j$(nproc)
+'
+
+# 4. 実機へ転送して実行 (mux_launch.sh経由でない場合はXDG_RUNTIME_DIRの手動exportが必要)
+scp build-aarch64/mugbs root@<実機のIP>:/root/
+ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
 ```

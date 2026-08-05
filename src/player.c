@@ -1,5 +1,6 @@
 #include "player.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "archive.h"
