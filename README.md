@@ -166,24 +166,29 @@ sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能し�
 手順:
 
 1. 実機からSSH/SCPで `sysroot/` を構成する（SDL2のバージョンを実機の
-   `.so` から自動検出し、対応する upstream SDL2 のヘッダも取得する）
+   `.so` から自動検出し、対応する upstream SDL2 のヘッダも取得する）。
+   初回のみ。実機のSDL2やlibcが変わったときだけ再実行する
    ```sh
    ./scripts/fetch-sysroot.sh root@<実機のIP>
    ```
-2. `docker/Dockerfile` がビルド時に `sysroot/` の内容を
-   `/usr/aarch64-linux-gnu/{lib,include/SDL2}` へ上書きコピーする
+2. クロスビルドする
    ```sh
-   docker build -f docker/Dockerfile -t mugbs-crossbuild .
+   ./scripts/build-aarch64.sh                  # -> build-aarch64/mugbs
+   ./scripts/build-aarch64.sh --rebuild-image  # sysroot/ を更新したとき
    ```
-3. クロスビルド（`cmake/toolchain-aarch64.cmake` はコンパイラ指定のみ。
-   SDL2は `/usr/aarch64-linux-gnu/include/SDL2` を直接参照する）
-   ```sh
-   docker run --rm -v "$(pwd):/work" -w /work mugbs-crossbuild bash -c '
-     cmake -B build-aarch64 -DTARGET_HOST=OFF -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake
-     cmake --build build-aarch64 -j$(nproc)
-   '
-   ```
-4. 実機へ転送して実行する。`mux_launch.sh` 経由なら `func.sh` が
+   このスクリプトは Docker イメージが無ければ自動で
+   `docker build -f docker/Dockerfile -t mugbs-crossbuild .` を実行する。
+   `docker/Dockerfile` がビルド時に `sysroot/` の内容を
+   `/usr/aarch64-linux-gnu/{lib,include/SDL2}` へ上書きコピーし、
+   `cmake/toolchain-aarch64.cmake` はコンパイラ指定だけを行う
+   （SDL2は `/usr/aarch64-linux-gnu/include/SDL2` を直接参照する）。
+
+   `docker run` は呼び出しユーザーの uid:gid で実行するため、
+   `build-aarch64/` が root 所有にならない。ビルド後に `file` と
+   `readelf -d` の `NEEDED` を表示するので、libstdc++ が動的リンクに
+   紛れ込む回帰（実機で `GLIBCXX_3.4.xx not found` になる）にすぐ気づける。
+   期待する `NEEDED` は `libSDL2-2.0.so.0` / `libm.so.6` / `libc.so.6` の3つだけ
+3. 実機へ転送して実行する。`mux_launch.sh` 経由なら `func.sh` が
    `XDG_RUNTIME_DIR`/`PIPEWIRE_RUNTIME_DIR` を自動でexportするが、
    SSH生シェルから直接実行する場合は手動でexportが必要
    （実機のオーディオはPipeWire経由のため）
