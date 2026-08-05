@@ -22,11 +22,13 @@ typedef struct {
     int track;             /* --track N: 開始トラック (0始まり内部表現へは後段で変換) */
 
     /* 以下は config.ini ([playback]) の値をCLIから上書きするテスト用フラグ。
-     * P6 でINI読み込みが入った後も、CLI指定があればそちらを優先する想定。
-     * -1 は「上書きしない(config_set_defaultsの値をそのまま使う)」を表す。 */
+     * 既定値 -> config.ini -> CLI引数 の順に上書きし、CLI指定が最優先。
+     * -1 は「上書きしない(config.ini/既定値をそのまま使う)」を表す。 */
     int default_length_sec; /* --duration SEC */
     int fade_length_ms;      /* --fade-ms MS */
     int repeat_mode;         /* --repeat none|one|all (repeat_mode_t にキャスト) */
+
+    const char *config_path; /* --config PATH: 省略時は config_resolve_path() が決める */
 
     /* P5: GUI(app.c)向けのオプション。 */
     const char *start_dir;   /* --start-dir DIR: Browserの開始ディレクトリ */
@@ -42,6 +44,8 @@ static void print_usage(const char *prog) {
         "  --duration SEC     曲長不明時の既定再生秒数を上書きする (config.default_length_sec)\n"
         "  --fade-ms MS        フェード長を上書きする (config.fade_length_ms)\n"
         "  --repeat MODE      none|one|all でリピートモードを上書きする\n"
+        "  --config PATH      設定ファイルの場所を指定する\n"
+        "                     (既定: 環境変数 MUGBS_CONFIG、無ければ ./config.ini)\n"
         "  --cli              SDL ウィンドウを開かずコンソールのみで動作する\n"
         "  --start-dir DIR    GUI起動時、Browserの開始ディレクトリを指定する\n"
         "  --window WxH       GUIをこのウィンドウサイズで起動する(未指定なら検出した解像度でフルスクリーン)\n"
@@ -77,6 +81,9 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
             /* 非公開オプション: ヘッドレスUIスモークテスト用(tests/参照)。usageには出さない。 */
             if (i + 1 >= argc) { LOG_ERR("--ui-script にはファイル引数が必要です"); return -1; }
             out->ui_script = argv[++i];
+        } else if (strcmp(a, "--config") == 0) {
+            if (i + 1 >= argc) { LOG_ERR("--config にはファイル引数が必要です"); return -1; }
+            out->config_path = argv[++i];
         } else if (strcmp(a, "--track") == 0) {
             if (i + 1 >= argc) { LOG_ERR("--track には数値引数が必要です"); return -1; }
             out->track = atoi(argv[++i]);
@@ -106,6 +113,21 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
     return 0;
 }
 
+/* 既定値 -> config.ini -> CLI引数 の順に上書きして設定を組み立てる。
+ * CLI指定が最優先(-1 は「指定なし」)。使用した設定ファイルのパスを
+ * path_out へ返す(GUI側が終了時の保存先として使う)。 */
+static void build_config(const mugbs_args_t *args, mugbs_config_t *cfg,
+                          char *path_out, size_t path_size) {
+    config_set_defaults(cfg);
+
+    config_resolve_path(path_out, path_size, args->config_path);
+    config_load(cfg, path_out);
+
+    if (args->default_length_sec >= 0) cfg->default_length_sec = args->default_length_sec;
+    if (args->fade_length_ms >= 0) cfg->fade_length_ms = args->fade_length_ms;
+    if (args->repeat_mode >= 0) cfg->repeat_mode = (repeat_mode_t)args->repeat_mode;
+}
+
 /* playlist_open() が構築したプレイリストを人間可読な形で列挙する (--list)。
  * 音は一切出さない。 */
 static void print_playlist(const playlist_t *pl, const char *path) {
@@ -122,10 +144,10 @@ static void print_playlist(const playlist_t *pl, const char *path) {
  * SDLウィンドウ無しでの動作確認用に、GUI(app.c)とは独立に維持している。 */
 static int run_player_cli(const mugbs_args_t *args) {
     mugbs_config_t cfg;
-    config_set_defaults(&cfg);
-    if (args->default_length_sec >= 0) cfg.default_length_sec = args->default_length_sec;
-    if (args->fade_length_ms >= 0) cfg.fade_length_ms = args->fade_length_ms;
-    if (args->repeat_mode >= 0) cfg.repeat_mode = (repeat_mode_t)args->repeat_mode;
+    char config_path[MUGBS_PATH_MAX];
+    /* CLIハーネスは config.ini を読むだけで、保存は一切しない
+     * (--list/--cli を回すたびに設定が書き換わると自動検証の再現性が落ちる)。 */
+    build_config(args, &cfg, config_path, sizeof(config_path));
 
     playlist_t *pl = NULL;
     if (playlist_open(args->path, &cfg, &pl) != 0) {
@@ -200,10 +222,8 @@ int main(int argc, char **argv) {
     /* GUI本体 (P5): Browser/Player/TrackList。ファイル指定が無ければ
      * Browserから始める(app_run()内部でplaylist_openの成否を処理する)。 */
     mugbs_config_t cfg;
-    config_set_defaults(&cfg);
-    if (args.default_length_sec >= 0) cfg.default_length_sec = args.default_length_sec;
-    if (args.fade_length_ms >= 0) cfg.fade_length_ms = args.fade_length_ms;
-    if (args.repeat_mode >= 0) cfg.repeat_mode = (repeat_mode_t)args.repeat_mode;
+    char config_path[MUGBS_PATH_MAX];
+    build_config(&args, &cfg, config_path, sizeof(config_path));
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         LOG_ERR("SDL_Init failed: %s", SDL_GetError());

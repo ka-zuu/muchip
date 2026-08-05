@@ -6,7 +6,13 @@ add_executable(test_m3u test_m3u.c ../src/m3u.c)
 target_include_directories(test_m3u PRIVATE . ../src)
 add_test(NAME test_m3u COMMAND test_m3u)
 
-add_executable(test_playlist test_playlist.c ../src/playlist.c ../src/m3u.c ../src/archive.c)
+# P6で追加したconfig.c(INIパーサ)の単体テスト。SDLに依存しない純libc。
+add_executable(test_config test_config.c ../src/config.c)
+target_include_directories(test_config PRIVATE . ../src)
+add_test(NAME test_config COMMAND test_config)
+
+add_executable(test_playlist test_playlist.c ../src/playlist.c ../src/m3u.c ../src/archive.c
+                              ../src/config.c)
 target_include_directories(test_playlist PRIVATE . ../src)
 target_link_libraries(test_playlist PRIVATE gme_static miniz)
 set_target_properties(test_playlist PROPERTIES LINKER_LANGUAGE CXX)

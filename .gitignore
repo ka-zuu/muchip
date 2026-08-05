@@ -3,6 +3,8 @@ build-*/
 sysroot/
 *.muxapp
 log.txt
+config.ini
+config.ini.tmp
 *.o
 *.a
 compile_commands.json

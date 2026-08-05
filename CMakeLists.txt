@@ -46,6 +46,7 @@ target_include_directories(miniz PUBLIC vendor/miniz)
 # --- mugbs 本体 -------------------------------------------------------------
 add_executable(mugbs
     src/main.c
+    src/config.c
     src/audio.c
     src/player.c
     src/m3u.c
