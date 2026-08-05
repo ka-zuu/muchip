@@ -4,12 +4,12 @@ muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック�
 （曲名・曲長・ループ指定）を正しく扱う。詳細仕様は [`SPEC.md`](./SPEC.md)、
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
-現在のスコープは **コア再生エンジン + GUI（P0〜P5）**。SDL2 の
-Browser/Player/TrackList 画面をホスト上でキーボード操作から通しで確認でき、
-CLI ハーネス（`--list`/`--cli`。CI・自動検証用）も引き続き使える。
-入力抽象化の残り・設定ファイル（P6）と実機向けのクロスビルド・
-パッケージング自体（P7、クロスビルド手順自体は下記の通り確立済み）は
-別プランで扱う。
+現在のスコープは **コア再生エンジン + GUI + 設定ファイル + 解像度非依存化
+（P0〜P6）**。SDL2 の Browser/Player/TrackList/Settings 画面をホスト上で
+キーボード操作から通しで確認でき、`config.ini` の読み書き（終了時オート
+セーブ・直近パスの記憶）にも対応した。CLI ハーネス（`--list`/`--cli`。
+CI・自動検証用）も引き続き使える。実機向けのクロスビルド・パッケージング
+自体（P7、クロスビルド手順自体は下記の通り確立済み）は別プランで扱う。
 
 ## ビルド（ホスト / 開発機）
 
@@ -48,31 +48,47 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs       # 1トラック目を再生
 ```
 
-## GUI (Browser / Player / TrackList)
+## GUI (Browser / Player / TrackList / Settings)
 
 引数無し、または `--list`/`--cli` 以外の起動でGUI本体が立ち上がる。
 
 ```sh
 ./build/mugbs                       # カレントディレクトリのBrowserから開始
+                                     # (config.iniのlast_pathがあればそこから。F-13)
 ./build/mugbs --start-dir /path/to/music
 ./build/mugbs Game.gbs              # 指定ファイルを直接Playerで開いて開始
 ./build/mugbs --window 720x720      # ホストでの別解像度レイアウト確認用
                                      # (省略時は検出した解像度でフルスクリーン)
+./build/mugbs --config /path/to/config.ini  # 設定ファイルの場所を明示する
+                                     # (省略時は環境変数MUGBS_CONFIG、
+                                     # 無ければ ./config.ini)
 ```
 
 キーボード操作（実機ではSDL_GameControllerのボタンに対応。SPEC 6.3参照）:
 
-| キー | Browser | Player | TrackList |
-|---|---|---|---|
-| `↑` `↓` | カーソル移動 | 音量 +/- | カーソル移動 |
-| `←` `→` | ページ送り | シーク -5s/+5s | ページ送り |
-| `Z` (A相当) | 開く | 再生/一時停止 | ジャンプ再生 |
-| `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る |
-| `A` (X相当) | — | TrackListを開く | Playerへ戻る |
-| `S` (Y相当) | — | リピートモード切替 | — |
-| `Q`/`W` (L1/R1) | — | 前/次トラック | — |
-| `1`/`2` (L2/R2) | — | 前/次ファイル | — |
-| `Esc` | 終了 | 終了 | 終了 |
+| キー | Browser | Player | TrackList | Settings |
+|---|---|---|---|---|
+| `↑` `↓` | カーソル移動 | 音量 +/- | カーソル移動 | 項目選択 |
+| `←` `→` | ページ送り | シーク -5s/+5s | ページ送り | 値を増減 |
+| `Z` (A相当) | 開く | 再生/一時停止 | ジャンプ再生 | 値を増やす |
+| `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る | 保存して戻る |
+| `A` (X相当) | — | TrackListを開く | Playerへ戻る | — |
+| `S` (Y相当) | — | リピートモード切替 | — | — |
+| `Q`/`W` (L1/R1) | — | 前/次トラック | — | — |
+| `1`/`2` (L2/R2) | — | 前/次ファイル | — | — |
+| `Return` (Start相当) | Settingsを開く | Settingsを開く | — | 保存して戻る |
+| `Esc` | 終了 | 終了 | 終了 | — |
+
+Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
+Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
+意図的に広げてある。`PLAN.md` 参照）。Volume・Repeat・Stereo depth・
+Default length・Fade・Show all files の6項目を編集でき、抜けるときと
+アプリ終了時に `config.ini` へ自動保存する（`sample_rate` と P8予定の
+EQ/チャンネルミュートは対象外）。
+
+実機の物理ボタンでの終了は **GUIDEボタン単体、または Start+Select 同時押し**
+（SPEC 6.3「Menu長押し=終了」の代替。GUIDEがmuOS側のオーバーレイに
+吸われて届かない場合の保険として両方実装してある）。
 
 文字描画は外部フォントライブラリを使わず、内蔵のビットマップフォント
 (`vendor/font8x8`) を使う。実機の `sysroot/` には SDL2 の `.so` しか
@@ -80,14 +96,60 @@ ctest --test-dir build --output-on-failure
 依存を増やさない選択をしている。UI文言は英語のみ対応（GBSのメタデータは
 basic latin 以外は `?` にフォールバックする）。
 
+## 設定ファイル (config.ini, P6)
+
+SPEC 7 の全キーに加え、`[ui] show_all_files`/`last_path`（F-13）と
+`[input] gamecontroller_db`/`controller_mapping` を持つ。`src/config.c`
+が読み書きする（外部のINIライブラリは使わない。SPEC 12）。
+
+- パス解決順: `--config PATH` > 環境変数 `MUGBS_CONFIG` > `./config.ini`
+  （`mux_launch.sh` は起動前に `cd "$APP_DIR"` するため、実機では
+  結果的に SPEC 9.1 の `<APP_DIR>/config.ini` と一致する。SPEC 7 が
+  例示する絶対パスはSPEC 12/13のハードコード禁止に反するため採らない）
+- 保存は正規形で書き直す（手書きしたコメントや並び順は保存されない。
+  値そのものは保持される）
+- `--duration`/`--fade-ms`/`--repeat` のいずれかをCLIで指定した場合、
+  一回きりのテスト用オーバーライドを永続化しないよう終了時の自動保存を
+  無効化する
+
+## 入力 (P6): gamecontrollerdb 連携
+
+当初はSPEC 6.3の「GameControllerとして認識されないJoystickへの
+フォールバック」を自前実装する計画だったが、実際に公開されている
+muOS向けアプリ（[XMPlayer](https://github.com/atalaygrgn/XMPlayer)
+v0.2.1）の `.muxapp` を展開して調べたところ、そのような自前実装は
+していなかった。muOSは `/usr/lib/gamecontrollerdb.txt`
+（`retro.txt`/`modern.txt` へのシンボリックリンク）を実機に同梱しており、
+`mux_launch.sh`/`func.sh` が起動時に `SDL_GAMECONTROLLERCONFIG_FILE`/
+`SDL_GAMECONTROLLERCONFIG` を export するだけで物理ボタンが
+`SDL_GameController` として認識される。実機（muOS 2601.0 JACARANDA）で
+この環境変数を手動再現してクロスビルド済みバイナリを実行し、実際に
+`GameControllerを検出しました: muOS-Keys` を確認した（詳細はPLAN.md）。
+
+そのため `src/input.c` は生Joystickイベントを自前解釈せず、代わりに
+`config.ini` の `[input] gamecontroller_db`/`controller_mapping` から
+`SDL_GameControllerAddMappingsFromFile()`/`AddMapping()` を呼ぶ経路のみを
+持つ（`mux_launch.sh` を経由しない開発時や、DBに載っていない機種向けの
+上書き手段）。GameControllerとして認識されなかったJoystickは、
+名前・GUID・ボタン/軸/ハット数をログに出すだけに留める。
+
 ## 実機（muOS）向けクロスビルドについて【実機で検証済み】
 
 muOS 2601.0 (JACARANDA) 実機（Cortex-A53 aarch64）で、クロスビルドした
 `mugbs` が実際に映像・音声とも正常動作することを確認済み。GUI
 (Browser/Player画面) も実機の`mali`ドライバ上での描画を
-スクリーンショットで確認済み（TrackListは物理ボタン未対応のため未確認。
-`PLAN.md`「実機確認で発見したバグ」節参照）。詳細な調査経緯は
-[`PLAN.md`](./PLAN.md) の「P7準備メモ: SDL2の扱いに関する調査」節を参照。
+スクリーンショットで確認済み。P6では物理ボタンが`SDL_GameController`
+として認識されること（`GameControllerを検出しました: muOS-Keys`）も
+実機で確認した。詳細な調査経緯は [`PLAN.md`](./PLAN.md) の
+「P7準備メモ: SDL2の扱いに関する調査」節を参照。
+
+**未確認（P7で対応）:** SSHから直接バイナリを起動する検証方法では
+`SETUP_APP`（`func.sh`）を経由しないため `foreground_process` が
+`muxfrontend` のままになり、muOS側のUIがフロントに残って物理ボタンでの
+対話操作ができない（画面が薄く重なって描画される）。TrackList画面の
+実機確認、および物理ボタンでのBrowser/Player/Settings操作・終了の
+実地検証は、`.muxapp` 化して `mux_launch.sh` 経由で正式に起動できる
+ようになってから（P7）行う。
 
 muOS の SDL2 は独自のビデオドライバ（Allwinner H700系デバイス共通のMali
 GPU直結フレームバッファドライバ `mali`）を内蔵しており、**Debian の
@@ -128,8 +190,16 @@ sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能し�
    ```sh
    scp build-aarch64/mugbs root@<実機のIP>:/root/
    ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
-   # GUI(P5)を実機のボタンで確認する場合:
-   ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --start-dir /mnt/mmc/MUSIC'
+   # GUIを実機のボタンで確認する場合(P6): SDL_GameControllerとして認識させるため
+   # func.shが export する2つの環境変数を手動で再現する(値は実機の
+   # /usr/lib/gamecontrollerdb.txt から「muOS-Keys」等のデバイス名で引く)。
+   # ただしSETUP_APPを経由しないため muxfrontend がフロントに残ったままになり、
+   # 実際の対話操作はできない(上記「未確認」参照。.muxapp化後のP7で確認する)。
+   ssh root@<実機のIP> '. /opt/muos/script/var/func.sh; \
+     export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; \
+     export SDL_GAMECONTROLLERCONFIG_FILE=/usr/lib/gamecontrollerdb.txt; \
+     export SDL_GAMECONTROLLERCONFIG="$(grep "$(GET_VAR device sdl/name)" "$SDL_GAMECONTROLLERCONFIG_FILE")"; \
+     /root/mugbs --config /root/config.ini --start-dir /mnt/mmc/MUSIC'
    ```
 
 `sysroot/` はバイナリを含むため git 管理しない（`.gitignore` 済み）。
@@ -164,3 +234,10 @@ muxappパッケージング（`mux_launch.sh` の実配置、`.muxapp` 化）自
   h/480)` から導出）経由でのみ扱い、直接ハードコードしない（SPEC 6.2, 13）。
 - GameController のボタン判定は `SDL_CONTROLLER_BUTTON_*` の論理名のみを
   使い、生のボタン番号を決め打ちしない（`src/input.c`。SPEC 13）。
+- `config.ini` の設定は実行中プログラム全体で `main()` が持つ唯一の
+  インスタンスだけが権威を持つ（`app_t`/`player_t` はポインタで参照する
+  だけでコピーを持たない。P5までは3箇所に値コピーされ食い違う問題が
+  あった。`src/app.c`/`src/player.c`）。
+- `strtod()`/`printf("%f")` はロケール依存のため、`config.c` は
+  `setlocale()` を一切呼ばない前提（常に `"C"` ロケール）で
+  `stereo_depth` 等の小数値を読み書きする。

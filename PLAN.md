@@ -4,10 +4,9 @@
 詳細な設計判断・SPECとの乖離点は各フェーズのコミットログおよび
 `docs/` (追加され次第) を参照。
 
-現在のスコープ: **P0〜P5（コア再生エンジン + UI）**。
-入力抽象化の残り(config.iniマッピング上書き)と設定ファイル (P6)・
-クロスコンパイルとmuxappパッケージング (P7)・SHOULD/NICE要件 (P8) は
-次段の別プランとする。
+現在のスコープ: **P0〜P6（コア再生エンジン + UI + 設定ファイル +
+解像度非依存化）**。クロスコンパイルとmuxappパッケージング (P7)・
+SHOULD/NICE要件 (P8) は次段の別プランとする。
 
 ## SPEC からの既知の乖離（実装前に libgme 本体を確認して判明）
 
@@ -73,7 +72,23 @@
       物理ボタンがまだGameControllerとして未認識(P6予定)のため、実機上
       では未撮影(Browser/TrackListは共通コード`ui_draw_list()`を使うため
       リスクは低いと判断)。
-- [ ] P6 — 入力抽象化、解像度非依存化、設定ファイル … 別プランで着手
+- [x] **P6** — 入力の仕上げ、解像度非依存化の完成、設定ファイル
+      完了条件: 実機で物理ボタンだけを使ってBrowser→ファイルを開く→
+      Player→TrackList→Settingsで値を変更→終了、まで到達でき、
+      再起動時に設定と`last_path`が復元される。ホストでは6解像度の
+      CTestが緑。詳細は下記「P6の設計判断」参照。
+      **達成**: config.c(INI読み書き)・設定の単一所有権化・
+      ui_metrics_compute()の抽出と複数解像度CTest・Settings画面と
+      オートセーブ・F-13(last_path)復元は全てホストで実測・
+      ASan/UBSanで検証済み。入力については当初計画（生Joystick
+      イベントの自前解釈）から方針転換し、muOSが実機に同梱する
+      gamecontrollerdb.txtへ委譲する方式に変更、実機で
+      `GameControllerを検出しました: muOS-Keys` を確認した。
+      **未達（P7へ持ち越し）**: 物理ボタンでの対話操作(Browser/Player/
+      Settings/終了)そのものの実地確認。SSH直接起動では`SETUP_APP`が
+      呼ばれずmuxfrontendがフロントに残ったままになるため
+      (下記「P6実機確認の制約」参照)、`.muxapp`化してmux_launch.sh
+      経由で起動できるようになってから確認する
 - [ ] P7 — クロスコンパイル、muxappパッケージング … 別プランで着手
 - [ ] P8 — チャンネルミュート、ビジュアライザ、EQ … 別プランで着手
 
@@ -167,6 +182,147 @@ SPEC 5.2 は「参照ファイルが複数なら自前でプレイリストエ�
 区間ごとに m3u テキストを再構成して `gme_load_m3u_data()` に投げ直す**という
 薄い前処理に徹する。トラック番号解釈・曲名・曲長の抽出は常に libgme に委譲される。
 参照ファイルが1種類だけの場合はセグメントが1つになるため、特別扱いの分岐は不要。
+
+## P6の設計判断
+
+### 入力の方針転換: gamecontrollerdb.txt への委譲
+
+P5時点の計画では、「GameControllerとして認識されないJoystickは
+`SDL_Joystick`の生イベント(`SDL_JOYBUTTONDOWN`/`JOYHATMOTION`/
+`JOYAXISMOTION`)を`config.ini`のマッピング表に従って自前で解釈する」
+実装を予定していた(SPEC 6.3の文言どおり)。実機のボタン番号を実測して
+既定マッピングを作る作業も計画に含めていた。
+
+しかし実装前に、実際に公開されているmuOS向けアプリ
+([XMPlayer](https://github.com/atalaygrgn/XMPlayer) v0.2.1)の
+`.muxapp`を実際にダウンロード・展開して`mux_launch.sh`と同梱バイナリの
+依存関係を確認したところ、そのような自前実装は一切していないことが
+判明した。XMPlayerの`mux_launch.sh`は:
+
+```sh
+export SDL_GAMECONTROLLERCONFIG_FILE="/usr/lib/gamecontrollerdb.txt"
+./bin/gptokeyb2 "love" -c "$APP_DIR/config/xmplayer.gptk" &
+./bin/love .
+```
+
+の2行だけでゲームパッド対応を済ませている。`SDL_GAMECONTROLLERCONFIG_FILE`
+をexportするだけでmuOS同梱のDBが読み込まれ、物理ボタンが
+`SDL_GameController`として認識される(`gptokeyb2`はさらにそれを
+キーボードイベントへ変換しているが、これはlove2d/XMPlayer側がSDL
+GameControllerではなくキーボード入力を前提にしているため付加している
+もので、mugbsは元々`SDL_CONTROLLER_BUTTON_*`にもキーボードにも
+対応済みなので不要)。
+
+P5で実機のボタンが反応しなかったのは、SSH直接起動で`mux_launch.sh`
+(＝`func.sh`の`SETUP_APP`)を経由せず、この環境変数が設定されていな
+かったためと判断した。
+
+そこでP6では計画を変更し、**生Joystickイベントの自前解釈は実装しない**
+こととした。代わりに:
+
+1. `mugbs_config_t`に`[input] gamecontroller_db`/`controller_mapping`を
+   追加し、`input_init()`が`SDL_GameControllerAddMappingsFromFile()`/
+   `SDL_GameControllerAddMapping()`でデバイス走査前に登録する
+   (`mux_launch.sh`を経由しない開発時や、DBに載っていない機種向けの
+   上書き手段。SPEC 6.3の「config.iniでマッピング上書き可能にする」は
+   この形で満たす)
+2. GameControllerとして認識されなかったJoystickは、名前・GUID・
+   ボタン/軸/ハット数をログに出すだけに留める(生イベントへは変換しない)
+3. `SDL_IsGameController()`が真でも`SDL_GameControllerOpen()`が
+   失敗する場合に(1)のログ経路へフォールスルーしない、というP5からの
+   潜在バグを修正した(以前は該当デバイスが完全に無視され入力が
+   死んでいた)
+
+この判断は実機での検証で裏付けられている(下記「P6実機確認の結果」参照)。
+
+### 設定の三重コピー問題
+
+P5までは`mugbs_config_t`が`main()`のスタック→`app_t.cfg`→
+`player_t.config`の3箇所に値でコピーされており、`volume`/`repeat_mode`
+にだけ場当たり的なsetterがある状態だった(呼び出し側とsetterの双方が
+別々のコピーへ書き込む二重更新になっていた)。P6でSettings画面が
+フィールドを増やす前に、`player_t.config`を`const mugbs_config_t*`
+(所有権は`app_t`、実体は`main()`のローカル変数1つ)へ変更し、
+プログラム全体で権威あるインスタンスを1つに統一した
+(`player_apply_config()`で反映)。`audio_callback`は`player_t`を
+一切参照しない(`a->emu`と`SDL_atomic_t`な`a->volume`のみ)ため、
+ポインタ化しても新たなスレッド間共有は生じないことを確認済み。
+
+### 解像度非依存化: メトリクス再計算経路の欠如
+
+P5時点では`ui_metrics_t`が`ui_init()`内で一度だけ計算され、以降
+再計算する経路が無かった(実機は起動時に一度だけ解像度を取得すれば
+十分なため、これ自体はP5の完了条件を満たしていた)。P6では
+`ui_metrics_compute()`(純関数)を抽出し`ui_handle_resize()`を追加、
+`SDL_WINDOWEVENT_SIZE_CHANGED`を検出して再計算する経路を通した
+(ホストで`--window`使用時のみ`SDL_WINDOW_RESIZABLE`を付与)。この過程で
+`pad`が`scale∈[0.5, 1.18)`の全域で4に固定される既存バグ
+(`ui_glyph_size()`の8px下限の影響を受けていた)を発見・修正した。
+
+### Settings画面のスコープ
+
+SPEC 6.1のSettings画面はEQ・チャンネルミュートを含むが、両方P8未実装
+のため、P6では Volume・Repeat・Stereo depth・Default length・Fade・
+Show all files の6項目のみを実装した(`sample_rate`はデバイス再オープン
+が必要なため除外)。SPEC 6.3はStartをPlayer画面専用としているが、
+ファイルを開くまで設定に入れないのは初回体験として悪いため、Browser
+画面からもStartで開けるようにした(意図的な逸脱)。
+
+## P6実機確認の結果
+
+実機(muOS 2601.0 JACARANDA、192.168.0.20)にSSH(root/root)で接続し、
+以下を確認した。
+
+**gamecontrollerdb.txtの実在確認**: `/usr/lib/gamecontrollerdb.txt`は
+`/opt/muos/share/info/gamecontrollerdb/retro.txt`(または`modern.txt`。
+`SETUP_APP`の第2引数で選択される)へのシンボリックリンクで実在する。
+物理ボタンデバイスの名前は`muOS-Keys`(`/proc/bus/input/devices`で
+`Bus=0019`、`Handlers=kbd js0 event1`。カーネルレベルでは既に
+joystickとして登録されている)で、`retro.txt`に完全なマッピング行が
+存在することを確認した:
+
+```
+19000000010000000100000000010000,muOS-Keys,a:b3,b:b4,x:b6,y:b5,
+leftshoulder:b7,rightshoulder:b8,lefttrigger:b13,righttrigger:b14,
+guide:b11,start:b10,back:b9,dpup:h0.1,dpleft:h0.8,dpright:h0.2,
+dpdown:h0.4,volumedown:b1,volumeup:b2,leftx:a0,lefty:a1,leftstick:b12,
+rightx:a2,righty:a3,rightstick:b15,platform:Linux,
+```
+
+A/B/X/Y/L1/R1/L2/R2/Guide/Start/Back/D-Pad/両スティック全てを網羅した
+muOS公式のマッピングであり、mugbsの`controller_button_to_action()`が
+前提とする`SDL_CONTROLLER_BUTTON_*`論理名の空間を過不足なく埋める。
+
+**実機での動作確認**: `docker build -f docker/Dockerfile` →
+`cmake --toolchain cmake/toolchain-aarch64.cmake`でクロスビルドした
+`mugbs`をscpで転送し、`mux_launch.sh`/`func.sh`が実際にexportする
+`SDL_GAMECONTROLLERCONFIG_FILE`/`SDL_GAMECONTROLLERCONFIG`を手動で
+再現して実行したところ、ログに以下が出ることを確認した:
+
+```
+[INFO] GameControllerを検出しました: muOS-Keys
+```
+
+8秒間のアイドル実行でも(L2/R2のトリガー誤発火等の)余計なログは出ず、
+`config.ini`の`[input] gamecontroller_db`経由(env var無し、691件の
+マッピングを`input_init()`自身がロード)でも同じ検出に成功した。
+`kill`(SIGTERM)を送るとSDL2の既定シグナルハンドラ経由で`INPUT_QUIT`
+相当として処理され、`config.ini`が正しく保存されることも確認した。
+
+**P6実機確認の制約(物理ボタンでの対話操作は未確認)**: 上記はいずれも
+SSHで直接バイナリを起動する方式で行った。この方式では`func.sh`の
+`SETUP_APP`(→`SET_VAR "system" "foreground_process" "$1"`)を経由
+しないため、`foreground_process`が`muxfrontend`のままになり、
+muxfrontend自身が前面から退避しないまま画面更新を続ける
+(P5の「実機確認で発見したバグ」節で記録した現象と同一原因)。
+実際にユーザーが実機で試したところ、カーソルに追従してmuOS側のUIが
+部分的に描画され、mugbs側は物理ボタン入力を受け取れない状態だった
+(スクリーンショットで確認)。**GameController自体は認識されている
+ため、これはmugbsの入力処理の不具合ではなく、SETUP_APPを経由しない
+検証手順そのものの制約である。** Browser/Player/Settings画面の実際の
+ボタン操作・TrackList画面の実機確認・GUIDE/Start+Selectでの終了確認は、
+`.muxapp`化して`mux_launch.sh`経由で正式に起動できるようになってから
+(P7)行う。
 
 ## P7準備メモ: SDL2の扱いに関する調査（実装前の事前調査）
 
@@ -269,27 +425,35 @@ SSHで接続し、上記の暫定方針を実際に検証した。
   （Debian標準SDL2実験用、未使用のまま）は削除した
 
 **まだ未検証（P7本格着手時に対応）:**
-- muxappパッケージング（`mux_launch.sh`, `lib/`構成, `.muxapp`化）
+- muxappパッケージング（`mux_launch.sh`, `lib/`構成, `.muxapp`化）。
+  **`mux_launch.sh`には`export SDL_GAMECONTROLLERCONFIG_FILE="/usr/lib/gamecontrollerdb.txt"`
+  を追加すること**（XMPlayerと同じ。P6でconfig.iniの`gamecontroller_db`
+  でも代替できることを確認済みなので、どちらか一方があれば動く二重化になる）
 - 複数デバイス（RG35XX H/SP, RG40XX, RG CubeXX等）での動作差異
 - `sysroot/` の内容の版管理方針（バイナリはgit管理しない。再現性は
   `fetch-sysroot.sh` の再実行に依存する）
-- **P5で追加したGUIのTrackList画面**は実機で未撮影
-  （物理ボタンがGameControllerとして未認識のためP6以降で確認予定。
-  Browser/Playerは実機確認済み。「実機確認で発見したバグ」節参照）
-- **P5の実機スクリーンショットに、muOS側の時計/ステータス表示らしき
-  小さなオーバーレイが画面左上に薄く写り込んでいた（要再確認）。**
-  原因調査で `GET_VAR system foreground_process` が `muxfrontend` の
-  ままだったことを確認した。これは今回`mux_launch.sh`を経由せずSSH経由で
-  バイナリを直接起動したため、`func.sh`の`SETUP_APP()`が行う
-  `SET_VAR "system" "foreground_process" "$1"`（「今このアプリが前面にいる」
-  とOSへ伝える処理）が一度も呼ばれておらず、`muxfrontend`が自身を
-  バックグラウンドに退避させないまま何らかの表示更新(時計等)を
-  `/dev/fb0`へ直接続けていたためと推測される(表示されていた数字が
-  実時間の経過に合わせて変化していたことからも時計表示の可能性が高い)。
-  `mugbs`側の描画バグではなく、SSH直接起動という検証手順固有の副作用と
-  考えられるが、**`.muxapp`化して`mux_launch.sh`経由で正式に起動した
-  状態で再現しないことをP7で必ず確認すること**（`SETUP_APP`呼び出しで
-  `foreground_process`が`mugbs`に切り替わるかを見る）。
+- **P5で追加したGUIのTrackList画面**、および**Browser/Player/Settings
+  画面での実際の物理ボタン操作・GUIDE/Start+Selectでの終了**は実機で
+  未確認のまま（Browser/Playerの描画自体はP5・P6とも確認済み）
+- **P5の実機スクリーンショットに写り込んでいたオーバーレイの原因は、
+  P6で確定した。** `GET_VAR system foreground_process` が `muxfrontend`
+  のままだったことをP5時点で突き止めていたが、P6で改めてSSH直接起動
+  すると同じ現象がより明確な形で再現した:
+  `mux_launch.sh`（＝`func.sh`の`SETUP_APP()`。
+  `SET_VAR "system" "foreground_process" "$1"`で「今このアプリが
+  前面にいる」とOSへ伝える）を経由せずにバイナリを直接起動すると、
+  `muxfrontend`が自身を前面から退避させないまま`/dev/fb0`への描画を
+  続け、mugbsの描画に薄く重なる。P6ではユーザーが実機で物理ボタンを
+  試したところ、この重なりに加えて**物理ボタン入力がmugbsへ渡らない**
+  ことも確認された（`SDL_GameController`自体は認識されているため、
+  これはmugbsの入力処理ではなくmuxfrontendが入力もろとも掴んだままに
+  なっていることが原因と考えられる）。`mugbs`側の不具合ではなく、
+  `SETUP_APP`を経由しない検証手順固有の制約であることが再確認できた。
+  **`.muxapp`化して`mux_launch.sh`経由で正式に起動した状態で、
+  (1) このオーバーレイが再現しないこと、(2) 物理ボタンでの対話操作が
+  実際にできることの両方をP7で必ず確認すること**
+  （`SETUP_APP`呼び出しで`foreground_process`が`mugbs`に切り替わるか
+  を見る）。
 
 ## 検証手順
 
@@ -311,11 +475,17 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs
 ./build/mugbs --cli --duration 8 Game.gbs
 
-# GUI (P5): Browser/Player/TrackList をキーボードで操作する
+# GUI: Browser/Player/TrackList/Settings をキーボードで操作する
 ./build/mugbs                         # カレントディレクトリのBrowserから開始
 ./build/mugbs --start-dir /path/to/music
-./build/mugbs --window 720x720        # 別解像度でレイアウト確認(ホストのみ)
+./build/mugbs --window 720x720        # 別解像度でレイアウト確認(ホストのみ。掴んで伸縮も可)
 ./build/mugbs Game.gbs                # 指定ファイルを直接Playerで開いて開始
+
+# GUI (P6): config.ini の読み書きとSettings画面
+./build/mugbs --config /tmp/test.ini --start-dir /path/to/music
+#   Start で Settings を開く -> LEFT/RIGHT で値変更 -> B で戻る(保存される) -> Esc で終了
+cat /tmp/test.ini                     # 変更が保存されていることを確認
+./build/mugbs --config /tmp/test.ini  # last_path 等が復元されることを確認
 ```
 
 ### クロスビルド・実機検証（実証済みの手順）
@@ -336,4 +506,15 @@ docker run --rm -v "$(pwd):/work" -w /work mugbs-crossbuild bash -c '
 # 4. 実機へ転送して実行 (mux_launch.sh経由でない場合はXDG_RUNTIME_DIRの手動exportが必要)
 scp build-aarch64/mugbs root@<実機のIP>:/root/
 ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
+
+# 5. GUIをSDL_GameControllerとして実機のボタンで確認する場合 (P6):
+#    func.shが export する2つの環境変数を手動で再現する。
+#    ただしSETUP_APPを経由しないためmuxfrontendがフロントに残ったままになり、
+#    実際の物理ボタン対話操作はできない(「P6実機確認の制約」参照。P7で解消予定)。
+ssh root@<実機のIP> '. /opt/muos/script/var/func.sh; \
+  export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; \
+  export SDL_GAMECONTROLLERCONFIG_FILE=/usr/lib/gamecontrollerdb.txt; \
+  export SDL_GAMECONTROLLERCONFIG="$(grep "$(GET_VAR device sdl/name)" "$SDL_GAMECONTROLLERCONFIG_FILE")"; \
+  /root/mugbs --config /root/config.ini --start-dir /mnt/mmc/MUSIC'
+# ログに "GameControllerを検出しました: <デバイス名>" が出れば認識成功。
 ```
