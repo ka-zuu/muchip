@@ -26,6 +26,12 @@ typedef enum {
     PLAYER_PAUSED,
 } player_state_t;
 
+/* voice 情報キャッシュの上限。GBSは4 (Gb_Apu::osc_count)。他フォーマットの
+ * ファイルを誤って開いても壊れないよう、libgme が返しうる範囲で余裕を持つ。
+ * config の [voices] mute_mask は 0..15 にクランプされる(config.c)ので、
+ * 実際に UI から操作できるのは先頭4つまで。 */
+#define MUGBS_MAX_VOICES 8
+
 typedef struct {
     mugbs_audio_t audio;
     Music_Emu *emu;        /* 現在開いている emu。所有権はここ (player) にある。
@@ -50,6 +56,16 @@ typedef struct {
      * player_current_duration_ms() が「本当に無音になる時刻」
      * (=entries[].duration_ms + fade_len_ms) を返すために保持する。 */
     int fade_len_ms;
+
+    /* 現在開いている emu の voice 情報のキャッシュ (P8, F-10)。
+     * emu を開いた直後に一度だけ埋める。UI(ミュートパネル)が毎フレーム
+     * gme_voice_count()/gme_voice_name() を呼ぶと、そのたびに
+     * audio_lock でオーディオコールバックと排他する羽目になるため。
+     * voice_names[] は libgme 内の静的文字列を指す(解放してはならない。
+     * vendor/game-music-emu/gme/Gbs_Emu.cpp の names[] 参照)。
+     * emu が無いときは voice_count == 0。 */
+    int voice_count;
+    const char *voice_names[MUGBS_MAX_VOICES];
 } player_t;
 
 /* SDLオーディオデバイスを開いて初期化する。0で成功。 */
@@ -102,6 +118,9 @@ int player_current_duration_ms(const player_t *p);
  * volume は即時、stereo_depth は現在開いている emu へ即時(audio_lock で
  * 保護。Effects_Buffer::config() は再確保を行わないため再生中に呼んでも
  * 安全 -- vendor/game-music-emu/gme/Effects_Buffer.cpp 参照)。
+ * voice_mute_mask (F-10) も同様に即時(Classic_Emu::mute_voices_() は
+ * 各オシレータの出力先ポインタを差し替えるだけで再確保しない。ただし
+ * gme_play() と競合させてはならないので audio_lock は必須)。
  * repeat_mode は次のトラック送りから、default_length_sec/fade_length_ms は
  * 次に start_track_at() を通ったとき(=次トラック)から自然に反映される
  * (config はポインタなので player 側で改めて何かをコピーする必要がない)。
@@ -109,6 +128,11 @@ int player_current_duration_ms(const player_t *p);
  * (P6では非対応。config.ini編集+再起動)。呼び出し側(Settings画面)で
  * 値を変更するたびに呼ぶこと。 */
 void player_apply_config(player_t *p);
+
+/* 直近の出力波形を古い順に out[0..n-1] へ書き出す (F-14 ビジュアライザ)。
+ * n は AUDIO_SCOPE_SAMPLES 以下を推奨(超える分は0で埋まる)。
+ * 再生していないときは無音(全0)が返る。 */
+void player_snapshot_scope(player_t *p, short *out, int n);
 
 /* 開いているemuがあれば閉じてSTOPPEDにする。ブラウザへ戻る際に使う。
  * playlist自体は保持したまま(参照ポインタはクリアしない)にはしない -

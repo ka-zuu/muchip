@@ -14,6 +14,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
 
     if (!a->emu) {
         memset(stream, 0, (size_t)len);
+        memset(a->scope, 0, sizeof(a->scope)); /* 波形表示も無音に落とす (F-14) */
         return;
     }
 
@@ -21,6 +22,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     if (err) {
         LOG_ERR("gme_play: %s", err);
         memset(stream, 0, (size_t)len);
+        memset(a->scope, 0, sizeof(a->scope));
         return;
     }
 
@@ -34,6 +36,25 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         }
     }
 
+    /* F-14: 音量適用後(= 実際にスピーカーへ出る波形)をモノラルへ落として
+     * 間引き、リングへ積む。ここは audio_lock の内側と同じ排他区間
+     * (コールバック実行中は audio_snapshot_scope() が待たされる)。 */
+    short *frames = (short *)stream;
+    int frame_count = count / 2;
+    int phase = a->scope_phase;
+    int pos = a->scope_pos;
+    for (int i = 0; i < frame_count; i++) {
+        if (++phase >= a->scope_stride) {
+            phase = 0;
+            /* L/Rを平均する前に個別に>>1しておくと、両chがフルスケール
+             * 近くでも中間結果がshortを溢れない。 */
+            a->scope[pos] = (short)((frames[i * 2] >> 1) + (frames[i * 2 + 1] >> 1));
+            if (++pos >= AUDIO_SCOPE_SAMPLES) pos = 0;
+        }
+    }
+    a->scope_phase = phase;
+    a->scope_pos = pos;
+
     if (gme_track_ended(a->emu)) {
         SDL_AtomicSet(&a->track_ended, 1);
     }
@@ -43,6 +64,13 @@ int audio_init(mugbs_audio_t *a, int sample_rate) {
     memset(a, 0, sizeof(*a));
     SDL_AtomicSet(&a->track_ended, 0);
     SDL_AtomicSet(&a->volume, 100);
+
+    /* F-14: 実効12kHz程度まで間引く。GBのパルス波は最も高い設定でも
+     * 数kHzなので、これで波形の形は保ったまま1画面(256点)に
+     * 数周期分が収まる。サンプルレートによらず見た目の時間窓を
+     * 一定に保つため、レートから求める。 */
+    a->scope_stride = sample_rate / 12000;
+    if (a->scope_stride < 1) a->scope_stride = 1;
 
     if (SDL_WasInit(SDL_INIT_AUDIO) == 0) {
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
@@ -116,4 +144,33 @@ int audio_poll_track_ended(mugbs_audio_t *a) {
 
 void audio_clear_track_ended(mugbs_audio_t *a) {
     SDL_AtomicSet(&a->track_ended, 0);
+}
+
+void audio_snapshot_scope(mugbs_audio_t *a, short *out, int n) {
+    if (n > AUDIO_SCOPE_SAMPLES) {
+        memset(out + AUDIO_SCOPE_SAMPLES, 0,
+               sizeof(short) * (size_t)(n - AUDIO_SCOPE_SAMPLES));
+        n = AUDIO_SCOPE_SAMPLES;
+    }
+    if (n <= 0) return;
+
+    audio_lock(a);
+    /* scope_pos は「次に書く位置」= リング上で最も古い点。そこから
+     * 折り返して古い順に並べ直す(描画側は素直な配列として扱える)。
+     * 直近 n 点だけが欲しいので、末尾から n 点を取る。 */
+    int start = (a->scope_pos - n) % AUDIO_SCOPE_SAMPLES;
+    if (start < 0) start += AUDIO_SCOPE_SAMPLES;
+    int first = AUDIO_SCOPE_SAMPLES - start;
+    if (first > n) first = n;
+    memcpy(out, a->scope + start, sizeof(short) * (size_t)first);
+    if (first < n) {
+        memcpy(out + first, a->scope, sizeof(short) * (size_t)(n - first));
+    }
+    audio_unlock(a);
+}
+
+void audio_clear_scope(mugbs_audio_t *a) {
+    audio_lock(a);
+    memset(a->scope, 0, sizeof(a->scope));
+    audio_unlock(a);
 }

@@ -62,7 +62,9 @@ static const config_key_t KEYS[] = {
     { "ui", "show_all_files", CFG_BOOL, offsetof(mugbs_config_t, show_all_files), 0, 0, 0 },
     { "ui", "last_path",      CFG_STR,  offsetof(mugbs_config_t, last_path),      0, 0, MUGBS_PATH_MAX },
 
-    { "voices", "mute_mask", CFG_INT, offsetof(mugbs_config_t, voice_mute_mask), 0, 15, 0 },
+    /* 上限は MUGBS_MUTABLE_VOICES ビットぶん (4ボイス -> 0..15)。 */
+    { "voices", "mute_mask", CFG_INT, offsetof(mugbs_config_t, voice_mute_mask),
+      0, (1 << MUGBS_MUTABLE_VOICES) - 1, 0 },
 
     { "input", "gamecontroller_db",  CFG_STR, offsetof(mugbs_config_t, gamecontroller_db),  0, 0, MUGBS_PATH_MAX },
     { "input", "controller_mapping", CFG_STR, offsetof(mugbs_config_t, controller_mapping), 0, 0, MUGBS_MAPPING_MAX },

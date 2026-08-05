@@ -8,9 +8,10 @@ cmake_minimum_required(VERSION 3.13)
 # 「project(mugbs VERSION x.y.z ...)」を1行で書く形を崩さないこと
 # (tests/test_package.sh が CMake の解釈と package.sh の解釈の一致を検証する)。
 #
-# 0.9.x = MUST要件(F-01〜F-08)を満たし実機で動作する状態。SHOULD/NICE要件
-# (F-10 チャンネルミュート / F-14 ビジュアライザ / F-20 EQ 等、P8) が入ったら 1.0.0。
-project(mugbs VERSION 0.9.0 LANGUAGES C CXX)
+# 1.0.0 = MUST要件(F-01〜F-08)に加え、P8のSHOULD/NICE要件
+# (F-10 チャンネルミュート / F-14 ビジュアライザ / F-20 EQ) まで実装し、
+# 実機で動作を確認した状態。
+project(mugbs VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -55,6 +56,7 @@ target_include_directories(miniz PUBLIC vendor/miniz)
 add_executable(mugbs
     src/main.c
     src/config.c
+    src/eq.c
     src/audio.c
     src/player.c
     src/m3u.c

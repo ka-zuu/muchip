@@ -4,9 +4,9 @@
 詳細な設計判断・SPECとの乖離点は各フェーズのコミットログおよび
 `docs/` (追加され次第) を参照。
 
-現在のスコープ: **P0〜P6（コア再生エンジン + UI + 設定ファイル +
-解像度非依存化）**。クロスコンパイルとmuxappパッケージング (P7)・
-SHOULD/NICE要件 (P8) は次段の別プランとする。
+現在のスコープ: **P0〜P8 完了 (v1.0.0)**。コア再生エンジン + UI +
+設定ファイル + 解像度非依存化 + muOS向けパッケージング + SHOULD/NICE要件
+(F-10 チャンネルミュート / F-14 ビジュアライザ / F-20 EQ) まで実装済み。
 
 ## SPEC からの既知の乖離（実装前に libgme 本体を確認して判明）
 
@@ -96,7 +96,17 @@ SHOULD/NICE要件 (P8) は次段の別プランとする。
       Browser→ファイルを開く→Player→TrackList→トラックジャンプ→Player→
       Settingsで値変更→GUIDE単体で終了→再起動→F-13復元、まで実機で
       すべて実測確認した。詳細は下記「P7の設計判断」参照
-- [ ] P8 — チャンネルミュート、ビジュアライザ、EQ … 別プランで着手
+- [x] **P8** — チャンネルミュート(F-10)、ビジュアライザ(F-14)、EQ(F-20)
+      完了条件: SHOULD/NICE要件の3点が音とUIの両方に繋がり、実機で確認できる。
+      **達成**: `[voices] mute_mask`/`[audio] eq_bass`/`eq_treble` は P6 で
+      読み書きだけ実装済みだったものを、`player.c` 経由で実際に
+      `gme_mute_voices()`/`gme_set_equalizer()` へ流し込むようにした。
+      UIは SPEC 6.3 に従い Player 画面の SELECT でミュートパネル、
+      EQ は Settings の2項目。ビジュアライザは混合出力からの
+      簡易オシロスコープ(SPEC F-14 が許容する「波形」の方)。
+      T-10 は `tests/test_mute.c` で自動検証できるようにした
+      (そのために合成GBSフィクスチャを「実際に4ch鳴る」ものへ作り替えた)。
+      詳細は下記「P8の設計判断」参照。P8完了に伴い版を 1.0.0 に上げた
 
 ## P5の設計判断（SPEC 4.2/6章 との差分・前倒し）
 
@@ -511,10 +521,10 @@ BGM(.ogg)置き場でユーザーの音楽ライブラリではないので候�
 
 ### バージョン管理とパッケージング
 
-`CMakeLists.txt`の`project(mugbs VERSION 0.9.0 ...)`を唯一のバージョン
-情報源とした。0.9.0とした理由: MUST要件(F-01〜F-08)は満たしているが
+`CMakeLists.txt`の`project(mugbs VERSION x.y.z ...)`を唯一のバージョン
+情報源とした。P7時点で0.9.0とした理由: MUST要件(F-01〜F-08)は満たしているが
 SHOULD/NICE要件(F-10チャンネルミュート/F-14ビジュアライザ/F-20 EQ等、
-P8)が未実装のため。P8完了で1.0.0に上げる想定。
+P8)が未実装のため。**P8完了に伴い1.0.0へ上げた**(下記「P8の設計判断」参照)。
 
 `scripts/package.sh`はSPEC 9.4の`cd package_root && zip -r ../x.muxapp .`
 をそのまま使わなかった。`./`エントリが混ざりトップレベル名も入らないため、
@@ -608,6 +618,139 @@ C5の当初計画では「muOSの内部制御ファイル(`/tmp/app_go`/`/tmp/ac
 **今後、muOSの内部制御ファイルを外部から書き換えてUI遷移を
 トリガーする手法は、たとえ実機アクセス権があっても使わないこと。**
 
+## P8の設計判断
+
+### ビジュアライザ(F-14): multi-channelを採らず混合出力の波形にした
+
+SPEC 6.1 は Player 画面に「4chメータ」と書いており、チャンネルごとの
+音量バーが理想ではある。しかし libgme の公開C APIで**チャンネル別のPCMを
+取り出せる手段は `gme_new_emu_multi_channel()` の1つしかない**ことを
+ヘッダとソースで確認した(`vendor/game-music-emu/gme/gme.h:246-289`)。
+これは次の理由で採らなかった:
+
+1. `gme_open_file()`/`gme_open_data()` は emu を single channel mode に
+   固定する(`gme.h:257` に明記)。`Music_Emu::set_multi_channel_()` は
+   `require(!sample_rate())` を持つため、**開いた後に切り替えることはできない**。
+   採用するなら `gme_identify_file` → `gme_new_emu_multi_channel` →
+   `gme_load_file`/`gme_load_data` へ `player.c` の emu 生成経路を
+   全面的に書き換える必要がある(zip/m3u の分岐も含めて)。
+2. multi-channel では `gme_play()` の出力が常に **8ボイス×ステレオ=16ch**
+   固定になり(`Music_Emu.h:180`)、オーディオコールバックが毎回
+   8ペアぶんのダウンミックスを行うことになる。加えて
+   `Effects_Buffer(1)` が `Effects_Buffer(8)` に変わり
+   (`gme.cpp:228-240`)、Blip_Buffer の本数が 7 から 56 へ増える。
+   実機は Cortex-A53 で、この増分が許容できるか事前に読めなかった。
+3. SPEC 3.2 F-14 自身が「4chのボリュームバー **or** 波形」と
+   どちらでもよいとしている。
+
+そこで、既存のオーディオ経路に一切手を入れずに済む**混合出力からの
+簡易オシロスコープ**を採った。`audio_callback()` が音量適用後の出力を
+モノラルへ落として間引き、`mugbs_audio_t` のリングバッファへ積む。
+描画側は `audio_snapshot_scope()` で古い順に取り出す。
+
+- **`SDL_atomic_t` ではなく `audio_lock` を使う**: `volume`/`track_ended`
+  と違って単一の値ではなく配列全体の一貫性が要るため。512バイトの
+  memcpy でオーディオコールバックを止める時間は無視できる。
+- **トリガ(立ち上がりゼロ交差)を入れた**: 単に直近N点を並べるだけだと
+  オーディオコールバック(約46ms周期)と描画フレーム(約16ms周期)の位相が
+  毎回ずれ、波形が横に流れて何も読めない。リングの前半からゼロ交差を
+  探して左端に揃え、常に後半の128点を描くことで、表示する時間窓の
+  長さも一定に保っている。
+- **表示ゲイン3倍(`ui.c` の `WAVE_DISPLAY_GAIN`)**: GBSの出力は
+  libgmeの既定ゲイン(`Gbs_Emu` は `set_gain(1.2)`)でもshortの
+  フルスケールには届かず、素直に写すと中央に潰れて形が読めない。
+- 一時停止・停止時はリングを無音で埋める(`audio_clear_scope()`)。
+  そうしないと直前の波形が凍りついたまま残る。
+
+### ミュートUI(F-10): SPEC 6.1 と 6.3 の食い違いは 6.3 を採った
+
+SPEC 6.1 の画面表は「Settings に … EQ・チャンネルミュート」、
+SPEC 6.3 の入力表は「Player の Select でチャンネルミュートパネル」で、
+同じ機能の置き場所が食い違っている。**6.3 を採った**:
+
+- ミュートは「設定」よりも演奏中の操作に近い。聴きながら抜き差しできる
+  べきで、そのたびに Settings へ入り直すのは操作感が悪い。
+- パネルを Player の上に重ねる実装(`draw_voices()` が先頭で
+  `draw_player()` を呼ぶ)にしたため、**波形(F-14)を見ながら**
+  チャンネルを切り替えられる。パネルは画面中央ではなくフッタ直上に
+  置いている -- 中央だとちょうど波形を覆ってしまい、この狙いが潰れる。
+- `setting_def_t` の表は `offsetof` で1フィールドを指す設計なので、
+  ビットマスクである `voice_mute_mask` はそもそも表現できない。
+  SET_BITMASK のような種別を足すよりパネルの方が素直だった。
+
+EQ(`eq_bass`/`eq_treble`)の方は素直に `SETTINGS[]` へ2行足すだけで済んだ。
+
+### EQ(F-20): ノブ(-100..100)から libgme の物理量への変換
+
+`config.ini` の `eq_bass`/`eq_treble` は SPEC 7 が「0が中立」の対称な
+整数として例示しており、`config.c` は -100..100 にクランプする。一方
+libgme の `gme_equalizer_t` は物理量そのもので、単位も向きも違う:
+
+- `treble` … dB (0=フラット, -50=こもる, +5=きらびやか)
+- `bass` … 低音が落ち始める周波数(Hz)。**値が大きいほど低音が減る**
+
+特に `bass` は大小の向きが直感と逆で、素通しすると Settings で
+「+ を押すほど低音が痩せる」ことになる。そこで `src/eq.c`(新規、
+純libc。SPEC 4.2 のモジュール表には無い追加。app.c と同じ扱い)に
+変換関数を切り出した:
+
+- `eq_treble_db()`: 0 → -1.0dB、-100 → -47.0dB(`Gbs_Emu::handheld_eq`)、
+  +100 → +5.0dB。負側と正側で可動域が大きく違う(46dB対6dB)ため区分線形。
+- `eq_bass_freq()`: 0 → 120Hz、-100 → 2000Hz、+100 → 15Hz。**向きが反転する**。
+  周波数なので等比(対数)補間する -- 線形にするとノブの効きが中央に偏る。
+
+**0 が `Gbs_Emu` の既定 `make_equalizer(-1.0, 120)`(`Gbs_Emu.cpp:44`)に
+一致していることが重要**。ここがずれると「EQ を触っていないのに
+config.ini を作っただけで音が変わる」ことになる。`gme_equalizer()` で
+読み戻して既定値が正確に `(-1.00, 120.00)` であることを実測確認した。
+
+適用箇所は `gme_set_stereo_depth` と同じ2箇所(emuを開いた直後の
+`configure_new_emu()` と、再生中の `player_apply_config()`)。
+`Classic_Emu::set_equalizer_()` は `update_eq()` と `buf->bass_freq()` を
+呼ぶだけで再確保しないため、`audio_lock` 内なら再生中に呼んで安全。
+なお**必ず `gme_open_*()` の後に呼ぶこと** --
+`Classic_Emu::setup_buffer()` がロード時に `set_equalizer(equalizer())` を
+呼ぶが、その前は `buf` が未確定で `bass_freq` が反映されない。
+
+### 合成GBSフィクスチャを「音が出る」ものへ作り替えた
+
+P7 までの `tests/gen_fixture_gbs.c` は init/play とも `RET` だけで、
+**一切音を出さない**擬似GBSだった(プレイリスト構築の検証には十分だった)。
+これでは T-10「4chミュート: 該当チャンネルのみ無音になる」を機械的に
+検証できないため、init ルーチンに GB APU のレジスタ書き込み列
+(`LD A,n` / `LDH (n),A` の羅列)を生成させ、4ボイスすべてが同時に鳴る
+ようにした。長さカウンタもエンベロープも使わないので、トリガ後は
+一定音量で鳴り続ける(ミュートの有無を差分で判定するのに都合が良い)。
+
+レジスタの書き順には意味がある。libgme の `Gb_Apu::write_register()` は
+電源OFF中に NR51 を書くと `osc.enabled` を落とすため、**NR52(電源)を
+最初に**書く必要がある。
+
+実測値(0.5秒レンダリングのRMS): mask=0 で 11204、mask=15 で **厳密に0**、
+各単一ビットでいずれも減少。`tests/test_mute.c` はこれを
+「bit i が voice i に一対一で対応」「全ミュートは厳密な無音」
+「各ボイスが単独で音を出す」という形で固定している。
+
+### 開発用オプション `--screenshot` を追加した
+
+実機には `/dev/fb0` をダンプするという確認手段があるが(P5/P7で活用)、
+ホストにはそれが無く、波形やミュートパネルのレイアウトを目で見る手段が
+無かった。`--ui-script` と同じ非公開オプションとして `--screenshot FILE`
+を足し、`ui_save_screenshot()`(`SDL_RenderReadPixels`+`SDL_SaveBMP`)で
+終了直前の1フレームをBMPへ書き出せるようにした。`SDL_VIDEODRIVER=offscreen`
+でも動くため、ヘッドレスのまま6解像度ぶんのレイアウトを機械的に確認できる。
+これで実機へ持って行く前に「320x240で波形が他の要素を押し出さないか」
+「パネルが波形を覆っていないか」を潰せた。
+
+### ASan/UBSanでの既知の失敗(P8とは無関係)
+
+ASan ビルドでは `test_playlist`/`test_archive`/`test_browser` の3つが
+LeakSanitizer で失敗する。いずれもテストハーネス自身の `path_in()` が
+`strdup()` した文字列を意図的に解放していないためで(「プロセスは短命な
+テストなので解放しない」とコメントに明記されている)、プロダクション
+コードのリークではない。P8で追加・変更したコード(`test_mute`/`test_eq`/
+`test_scope`/6解像度の`test_ui_smoke`)はすべて ASan/UBSan で緑。
+
 ## 検証手順
 
 ```sh
@@ -628,7 +771,7 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs
 ./build/mugbs --cli --duration 8 Game.gbs
 
-# GUI: Browser/Player/TrackList/Settings をキーボードで操作する
+# GUI: Browser/Player/TrackList/Settings/Voices をキーボードで操作する
 ./build/mugbs                         # カレントディレクトリのBrowserから開始
 ./build/mugbs --start-dir /path/to/music
 ./build/mugbs --window 720x720        # 別解像度でレイアウト確認(ホストのみ。掴んで伸縮も可)
@@ -639,6 +782,29 @@ ctest --test-dir build --output-on-failure
 #   Start で Settings を開く -> LEFT/RIGHT で値変更 -> B で戻る(保存される) -> Esc で終了
 cat /tmp/test.ini                     # 変更が保存されていることを確認
 ./build/mugbs --config /tmp/test.ini  # last_path 等が復元されることを確認
+
+# GUI (P8): チャンネルミュート・EQ・波形
+./build/mugbs --config /tmp/test.ini Game.gbs
+#   Player で波形が動く / Space(SELECT) で Voices パネル
+#   -> ↑↓で選択、Z(A)でミュート、S(Y)で全解除、X(B)で戻る(保存される)
+#   Return(START) で Settings -> EQ bass / EQ treble を LEFT/RIGHT で振る
+grep -E 'mute_mask|eq_' /tmp/test.ini # 保存されていることを確認
+
+# レイアウトを目で見る(--screenshot は非公開の開発用オプション)。
+# ホストには実機の /dev/fb0 に当たるものが無いのでこれで代用する。
+# SDL_VIDEODRIVER=offscreen なので X/Wayland が無くても動く。
+SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy timeout 2 \
+  ./build/mugbs --window 320x240 Game.gbs --config /tmp/test.ini \
+                --screenshot /tmp/shot.bmp
+# --ui-script と組み合わせれば任意の画面まで進めてから撮れる
+
+# ASan/UBSan (P5から使っている検証。P8のコードも含めて緑であること)
+cmake -B build-asan -DTARGET_HOST=ON -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_C_FLAGS="-fsanitize=address,undefined" \
+      -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"
+cmake --build build-asan -j && ctest --test-dir build-asan --output-on-failure
+#   test_playlist/test_archive/test_browser の3つはテストハーネス自身の
+#   意図的なリーク(path_in の strdup)で失敗する。既知でP8とは無関係
 ```
 
 ### クロスビルド・パッケージング・実機検証（P7で確立。実証済みの手順）
@@ -653,12 +819,12 @@ cat /tmp/test.ini                     # 変更が保存されていることを�
 
 # 3. .muxapp を作る (strip・バージョン付けまで自動)
 ./scripts/package.sh
-#   -> ./muGBS-0.9.0.muxapp
+#   -> ./muGBS-1.0.0.muxapp
 
 # 4. 実機へ転送してインストール (正式ルート: Archive Manager)
-scp muGBS-0.9.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
-# 実機で Applications > Archive Manager > muGBS-0.9.0 を選んで展開する
-# (SSH越しに /opt/muos/script/mux/extract.sh /mnt/mmc/ARCHIVE/muGBS-0.9.0.muxapp
+scp muGBS-1.0.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+# 実機で Applications > Archive Manager > muGBS-1.0.0 を選んで展開する
+# (SSH越しに /opt/muos/script/mux/extract.sh /mnt/mmc/ARCHIVE/muGBS-1.0.0.muxapp
 #  を直接叩いても同じ結果になる。Archive Managerが内部で呼ぶのと同一スクリプト)
 
 # 5. アプリ一覧(Applications)から物理ボタンで起動する

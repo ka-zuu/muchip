@@ -12,6 +12,11 @@
 #include <SDL.h>
 #include <gme/gme.h>
 
+/* ビジュアライザ(F-14)が描く波形の点数。1画面ぶんの窓の長さは
+ * AUDIO_SCOPE_SAMPLES * scope_stride フレーム。44100Hz・stride=3 なら
+ * 約17msぶんで、チップチューンの矩形波(数百Hz)が数周期入る。 */
+#define AUDIO_SCOPE_SAMPLES 256
+
 typedef struct {
     SDL_AudioDeviceID dev;
     Music_Emu *emu;              /* コールバックが参照する再生対象。
@@ -20,6 +25,17 @@ typedef struct {
     SDL_atomic_t track_ended;    /* コールバックが gme_track_ended() を検出したら1を立てる */
     SDL_atomic_t volume;         /* 0-100。audio_set_volume() 経由でのみ変更する
                                      (SDL_atomic_tなのでコールバックからロック無しで読める) */
+
+    /* F-14 ビジュアライザ用。コールバックが音量適用後の出力をモノラルへ
+     * 落として間引いたものを書き込むリングバッファ。読み出しは
+     * audio_snapshot_scope() 経由(内部で audio_lock する)。
+     * SDL_atomic_t を使わないのは、単一の値ではなく配列全体の一貫性が
+     * 必要なため -- 512バイトの memcpy でコールバックを止める時間は
+     * 無視できる。 */
+    short scope[AUDIO_SCOPE_SAMPLES];
+    int scope_pos;               /* 次に書く位置(リングの先頭 = 最も古い点) */
+    int scope_stride;            /* 何フレームおきに1点拾うか。audio_init() が決める */
+    int scope_phase;             /* コールバックをまたいで間引き位相を保つ */
 } mugbs_audio_t;
 
 /* SDLオーディオデバイスを開く（開始時は一時停止状態）。0で成功。 */
@@ -46,5 +62,16 @@ void audio_set_volume(mugbs_audio_t *a, int volume_0_100);
 /* コールバックが曲終端を検出済みなら非0を返す。 */
 int audio_poll_track_ended(mugbs_audio_t *a);
 void audio_clear_track_ended(mugbs_audio_t *a);
+
+/* 直近の波形を古い順に out[0..n-1] へ書き出す (F-14)。
+ * n は AUDIO_SCOPE_SAMPLES 以下であること(超える分は0で埋める)。
+ * 内部で audio_lock/unlock するため、オーディオコールバック実行中の
+ * 中途半端なリングを読むことはない。描画スレッド(メインループ)から
+ * 毎フレーム呼んでよい。 */
+void audio_snapshot_scope(mugbs_audio_t *a, short *out, int n);
+
+/* 波形リングを無音で埋める。一時停止・停止でコールバックが止まったときに
+ * 直前の波形が凍りついたまま残るのを防ぐ。 */
+void audio_clear_scope(mugbs_audio_t *a);
 
 #endif /* MUGBS_AUDIO_H */

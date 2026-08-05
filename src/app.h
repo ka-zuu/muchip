@@ -33,6 +33,12 @@ typedef struct {
     const char *ui_script_path; /* 非公開のヘッドレステスト用オプション(--ui-script)。
                                     通常の対話的起動では常にNULLを渡すこと。 */
 
+    const char *screenshot_path; /* 非公開の開発用オプション(--screenshot)。非NULLなら
+                                     メインループを抜ける直前の1フレームをBMPで書き出す。
+                                     ホストには実機の /dev/fb0 に相当するものが無いため、
+                                     --ui-script で目的の画面まで進めてからレイアウトを
+                                     目視確認するために使う。通常の起動では常にNULL。 */
+
     const char *config_path;    /* 終了時・Settings画面を抜けるときの自動保存先。
                                     NULLなら保存しない(CLIオーバーライド指定時 等)。 */
 } app_options_t;

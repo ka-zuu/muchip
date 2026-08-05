@@ -19,6 +19,40 @@ set_target_properties(test_playlist PROPERTIES LINKER_LANGUAGE CXX)
 target_link_options(test_playlist PRIVATE -static-libstdc++ -static-libgcc)
 add_test(NAME test_playlist COMMAND test_playlist)
 
+# P8で追加したeq.c(EQノブ -100..100 -> libgmeの treble(dB)/bass(Hz))の
+# 単体テスト。config.c と同じくSDLにもlibgmeにも依存しない純libc。
+add_executable(test_eq test_eq.c ../src/eq.c)
+target_include_directories(test_eq PRIVATE . ../src)
+target_link_libraries(test_eq PRIVATE m)
+add_test(NAME test_eq COMMAND test_eq)
+
+# P8で追加した波形リング(audio_snapshot_scope)の添字計算の単体テスト。
+# audio.c 全体をリンクするため SDL2 と libgme のヘッダは要るが、
+# SDL_Init は一度も呼ばない(test_ui_metrics と同じ方針)。
+add_executable(test_scope test_scope.c ../src/audio.c)
+target_include_directories(test_scope PRIVATE . ../src)
+target_link_libraries(test_scope PRIVATE gme_static)
+set_target_properties(test_scope PROPERTIES LINKER_LANGUAGE CXX)
+target_link_options(test_scope PRIVATE -static-libstdc++ -static-libgcc)
+if(TARGET SDL2::SDL2)
+    target_link_libraries(test_scope PRIVATE SDL2::SDL2)
+else()
+    target_include_directories(test_scope PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_scope PRIVATE ${SDL2_LIBRARIES})
+endif()
+add_test(NAME test_scope COMMAND test_scope)
+
+# P8: T-10(4chミュート)。gen_fixture_gbs.c を GEN_FIXTURE_GBS_NO_MAIN 付きで
+# 一緒にコンパイルし、4ボイスすべてが鳴る合成GBSを実行時に書き出して使う。
+# SDLには依存せず gme_static だけをリンクする(test_playlist と同じ形)。
+add_executable(test_mute test_mute.c gen_fixture_gbs.c)
+target_compile_definitions(test_mute PRIVATE GEN_FIXTURE_GBS_NO_MAIN)
+target_include_directories(test_mute PRIVATE . ../src)
+target_link_libraries(test_mute PRIVATE gme_static m)
+set_target_properties(test_mute PROPERTIES LINKER_LANGUAGE CXX)
+target_link_options(test_mute PRIVATE -static-libstdc++ -static-libgcc)
+add_test(NAME test_mute COMMAND test_mute)
+
 add_executable(test_archive test_archive.c ../src/archive.c)
 target_include_directories(test_archive PRIVATE . ../src)
 target_link_libraries(test_archive PRIVATE miniz)

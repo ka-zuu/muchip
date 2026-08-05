@@ -334,6 +334,17 @@ static int test_roundtrip_mutated(void) {
     return roundtrip(&c);
 }
 
+/* mute_mask (F-10) が「全ボイスミュート」まで往復できること。
+ * config_save() はクランプせずに書き、config_load() だけがクランプするため、
+ * 上限が MUGBS_MUTABLE_VOICES ビットぶんより狭いと、UIで全ミュートした状態が
+ * 再起動で別のチャンネルに化ける。 */
+static int test_roundtrip_all_voices_muted(void) {
+    mugbs_config_t c;
+    config_set_defaults(&c);
+    c.voice_mute_mask = (1 << MUGBS_MUTABLE_VOICES) - 1;
+    return roundtrip(&c);
+}
+
 /* --- 保存できない場所でも -1 を返して .tmp を残さないこと ---------------- */
 
 static int test_save_failure(void) {
@@ -359,6 +370,7 @@ int main(void) {
     if (test_input_section()) return 1;
     if (test_roundtrip_defaults()) return 1;
     if (test_roundtrip_mutated()) return 1;
+    if (test_roundtrip_all_voices_muted()) return 1;
     if (test_save_failure()) return 1;
 
     printf("test_config: すべて成功\n");

@@ -3,8 +3,8 @@
 # tests/CMakeLists.txt が gen_fixture_gbs で生成する Game.gbs (2トラック)
 # だけが置かれたディレクトリを --start-dir に指定して実行する想定。
 # Browser -> ファイルを開く -> Player -> TrackList -> ジャンプ -> Player ->
-# Settings(値変更) -> Player -> Browser -> Settings -> Browser -> 終了、
-# という画面遷移をひととおり踏む。
+# Voices(ミュートパネル) -> Player -> Settings(値変更) -> Player -> Browser ->
+# Settings -> Browser -> 終了、という画面遷移をひととおり踏む。
 # SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy 下で実行され、表示は見えない
 # (画面遷移・ライフサイクルのクラッシュ回帰をCIで拾うためのもの)。
 
@@ -12,12 +12,23 @@ A       # Browser: Game.gbs を開く -> Player
 X       # Player -> TrackList
 DOWN    # カーソルをトラック2へ
 A       # トラック2へジャンプ再生 -> Player
+SELECT  # Player -> Voices ミュートパネル (P8, F-10)
+DOWN    # Square 1 -> Square 2
+A       # Square 2 をミュート(再生中のemuへ gme_mute_voices を通す)
+DOWN    # Square 2 -> Wave
+RIGHT   # Wave もミュート(LEFT/RIGHTでもトグルできる経路)
+Y       # 全ミュート解除
+B       # Voices -> Player (ここでconfig_pathがあれば保存される)
 START   # Player -> Settings (P6)
 DOWN    # Volume -> Repeat
 RIGHT   # Repeat の値を変える(none/one/all を循環)
 DOWN    # Repeat -> Stereo depth
 RIGHT   # Stereo depth を変える(再生中のemuへ即時反映されるパス)
-DOWN    # Stereo depth -> Default length
+DOWN    # Stereo depth -> EQ bass
+RIGHT   # EQ bass を変える(P8, F-20。gme_set_equalizer を再生中に通す)
+DOWN    # EQ bass -> EQ treble
+LEFT    # EQ treble を負方向へ変える
+DOWN    # EQ treble -> Default length
 RIGHT   # Default length を変える(playlist_apply_default_lengthを通す)
 DOWN    # Default length -> Fade
 DOWN    # Fade -> Show all files

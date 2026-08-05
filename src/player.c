@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "archive.h"
+#include "eq.h"
 #include "log.h"
 
 /* 曲長判定(SPEC 5.1 との乖離#1への対応)は playlist.c の
@@ -20,8 +21,50 @@ static void close_current_emu(player_t *p) {
     audio_set_emu(&p->audio, NULL);
     gme_delete(p->emu);
     p->emu = NULL;
+    audio_clear_scope(&p->audio); /* 停止後に直前の波形が残らないように (F-14) */
     p->current_source = -1;
     p->state = PLAYER_STOPPED;
+    /* voice_names[] は libgme の静的文字列を指しているだけなので解放不要。
+     * ただし delete 済みの emu に紐づく情報を UI に見せないためクリアする。 */
+    p->voice_count = 0;
+}
+
+/* config の eq_bass/eq_treble を emu へ適用する (F-20)。
+ * gme_set_equalizer() は現在値を読んで treble/bass だけ差し替えるため、
+ * gme_equalizer_t の予約フィールド(d2..d9)を自前でゼロ埋めしてはいけない
+ * -- gme_equalizer() で現在値を取ってから書き換える。
+ * ロックは呼び出し側の責務(開いた直後は不要、再生中は audio_lock 内)。 */
+static void apply_equalizer(Music_Emu *emu, const mugbs_config_t *cfg) {
+    gme_equalizer_t eq;
+    gme_equalizer(emu, &eq);
+    eq.treble = eq_treble_db(cfg->eq_treble);
+    eq.bass = eq_bass_freq(cfg->eq_bass);
+    gme_set_equalizer(emu, &eq);
+}
+
+/* 新しく開いた emu へ、config の内容と voice 情報キャッシュを焼き込む。
+ * gme_open_*() の直後に一度だけ呼ぶ。まだ audio_set_emu() でコールバックへ
+ * 渡していない段階なので、ここでは audio_lock は要らない。
+ * (再生中の値変更は player_apply_config() 側が担当する) */
+static void configure_new_emu(player_t *p, Music_Emu *emu) {
+    gme_enable_accuracy(emu, 1);
+    gme_set_stereo_depth(emu, p->config->stereo_depth);
+
+    /* F-10: ファイルを切り替えてもミュート設定が維持されるのはこの経路。
+     * gme_mute_voices() は require(sample_rate()) を持つため、
+     * emu を開いた後でしか呼べない。 */
+    gme_mute_voices(emu, p->config->voice_mute_mask);
+
+    /* F-20: 必ず gme_open_*() の後に呼ぶ。Classic_Emu::setup_buffer() が
+     * ロード時に set_equalizer(equalizer()) を呼ぶため、ロード前に設定しても
+     * buf が未確定で bass_freq が反映されない。 */
+    apply_equalizer(emu, p->config);
+
+    p->voice_count = gme_voice_count(emu);
+    if (p->voice_count > MUGBS_MAX_VOICES) p->voice_count = MUGBS_MAX_VOICES;
+    for (int i = 0; i < p->voice_count; i++) {
+        p->voice_names[i] = gme_voice_name(emu, i);
+    }
 }
 
 /* 既に開いている p->emu 上で track_index のトラックを開始する。
@@ -148,8 +191,7 @@ int player_play_entry(player_t *p, int entry_index) {
             }
         }
 
-        gme_enable_accuracy(emu, 1);
-        gme_set_stereo_depth(emu, p->config->stereo_depth);
+        configure_new_emu(p, emu);
 
         p->emu = emu;
         p->current_source = e->source_index;
@@ -169,10 +211,17 @@ void player_toggle_pause(player_t *p) {
     if (p->state == PLAYER_PLAYING) {
         audio_set_pause(&p->audio, 1);
         p->state = PLAYER_PAUSED;
+        /* 一時停止するとコールバックが止まるため、直前の波形が
+         * 凍りついたまま画面に残る。無音へ落としておく (F-14)。 */
+        audio_clear_scope(&p->audio);
     } else if (p->state == PLAYER_PAUSED) {
         audio_set_pause(&p->audio, 0);
         p->state = PLAYER_PLAYING;
     }
+}
+
+void player_snapshot_scope(player_t *p, short *out, int n) {
+    audio_snapshot_scope(&p->audio, out, n);
 }
 
 int player_is_track_ended(player_t *p) {
@@ -248,13 +297,19 @@ void player_apply_config(player_t *p) {
     /* volume: atomic なのでロック不要。 */
     audio_set_volume(&p->audio, p->config->volume);
 
-    /* stereo_depth: 現在開いているemuへ即時反映する。Effects_Buffer::config()は
-     * 再確保を行わないため、再生中に呼んでも安全(vendor/game-music-emu/gme/
-     * Effects_Buffer.cpp 参照)。emuが無い(未再生)場合は何もしない -- 次に
-     * player_play_entry() が開くときに p->config->stereo_depth を読む。 */
+    /* stereo_depth / voice_mute_mask / eq_*: 現在開いているemuへ即時反映する。
+     * Effects_Buffer::config() も Classic_Emu::mute_voices_() も
+     * Classic_Emu::set_equalizer_() も再確保を行わないため、再生中に
+     * 呼んでも安全(vendor/game-music-emu/gme/Effects_Buffer.cpp,
+     * Classic_Emu.cpp 参照)。ただしいずれも gme_play() と同時に
+     * 走らせてはならないので audio_lock で囲む。
+     * emuが無い(未再生)場合は何もしない -- 次に player_play_entry() が
+     * 開くときに configure_new_emu() が同じ値を焼き込む。 */
     if (p->emu) {
         audio_lock(&p->audio);
         gme_set_stereo_depth(p->emu, p->config->stereo_depth);
+        gme_mute_voices(p->emu, p->config->voice_mute_mask);
+        apply_equalizer(p->emu, p->config);
         audio_unlock(&p->audio);
     }
 

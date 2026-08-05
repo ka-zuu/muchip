@@ -94,6 +94,21 @@ void ui_text_clipped(ui_t *ui, int x, int y, int max_w, ui_text_size_t size,
 /* シークバー兼用の進捗バー。ratio は 0.0-1.0 にクランプされる。 */
 void ui_draw_progress(ui_t *ui, ui_rect_t r, float ratio, SDL_Color fg, SDL_Color bg);
 
+/* 簡易オシロスコープ (F-14)。samples[0..count-1] を r の横幅いっぱいに
+ * 線形写像した折れ線で描く。振幅は short のフルスケールを r の高さに
+ * 対応させ、r からはみ出さないようクランプする。
+ * count が r.w より大きくても小さくても破綻しない(解像度非依存。SPEC 6.2)。
+ * 表示を安定させるためのトリガ(ゼロ交差検出)は呼び出し側の責務。 */
+void ui_draw_waveform(ui_t *ui, ui_rect_t r, const short *samples, int count,
+                       SDL_Color fg, SDL_Color bg);
+
+/* 現在のレンダリング結果をBMPとして path へ書き出す(--screenshot、開発用)。
+ * 0で成功、-1で失敗(理由はLOG_ERRに出る)。ui_present() の前に呼ぶこと
+ * (SDL_RenderPresent 後のバックバッファの内容は未定義)。
+ * 実機には /dev/fb0 のダンプという手段があるが、ホストにはそれが無いため
+ * 複数解像度のレイアウトを目視確認する手段として用意している。 */
+int ui_save_screenshot(ui_t *ui, const char *path);
+
 /* Browser/TrackList で共有するスクロール付きリスト描画。
  * item_fn(ctx, index) は行の表示文字列を返す(呼び出し中のみ有効な
  * ポインタでよい。内部で即座に描画する)。

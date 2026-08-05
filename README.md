@@ -4,15 +4,15 @@ muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック�
 （曲名・曲長・ループ指定）を正しく扱う。詳細仕様は [`SPEC.md`](./SPEC.md)、
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
-現在のスコープは **コア再生エンジン + GUI + 設定ファイル + 解像度非依存化 +
-muOS向けパッケージング（P0〜P7）**。SDL2 の Browser/Player/TrackList/Settings
+**P0〜P8 完了（v1.0.0）**。SPEC の MUST 要件（F-01〜F-08）に加え、
+SHOULD/NICE 要件のうち F-10 チャンネルミュート・F-14 ビジュアライザ・
+F-20 EQ まで実装済み。SDL2 の Browser/Player/TrackList/Settings/Voices
 画面をホスト上でキーボード操作から通しで確認でき、`config.ini` の読み書き
-（終了時オートセーブ・直近パスの記憶）にも対応した。CLI ハーネス
+（終了時オートセーブ・直近パスの記憶）にも対応する。CLI ハーネス
 （`--list`/`--cli`。CI・自動検証用）も引き続き使える。`.muxapp` へパッケージ
 して実機の Archive Manager からインストールし、物理ボタンだけで
-Browser→Player→TrackList→Settings→終了まで一巡できることを実機で確認済み
-（下記「muOS へのインストール」参照）。チャンネルミュート・ビジュアライザ・
-EQ（P8）は別プランで扱う。
+Browser→Player→TrackList→Voices→Settings→終了まで一巡できることを実機で
+確認済み（下記「muOS へのインストール」参照）。
 
 ## ビルド（ホスト / 開発機）
 
@@ -51,7 +51,7 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs       # 1トラック目を再生
 ```
 
-## GUI (Browser / Player / TrackList / Settings)
+## GUI (Browser / Player / TrackList / Settings / Voices)
 
 引数無し、または `--list`/`--cli` 以外の起動でGUI本体が立ち上がる。
 
@@ -69,25 +69,26 @@ ctest --test-dir build --output-on-failure
 
 キーボード操作（実機ではSDL_GameControllerのボタンに対応。SPEC 6.3参照）:
 
-| キー | Browser | Player | TrackList | Settings |
-|---|---|---|---|---|
-| `↑` `↓` | カーソル移動 | 音量 +/- | カーソル移動 | 項目選択 |
-| `←` `→` | ページ送り | シーク -5s/+5s | ページ送り | 値を増減 |
-| `Z` (A相当) | 開く | 再生/一時停止 | ジャンプ再生 | 値を増やす |
-| `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る | 保存して戻る |
-| `A` (X相当) | — | TrackListを開く | Playerへ戻る | — |
-| `S` (Y相当) | — | リピートモード切替 | — | — |
-| `Q`/`W` (L1/R1) | — | 前/次トラック | — | — |
-| `1`/`2` (L2/R2) | — | 前/次ファイル | — | — |
-| `Return` (Start相当) | Settingsを開く | Settingsを開く | — | 保存して戻る |
-| `Esc` | 終了 | 終了 | 終了 | — |
+| キー | Browser | Player | TrackList | Settings | Voices |
+|---|---|---|---|---|---|
+| `↑` `↓` | カーソル移動 | 音量 +/- | カーソル移動 | 項目選択 | チャンネル選択 |
+| `←` `→` | ページ送り | シーク -5s/+5s | ページ送り | 値を増減 | ミュート切替 |
+| `Z` (A相当) | 開く | 再生/一時停止 | ジャンプ再生 | 値を増やす | ミュート切替 |
+| `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る | 保存して戻る | 保存して戻る |
+| `A` (X相当) | — | TrackListを開く | Playerへ戻る | — | — |
+| `S` (Y相当) | — | リピートモード切替 | — | — | 全ミュート解除 |
+| `Q`/`W` (L1/R1) | — | 前/次トラック | — | — | — |
+| `1`/`2` (L2/R2) | — | 前/次ファイル | — | — | — |
+| `Return` (Start相当) | Settingsを開く | Settingsを開く | — | 保存して戻る | 保存して戻る |
+| `Space` (Select相当) | — | Voicesを開く | — | — | 保存して戻る |
+| `Esc` | 終了 | 終了 | 終了 | — | — |
 
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
 意図的に広げてある。`PLAN.md` 参照）。Volume・Repeat・Stereo depth・
-Default length・Fade・Show all files の6項目を編集でき、抜けるときと
-アプリ終了時に `config.ini` へ自動保存する（`sample_rate` と P8予定の
-EQ/チャンネルミュートは対象外）。
+**EQ bass**・**EQ treble**・Default length・Fade・Show all files の8項目を
+編集でき、抜けるときとアプリ終了時に `config.ini` へ自動保存する
+（`sample_rate` はデバイス再オープンが必要なため対象外）。
 
 実機の物理ボタンでの終了は **GUIDEボタン単体、または Start+Select 同時押し**
 （SPEC 6.3「Menu長押し=終了」の代替。GUIDEがmuOS側のオーバーレイに
@@ -98,6 +99,31 @@ EQ/チャンネルミュートは対象外）。
 含まれておらず、SDL2_ttf が実機に存在するか未確認のため、新規の実行時
 依存を増やさない選択をしている。UI文言は英語のみ対応（GBSのメタデータは
 basic latin 以外は `?` にフォールバックする）。
+
+### チャンネルミュート (F-10) とビジュアライザ (F-14)
+
+Player 画面で **Select** を押すと Voices パネルが開き、GB APU の4チャンネル
+（Square 1 / Square 2 / Wave / Noise）を個別にミュートできる。パネルは
+Player の上に重なるだけなので、**波形を見ながら**チャンネルを抜き差しできる。
+設定は `[voices] mute_mask` として保存され、ファイルを切り替えても
+再起動しても維持される。
+
+SPEC 6.1 は「Settings に EQ・チャンネルミュート」、SPEC 6.3 は
+「Player の Select でミュートパネル」と食い違っている。6.3 を採った
+（意図的な逸脱。`PLAN.md` 参照）。
+
+Player 画面にはシークバーの下に簡易オシロスコープを表示する。
+libgme の公開 C API にはチャンネル別の PCM を取り出す手段が無いため
+（`gme_new_emu_multi_channel()` 以外に無く、それは `gme_open_*` と両立
+しない）、SPEC F-14 が許容する「波形」の方を採った。詳しくは `PLAN.md`。
+
+### EQ (F-20)
+
+`config.ini` の `eq_bass` / `eq_treble` は **-100〜100 の対称なノブ**で、
+0 が GBS の既定の音（libgme の `treble = -1.0 dB`, `bass = 120 Hz`）に
+一致する。libgme の `bass` は「低音が落ち始める周波数」で値が大きいほど
+低音が減るため、ノブとは向きが逆になる（`src/eq.c` が変換する）。
+`+` 方向がそれぞれ「低音が増える」「高音が増える」で直感どおりに動く。
 
 ## 設定ファイル (config.ini, P6)
 
@@ -192,7 +218,7 @@ sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能し�
    期待する `NEEDED` は `libSDL2-2.0.so.0` / `libm.so.6` / `libc.so.6` の3つだけ
 3. `.muxapp` を作る（strip・バージョン付けまで自動。詳細は次節）
    ```sh
-   ./scripts/package.sh    # -> ./muGBS-0.9.0.muxapp
+   ./scripts/package.sh    # -> ./muGBS-1.0.0.muxapp
    ```
 
 `sysroot/` はバイナリを含むため git 管理しない（`.gitignore` 済み）。
@@ -211,10 +237,10 @@ ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /
 ## muOS へのインストール（P7、実機で検証済み）
 
 ```sh
-scp muGBS-0.9.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+scp muGBS-1.0.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
 ```
 
-実機で **Applications > Archive Manager** から `muGBS-0.9.0` を選んで
+実機で **Applications > Archive Manager** から `muGBS-1.0.0` を選んで
 展開するとインストールされる（`/run/muos/storage/application/muGBS/`
 に配置される。実体の物理パスは機種のSD構成によって変わるため
 `/mnt/mmc` 等をコードにハードコードしていない）。以後はアプリ一覧

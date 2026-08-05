@@ -315,6 +315,74 @@ void ui_draw_progress(ui_t *ui, ui_rect_t r, float ratio, SDL_Color fg, SDL_Colo
     if (inner.w > 0) ui_fill_rect(ui, inner, fg);
 }
 
+void ui_draw_waveform(ui_t *ui, ui_rect_t r, const short *samples, int count,
+                       SDL_Color fg, SDL_Color bg) {
+    if (r.w <= 1 || r.h <= 1) return;
+
+    ui_fill_rect(ui, r, bg);
+
+    int mid = r.y + r.h / 2;
+    if (!samples || count <= 0) {
+        /* データが無いときは中央に0の線を引く(枠だけが残るより、
+         * 「無音である」と読める方がよい)。 */
+        SDL_SetRenderDrawColor(ui->ren, fg.r, fg.g, fg.b, fg.a);
+        SDL_RenderDrawLine(ui->ren, r.x, mid, r.x + r.w - 1, mid);
+        return;
+    }
+
+    /* 1画素につき1点を打つ。count が r.w より多ければ間引き、少なければ
+     * 同じ点が横に伸びる(どちらでも折れ線として破綻しない)。
+     *
+     * 縦の正規化に WAVE_DISPLAY_GAIN を掛けている。GBS の出力は
+     * libgme の既定ゲイン(Gbs_Emu は set_gain(1.2))でも short の
+     * フルスケールにはまず届かず、素直に 32767 -> r.h/2 で写すと
+     * 波形が中央に潰れて形が読めない。はみ出しはクランプする
+     * (オシロというより「振れているのが分かる」ことを優先した簡易表示。
+     *  SPEC 3.2 F-14 も「簡易ビジュアライザ」としている)。 */
+#define WAVE_DISPLAY_GAIN 3
+    int half = r.h / 2;
+    SDL_SetRenderDrawColor(ui->ren, fg.r, fg.g, fg.b, fg.a);
+    int prev_x = r.x;
+    int prev_y = mid;
+    for (int px = 0; px < r.w; px++) {
+        int idx = (int)((long)px * count / r.w);
+        if (idx >= count) idx = count - 1;
+        int y = mid - (int)((long)samples[idx] * WAVE_DISPLAY_GAIN * half / 32768);
+        if (y < r.y) y = r.y;
+        if (y > r.y + r.h - 1) y = r.y + r.h - 1;
+        if (px > 0) {
+            SDL_RenderDrawLine(ui->ren, prev_x, prev_y, r.x + px, y);
+        }
+        prev_x = r.x + px;
+        prev_y = y;
+    }
+}
+
+int ui_save_screenshot(ui_t *ui, const char *path) {
+    /* レンダラの実出力サイズで読み戻す(HiDPI考慮後の値。ui_init/ui_handle_resize
+     * が screen_w/h に入れているものと同じ)。 */
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, ui->screen_w, ui->screen_h,
+                                                     32, SDL_PIXELFORMAT_ARGB8888);
+    if (!s) {
+        LOG_ERR("SDL_CreateRGBSurfaceWithFormat failed: %s", SDL_GetError());
+        return -1;
+    }
+    if (SDL_RenderReadPixels(ui->ren, NULL, SDL_PIXELFORMAT_ARGB8888,
+                              s->pixels, s->pitch) != 0) {
+        LOG_ERR("SDL_RenderReadPixels failed: %s", SDL_GetError());
+        SDL_FreeSurface(s);
+        return -1;
+    }
+    int rc = SDL_SaveBMP(s, path);
+    SDL_FreeSurface(s);
+    if (rc != 0) {
+        LOG_ERR("SDL_SaveBMP(%s) failed: %s", path, SDL_GetError());
+        return -1;
+    }
+    LOG_INFO("スクリーンショットを書き出しました: %s (%dx%d)", path, ui->screen_w, ui->screen_h);
+    return 0;
+}
+
 void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
                    int *scroll, ui_list_item_fn item_fn, void *ctx) {
     int row_h = ui->metrics.line_h;

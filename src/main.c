@@ -41,6 +41,7 @@ typedef struct {
     const char *start_dir;   /* --start-dir DIR: Browserの開始ディレクトリ */
     int window_w, window_h;   /* --window WxH: ホストでのレイアウト確認用。0以下=実機と同じく検出解像度でフルスクリーン */
     const char *ui_script;     /* --ui-script FILE: 非公開。ヘッドレスUIスモークテスト用 */
+    const char *screenshot;     /* --screenshot FILE: 非公開。終了直前の1フレームをBMPで書き出す */
 } mugbs_args_t;
 
 static void print_usage(const char *prog) {
@@ -91,6 +92,13 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
             /* 非公開オプション: ヘッドレスUIスモークテスト用(tests/参照)。usageには出さない。 */
             if (i + 1 >= argc) { LOG_ERR("--ui-script にはファイル引数が必要です"); return -1; }
             out->ui_script = argv[++i];
+        } else if (strcmp(a, "--screenshot") == 0) {
+            /* 非公開オプション: 終了直前の1フレームをBMPへ書き出す。usageには出さない。
+             * ホストには実機の /dev/fb0 に当たるものが無いため、--ui-script で
+             * 目的の画面まで遷移させてからレイアウトを目視確認するための開発用。
+             * SDL_VIDEODRIVER=offscreen でも動く。 */
+            if (i + 1 >= argc) { LOG_ERR("--screenshot にはファイル引数が必要です"); return -1; }
+            out->screenshot = argv[++i];
         } else if (strcmp(a, "--config") == 0) {
             if (i + 1 >= argc) { LOG_ERR("--config にはファイル引数が必要です"); return -1; }
             out->config_path = argv[++i];
@@ -265,6 +273,7 @@ int main(int argc, char **argv) {
         .window_w = args.window_w,
         .window_h = args.window_h,
         .ui_script_path = args.ui_script,
+        .screenshot_path = args.screenshot,
         .config_path = cli_override ? NULL : config_path,
     };
     int rc = app_run(&cfg, &opt);
