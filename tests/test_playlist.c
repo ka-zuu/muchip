@@ -55,25 +55,7 @@ static void write_text_file(const char *path, const char *text) {
     fclose(f);
 }
 
-static char g_tmpdir[256];
-
-static void setup_tmpdir(void) {
-    const char *base = getenv("TMPDIR");
-    if (!base) base = "/tmp";
-    snprintf(g_tmpdir, sizeof(g_tmpdir), "%s/mugbs_test_playlist_XXXXXX", base);
-    if (!mkdtemp(g_tmpdir)) {
-        fprintf(stderr, "mkdtemp failed\n");
-        exit(1);
-    }
-}
-
-/* strdup した文字列を返す(呼び出し側で複数回呼んで結果を保持しても
- * 上書きされないように。プロセスは短命なテストなので解放しない)。 */
-static char *path_in(const char *name) {
-    char buf[512];
-    snprintf(buf, sizeof(buf), "%s/%s", g_tmpdir, name);
-    return strdup(buf);
-}
+/* g_tmpdir / setup_tmpdir() / path_in() は test_util.h にある。 */
 
 /* T-01相当: m3uなしの単体.gbsを開く -> 全トラックが "Track NN" で列挙される */
 static int test_no_m3u_auto_naming(void) {
@@ -354,7 +336,7 @@ static int test_zip_single_m3u(void) {
 }
 
 int main(void) {
-    setup_tmpdir();
+    setup_tmpdir("playlist");
 
     if (test_no_m3u_auto_naming()) return 1;
     if (test_sidecar_m3u()) return 1;
