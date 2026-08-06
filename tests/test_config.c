@@ -36,6 +36,7 @@ static int test_defaults(void) {
     CHECK(c.default_length_sec == 150);
     CHECK(c.fade_length_ms == 8000);
     CHECK(c.repeat_mode == REPEAT_ALL);
+    CHECK(c.shuffle == 0);
     CHECK(c.sample_rate == 44100);
     CHECK(near(c.stereo_depth, 0.15));
     CHECK(c.eq_bass == 0);
@@ -55,6 +56,7 @@ static int test_spec_sample(void) {
         "default_length_sec = 150   ; 曲長不明時の再生秒数\n"
         "fade_length_ms     = 8000\n"
         "repeat_mode        = all   ; none | one | all\n"
+        "shuffle            = false\n"
         "sample_rate        = 44100\n"
         "\n"
         "[audio]\n"
@@ -72,6 +74,7 @@ static int test_spec_sample(void) {
     c.default_length_sec = 1;
     c.eq_bass = 1;
     c.repeat_mode = REPEAT_NONE;
+    c.shuffle = 1;
     c.show_all_files = 1;
 
     CHECK(load_str(&c, sample) == 0);
@@ -79,6 +82,7 @@ static int test_spec_sample(void) {
     CHECK(c.default_length_sec == 150);
     CHECK(c.fade_length_ms == 8000);
     CHECK(c.repeat_mode == REPEAT_ALL);
+    CHECK(c.shuffle == 0);
     CHECK(c.sample_rate == 44100);
     CHECK(near(c.stereo_depth, 0.15));
     CHECK(c.eq_bass == 0);
@@ -303,6 +307,7 @@ static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
     CHECK(a->default_length_sec == b->default_length_sec);
     CHECK(a->fade_length_ms == b->fade_length_ms);
     CHECK(a->repeat_mode == b->repeat_mode);
+    CHECK(a->shuffle == b->shuffle);
     CHECK(a->sample_rate == b->sample_rate);
     CHECK(near(a->stereo_depth, b->stereo_depth));
     CHECK(a->eq_bass == b->eq_bass);
@@ -338,6 +343,7 @@ static int test_roundtrip_mutated(void) {
     c.default_length_sec = 47;
     c.fade_length_ms = 1500;
     c.repeat_mode = REPEAT_ONE;
+    c.shuffle = 1;
     c.sample_rate = 22050;
     c.stereo_depth = 0.625;
     c.eq_bass = -20;

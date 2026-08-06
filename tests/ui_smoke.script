@@ -4,8 +4,9 @@
 # Game2.gbs (3トラック) が置かれたディレクトリを --start-dir に指定して
 # 実行する想定。
 # Browser -> ファイルを開く -> Player(一覧を操作して別ファイルを開く) ->
-# TrackList -> ジャンプ -> Player -> Settings(値変更) -> Player -> Browser ->
-# Settings -> Browser -> 終了、という画面遷移をひととおり踏む。
+# TrackList -> ジャンプ -> Player -> Settings(値変更・リセット確認ダイアログ) ->
+# Player -> Browser -> Settings -> Browser -> 終了、という画面遷移をひととおり
+# 踏む。
 # SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy 下で実行され、表示は見えない
 # (画面遷移・ライフサイクルのクラッシュ回帰をCIで拾うためのもの)。
 
@@ -21,7 +22,9 @@ DOWN    # カーソルをトラック2へ
 A       # トラック2へジャンプ再生 -> Player
 START   # Player -> Settings (P6)。カーソルは先頭の Repeat にある
 RIGHT   # Repeat の値を変える(none/one/all を循環)
-DOWN    # Repeat -> Stereo depth
+DOWN    # Repeat -> Shuffle
+RIGHT   # Shuffle を有効にする(P10, F-25)
+DOWN    # Shuffle -> Stereo depth
 RIGHT   # Stereo depth を変える(再生中のemuへ即時反映されるパス)
 DOWN    # Stereo depth -> EQ bass
 RIGHT   # EQ bass を変える(P8, F-20。gme_set_equalizer を再生中に通す)
@@ -32,6 +35,10 @@ RIGHT   # Default length を変える(playlist_apply_default_lengthを通す)
 DOWN    # Default length -> Fade
 DOWN    # Fade -> Show all files
 RIGHT   # show_all_files を切り替える(browser_open_dirの自己呼び出しを通す)
+X       # リセット確認ダイアログを開く(P10)
+B       # キャンセル(変更はそのまま残る)
+X       # 再度開く
+A       # 確定。SETTINGS[]の項目が既定値に戻る(app_reset_settings)
 B       # Settings -> Player (ここでconfig_pathがあれば保存される)
 B       # Player -> Browser
 START   # Browser -> Settings (SPEC 6.3からの逸脱。PLAN.md参照)

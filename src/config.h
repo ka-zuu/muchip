@@ -28,6 +28,7 @@ typedef struct {
     int default_length_sec; /* 曲長不明時の再生秒数 (F-08) */
     int fade_length_ms;
     repeat_mode_t repeat_mode;
+    int shuffle;    /* 0/1。エントリの再生順をランダム化する (F-25, P10) */
     int sample_rate;
 
     /* [audio] */

@@ -66,6 +66,7 @@ typedef struct {
     int settings_sel;
     int settings_scroll;
     app_screen_t settings_return; /* Settingsを抜けたら戻る画面(Browser/Player) */
+    int settings_confirm_reset; /* P10: Xで開くリセット確認ダイアログの表示中フラグ */
 
     /* F-14 ビジュアライザ。app_update_scope() が1フレームに1回だけ
      * player から取り込み、トリガ(立ち上がりゼロ交差)を合わせたもの。
@@ -198,10 +199,11 @@ static int list_visible_rows(app_t *app) {
 #define APP_SCOPE_DRAW_SAMPLES (AUDIO_SCOPE_SAMPLES / 2)
 
 /* Player画面のステータス行より下の帯を、ファイル一覧(P9)とビジュアライザ
- * (F-14)で行単位に分け合うときの上限/下限。draw_player() を参照。 */
+ * (F-14)で行単位に分け合うときの一覧側の上限/波形側の下限。draw_player()を
+ * 参照。波形側には上限を設けていない(P10: 余りは全部波形に渡し、
+ * 下端がフッタ帯近くまで届くようにする)。 */
 #define PLAYER_LIST_MAX_ROWS 7
 #define PLAYER_WAVE_MIN_ROWS 2
-#define PLAYER_WAVE_MAX_ROWS 5
 
 /* 1フレームに1回だけ波形を取り込む。
  *
@@ -595,19 +597,22 @@ typedef struct {
     double min, max, step; /* SET_ENUM/SET_BOOL は 0..(選択肢数-1)、step=1 */
     const char *const *enum_names; /* SET_ENUMのみ非NULL */
     int enum_count;
-    const char *note; /* 反映タイミングの注記("next track"等)。無ければNULL */
 } setting_def_t;
 
 static const char *const REPEAT_MODE_NAMES[] = { "none", "one", "all" };
 
+/* Default length/Fade が「次のトラックから反映される」ことを示す
+ * フッタの "(next track)" 注記はP10で削除した(ユーザー判断。
+ * app_apply_settings()のコメントに反映タイミングの説明は残してある)。 */
 static const setting_def_t SETTINGS[] = {
-    { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3, NULL },
-    { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0, NULL },
-    { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0, NULL },
-    { "EQ treble",           SET_INT,    offsetof(mugbs_config_t, eq_treble),       -100,   100,   5, NULL, 0, NULL },
-    { "Default length",     SET_INT,    offsetof(mugbs_config_t, default_length_sec), 10,  600,  10, NULL, 0, "next track" },
-    { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0, "next track" },
-    { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0, NULL },
+    { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3 },
+    { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0 },
+    { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0 },
+    { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0 },
+    { "EQ treble",           SET_INT,    offsetof(mugbs_config_t, eq_treble),       -100,   100,   5, NULL, 0 },
+    { "Default length",     SET_INT,    offsetof(mugbs_config_t, default_length_sec), 10,  600,  10, NULL, 0 },
+    { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0 },
+    { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0 },
 };
 #define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
 
@@ -682,7 +687,46 @@ static void app_leave_settings(app_t *app) {
     }
 }
 
+/* Settings画面に出ている項目(SETTINGS[])だけを既定値に戻す (P10)。
+ * last_path/gamecontroller_db/controller_mapping/sample_rateはSettings画面に
+ * 出てこない値なので対象外にする(ユーザーの操作履歴やコントローラ設定を
+ * 巻き込んで消してしまわないため)。config_set_defaults()で作った一時値から
+ * SETTINGS[]に載っている分だけコピーする。 */
+static void app_reset_settings(app_t *app) {
+    mugbs_config_t defaults;
+    config_set_defaults(&defaults);
+    for (int i = 0; i < SETTINGS_COUNT; i++) {
+        const setting_def_t *s = &SETTINGS[i];
+        setting_set(app->cfg, s, setting_get(&defaults, s));
+    }
+    app_apply_settings(app);
+    /* show_all_filesも既定値に戻り得るので、adjust_setting()と同様に
+     * Browser/Player一覧を作り直す。頻繁な操作ではないので、実際に
+     * 変わったかどうかは問わず常に再走査する。 */
+    browser_open_dir(&app->browser, app->browser.cwd, app->cfg->show_all_files);
+    if (app->player_path[0]) app_sync_player_list(app, app->player_path, 1);
+    set_status(app, "Settings reset to defaults");
+}
+
 static void handle_settings_input(app_t *app, input_action_t a) {
+    if (app->settings_confirm_reset) {
+        /* リセット確認ダイアログの表示中。Yes/Noのみ受け付ける。 */
+        switch (a) {
+            case INPUT_A:
+                app_reset_settings(app);
+                app->settings_confirm_reset = 0;
+                break;
+            case INPUT_B:
+            case INPUT_X:
+            case INPUT_START:
+                app->settings_confirm_reset = 0;
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
     switch (a) {
         /* 端で折り返す(P9)。SETTINGS_COUNT はコンパイル時定数なので0にならない。 */
         case INPUT_UP:
@@ -697,6 +741,9 @@ static void handle_settings_input(app_t *app, input_action_t a) {
         case INPUT_RIGHT:
         case INPUT_A: /* 親指1本で右方向へ回せるようにする */
             adjust_setting(app, 1);
+            break;
+        case INPUT_X:
+            app->settings_confirm_reset = 1;
             break;
         case INPUT_B:
         case INPUT_START:
@@ -844,7 +891,8 @@ static void draw_player(app_t *app) {
     const char *state_label = app->player.state == PLAYER_PAUSED ? "PAUSED" :
                                app->player.state == PLAYER_PLAYING ? "PLAYING" : "STOPPED";
     char status_line[128];
-    snprintf(status_line, sizeof(status_line), "%s  repeat:%s", state_label, repeat_label);
+    snprintf(status_line, sizeof(status_line), "%s  repeat:%s  shuffle:%s",
+             state_label, repeat_label, app->cfg->shuffle ? "on" : "off");
     ui_text(ui, x, y, UI_TEXT_SMALL, dim, status_line);
     y += ui->metrics.line_h;
 
@@ -852,13 +900,17 @@ static void draw_player(app_t *app) {
 
     /* ステータス行の下からフッタ帯の上までを
      *   [同一ディレクトリのファイル一覧(P9)] -> [ビジュアライザ(F-14)]
-     *   -> [一時メッセージ用の1行]
-     * で分け合う。一時メッセージ用の1行と、一覧/波形の間の余白を先に
-     * 差し引き、残りを行単位で割り当てる。低解像度で行が取れない要素は
-     * 丸ごと省く(フッタへはみ出させない。SPEC 6.2)。
-     * 一覧は操作に必要なので優先し、装飾である波形が余りをもらう。 */
+     * で分け合う。一覧は操作に必要なので優先し(最大PLAYER_LIST_MAX_ROWS行)、
+     * 装飾である波形は上限を設けず残り全部をもらう(P10: 波形の下端が
+     * フッタ帯に迫るところまで大きくする、というフィードバックへの対応)。
+     * 低解像度で行が取れない要素は丸ごと省く(フッタへはみ出させない。
+     * SPEC 6.2)。一時ステータスメッセージ用の行はもう固定確保しない
+     * (下記、フッタ直上へのオーバーレイとして描く)。 */
     const int row_h = ui->metrics.line_h;
-    int band_h = (ui->screen_h - ui->metrics.footer_h) - y - row_h - ui->metrics.pad;
+    /* 一覧と波形の間に入る余白(下記 "y += list.h + pad") の分だけ
+     * band_h から差し引いておかないと、波形の下端がフッタ帯へ数px
+     * はみ出しうる。 */
+    int band_h = (ui->screen_h - ui->metrics.footer_h) - y - ui->metrics.pad;
     if (band_h < 0) band_h = 0;
     int avail_rows = band_h / row_h;
 
@@ -866,8 +918,7 @@ static void draw_player(app_t *app) {
     if (avail_rows >= PLAYER_WAVE_MIN_ROWS + 2) {
         list_rows = avail_rows - PLAYER_WAVE_MIN_ROWS;
         if (list_rows > PLAYER_LIST_MAX_ROWS) list_rows = PLAYER_LIST_MAX_ROWS;
-        wave_rows = avail_rows - list_rows;
-        if (wave_rows > PLAYER_WAVE_MAX_ROWS) wave_rows = PLAYER_WAVE_MAX_ROWS;
+        wave_rows = avail_rows - list_rows; /* 上限なし。余りは全部波形へ */
     } else {
         /* 波形と一覧を両立できない極端な解像度。操作に必要な一覧を優先する
          * (0行なら一覧も出さない)。 */
@@ -891,19 +942,23 @@ static void draw_player(app_t *app) {
         y += list.h + ui->metrics.pad;
     }
 
-    /* F-14 簡易ビジュアライザ。P9で一覧の下へ移した。 */
+    /* F-14 簡易ビジュアライザ。P9で一覧の下へ移し、P10で下限をフッタ帯
+     * 近くまで広げた。 */
     if (wave_rows > 0) {
         ui_rect_t wave = { x, y, content_w, wave_rows * row_h };
         const SDL_Color wave_bg = { 12, 12, 20, 255 };
         ui_draw_waveform(ui, wave, app->scope, app->scope_len, accent, wave_bg);
-        y += wave.h + ui->metrics.pad;
     }
 
-    /* 一時ステータスメッセージはフッタ帯の直上に固定する。上の行割り当ての
-     * 端数で位置が動かないよう、ここでは y を使わない。 */
+    /* 一時ステータスメッセージはフッタ帯の直上にオーバーレイとして描く
+     * (P10: 波形が下まで伸びるようになったぶん、専用の行はもう確保しない)。
+     * 波形の上に重なっても読めるよう、背景を塗ってから文字を出す。 */
     if (app->status[0] && SDL_GetTicks() < app->status_until) {
-        int msg_y = (ui->screen_h - ui->metrics.footer_h) - row_h +
-                    (row_h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
+        ui_rect_t msg_bg_rect = { x, (ui->screen_h - ui->metrics.footer_h) - row_h,
+                                   content_w, row_h };
+        const SDL_Color msg_bg = { 30, 30, 42, 255 };
+        ui_fill_rect(ui, msg_bg_rect, msg_bg);
+        int msg_y = msg_bg_rect.y + (row_h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
         ui_text_clipped(ui, x, msg_y, content_w, UI_TEXT_SMALL, err, app->status);
     }
 
@@ -974,12 +1029,41 @@ static const char *settings_item_text(void *ctx, int index) {
     return buf;
 }
 
+/* Xで開くリセット確認ダイアログ (P10)。draw_settings()の最後、通常の
+ * リスト/フッタの上に重ねて描く。 */
+static void draw_settings_confirm_reset(app_t *app) {
+    ui_t *ui = &app->ui;
+    const SDL_Color box_bg = { 40, 22, 22, 255 };
+    const SDL_Color box_border = { 220, 90, 90, 255 };
+    const SDL_Color fg = { 230, 230, 230, 255 };
+    const SDL_Color dim = { 150, 150, 160, 255 };
+    const char *line1 = "Reset all settings to defaults?";
+    const char *line2 = "A: Yes      B: No";
+
+    int pad = ui->metrics.pad;
+    int box_w = ui_text_width(ui, UI_TEXT_BODY, line1) + pad * 4;
+    int min_w = ui_text_width(ui, UI_TEXT_SMALL, line2) + pad * 4;
+    if (min_w > box_w) box_w = min_w;
+    if (box_w > ui->screen_w - pad * 2) box_w = ui->screen_w - pad * 2;
+    int box_h = ui->metrics.line_h * 2 + pad * 4;
+    ui_rect_t box = { (ui->screen_w - box_w) / 2, (ui->screen_h - box_h) / 2, box_w, box_h };
+
+    ui_fill_rect(ui, box, box_bg);
+    ui_draw_rect(ui, box, box_border);
+
+    int ty = box.y + pad * 2;
+    ui_text_clipped(ui, box.x + pad * 2, ty, box.w - pad * 4, UI_TEXT_BODY, fg, line1);
+    ty += ui->metrics.line_h + pad;
+    ui_text_clipped(ui, box.x + pad * 2, ty, box.w - pad * 4, UI_TEXT_SMALL, dim, line2);
+}
+
 static void draw_settings(app_t *app) {
     ui_t *ui = &app->ui;
     const SDL_Color bg = { 18, 18, 26, 255 };
     const SDL_Color bar_bg = { 30, 30, 42, 255 };
     const SDL_Color fg = { 230, 230, 230, 255 };
     const SDL_Color dim = { 150, 150, 160, 255 };
+    const SDL_Color err = { 255, 120, 90, 255 };
 
     ui_clear(ui, bg);
 
@@ -994,15 +1078,18 @@ static void draw_settings(app_t *app) {
 
     ui_rect_t footer = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
     ui_fill_rect(ui, footer, bar_bg);
-    const char *note = SETTINGS[app->settings_sel].note;
-    char footer_text[128];
-    if (note) {
-        snprintf(footer_text, sizeof(footer_text), "L/R:Adjust  B/START:Back  (%s)", note);
+    int footer_y = footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
+    if (app->status[0] && SDL_GetTicks() < app->status_until) {
+        ui_text_clipped(ui, ui->metrics.pad, footer_y, ui->screen_w - ui->metrics.pad * 2,
+                         UI_TEXT_SMALL, err, app->status);
     } else {
-        snprintf(footer_text, sizeof(footer_text), "L/R:Adjust  B/START:Back");
+        ui_text(ui, ui->metrics.pad, footer_y, UI_TEXT_SMALL, dim,
+                "L/R:Adjust  B/START:Back  X:Reset");
     }
-    ui_text(ui, ui->metrics.pad, footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2,
-            UI_TEXT_SMALL, dim, footer_text);
+
+    if (app->settings_confirm_reset) {
+        draw_settings_confirm_reset(app);
+    }
 }
 
 /* ---- 起動時のBrowser開始位置 (F-13) ------------------------------------- */

@@ -26,6 +26,12 @@ target_include_directories(test_eq PRIVATE . ../src)
 target_link_libraries(test_eq PRIVATE m)
 add_test(NAME test_eq COMMAND test_eq)
 
+# P10で追加したshuffle.c(シャッフル再生の並び順管理)の単体テスト。
+# eq.cと同じくSDLにもlibgmeにも依存しない純libc。
+add_executable(test_shuffle test_shuffle.c ../src/shuffle.c)
+target_include_directories(test_shuffle PRIVATE . ../src)
+add_test(NAME test_shuffle COMMAND test_shuffle)
+
 # P8で追加した波形リング(audio_snapshot_scope)の添字計算の単体テスト。
 # audio.c 全体をリンクするため SDL2 と libgme のヘッダは要るが、
 # SDL_Init は一度も呼ばない(test_ui_metrics と同じ方針)。

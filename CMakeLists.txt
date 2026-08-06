@@ -58,6 +58,7 @@ add_executable(mugbs
     src/config.c
     src/eq.c
     src/audio.c
+    src/shuffle.c
     src/player.c
     src/m3u.c
     src/playlist.c

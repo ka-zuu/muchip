@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "app.h"
 #include "config.h"
@@ -218,6 +219,8 @@ static int run_player_cli(const mugbs_args_t *args) {
 }
 
 int main(int argc, char **argv) {
+    srand((unsigned)time(NULL)); /* F-25: シャッフル再生のFisher-Yatesが使う */
+
     mugbs_args_t args;
     if (parse_args(argc, argv, &args) != 0) {
         print_usage(argv[0]);

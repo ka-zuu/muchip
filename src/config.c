@@ -51,6 +51,7 @@ static const config_key_t KEYS[] = {
     { "playback", "default_length_sec", CFG_INT,    offsetof(mugbs_config_t, default_length_sec), 1, 3600,  0 },
     { "playback", "fade_length_ms",     CFG_INT,    offsetof(mugbs_config_t, fade_length_ms),     0, 60000, 0 },
     { "playback", "repeat_mode",        CFG_REPEAT, offsetof(mugbs_config_t, repeat_mode),        0, 0,     0 },
+    { "playback", "shuffle",            CFG_BOOL,   offsetof(mugbs_config_t, shuffle),            0, 0,     0 },
     { "playback", "sample_rate",        CFG_INT,    offsetof(mugbs_config_t, sample_rate),     8000, 96000, 0 },
 
     { "audio", "stereo_depth", CFG_DOUBLE, offsetof(mugbs_config_t, stereo_depth), 0.0,  1.0, 0 },
@@ -162,6 +163,7 @@ void config_set_defaults(mugbs_config_t *c) {
     c->default_length_sec = 150;
     c->fade_length_ms = 8000;
     c->repeat_mode = REPEAT_ALL;
+    c->shuffle = 0;
     c->sample_rate = 44100;
 
     c->stereo_depth = 0.15;

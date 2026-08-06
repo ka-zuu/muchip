@@ -18,6 +18,7 @@
 #include "audio.h"
 #include "config.h"
 #include "playlist.h"
+#include "shuffle.h"
 
 typedef enum {
     PLAYER_STOPPED = 0,
@@ -45,6 +46,13 @@ typedef struct {
     const playlist_t *playlist; /* 参照のみ。所有権は呼び出し側 */
     int current_source;          /* 現在開いている sources[] の添字。-1=未オープン */
     int current_entry;            /* 現在の entries[] の添字。-1=未選択 */
+
+    /* config->shuffle が有効なときの再生順 (F-25, P10)。player_play_entry()
+     * が呼ばれるたびに現在のエントリへ同期される(TrackListからのジャンプ・
+     * L2/R2でのソース切替など、next/prev以外の経路で曲が変わっても
+     * 追従する)ので、player_next_track()/player_prev_track()はここから
+     * 前後を引くだけでよい。config->shuffle==0のときはorder==NULLを保つ。 */
+    shuffle_t shuffle;
 
     /* 現在のトラックで gme_set_fade_msecs() に渡したフェード長(ms)。
      * player_current_duration_ms() が「本当に無音になる時刻」
@@ -76,12 +84,15 @@ int player_is_track_ended(player_t *p);
  *   REPEAT_NONE: 最終トラックの次で emu を閉じ STOPPED になる
  *   REPEAT_ONE : 常に現在のトラックを再開する
  *   REPEAT_ALL : 最終トラックの次で先頭に戻る
+ * config->shuffle (F-25, P10) が有効なときは「次」がシャッフル順になる
+ * (REPEAT_ONEはシャッフルより優先し、常に同一トラックを再開する)。
  * フェード中でも即座に切り替わる(gme_start_trackを呼ぶだけなので)。
  * 戻り値: 0=再生継続, -1=再生する曲がなくなり STOPPED になった。 */
 int player_next_track(player_t *p);
 
 /* 前のトラックへ戻る。先頭より前に戻る場合は REPEAT_ALL なら最終トラックへ、
- * それ以外は先頭に留まる（STOPPEDにはしない）。 */
+ * それ以外は先頭に留まる（STOPPEDにはしない）。shuffle有効時はシャッフル順を
+ * 逆にたどる(直前にnextで進んだ場合はそれをちょうど巻き戻す)。 */
 int player_prev_track(player_t *p);
 
 /* 現在のトラック内でシークする。 */

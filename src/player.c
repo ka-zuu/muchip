@@ -6,12 +6,32 @@
 #include "archive.h"
 #include "eq.h"
 #include "log.h"
+#include "shuffle.h"
 
 /* 曲長判定(SPEC 5.1 との乖離#1への対応)は playlist.c の
  * playlist_effective_length_ms() に一本化されている。playlist_open() の
  * スキャン時と、ここでの再生開始時の双方が同じ関数を呼ぶことで、
  * playlist_entry_t.duration_ms(UI表示用)と実際のフェード開始時刻が
  * 常に一致することを保証する。 */
+
+/* config->shuffle が有効なとき、p->shuffle が現在の playlist/current_entry と
+ * 整合していることを保証する(整合していれば何もしない)。無効なら使われて
+ * いた shuffle.order を解放する(古い並びを再生に使ってしまわないため、
+ * かつ ASan がリークとして拾わないため)。
+ * player_play_entry() の最後(=あらゆる曲変更の後)と、
+ * player_next_track()/player_prev_track() の先頭(=shuffleを設定画面で
+ * オンにした直後などplay_entryをまだ経由していない場合の保険)の両方から
+ * 呼ぶ。冪等なので呼び出し順序に依存しない。 */
+static void sync_shuffle(player_t *p) {
+    if (!p->config->shuffle || !p->playlist || p->current_entry < 0) {
+        if (p->shuffle.order) shuffle_free(&p->shuffle);
+        return;
+    }
+    if (!p->shuffle.order || p->shuffle.count != p->playlist->entry_count) {
+        shuffle_reset(&p->shuffle, p->playlist->entry_count);
+    }
+    shuffle_sync(&p->shuffle, p->current_entry);
+}
 
 static void close_current_emu(player_t *p) {
     if (!p->emu) return;
@@ -113,12 +133,17 @@ int player_init(player_t *p, const mugbs_config_t *config) {
 void player_shutdown(player_t *p) {
     close_current_emu(p);
     audio_shutdown(&p->audio);
+    shuffle_free(&p->shuffle);
     p->playlist = NULL;
     p->current_entry = -1;
 }
 
 int player_load_playlist(player_t *p, const playlist_t *pl) {
     close_current_emu(p);
+    /* 古いプレイリストの並び(entry_countが違う)を引きずらないよう、
+     * ここで確実に解放する。有効ならplayer_play_entry()が新しい
+     * entry_countで作り直す。 */
+    shuffle_free(&p->shuffle);
     p->playlist = pl;
     p->current_entry = -1;
     return 0;
@@ -187,6 +212,7 @@ int player_play_entry(player_t *p, int entry_index) {
     }
 
     p->current_entry = entry_index;
+    sync_shuffle(p); /* F-25: シャッフル順を「いま再生したエントリ」に合わせる */
     LOG_INFO("再生: [%d/%d] \"%s\" (%s)",
               entry_index + 1, p->playlist->entry_count, e->title, src->display_path);
     return 0;
@@ -215,20 +241,36 @@ int player_is_track_ended(player_t *p) {
 
 int player_next_track(player_t *p) {
     if (!p->playlist || p->current_entry < 0) return -1;
+    sync_shuffle(p);
 
-    int next = p->current_entry + 1;
+    int next;
 
     if (p->config->repeat_mode == REPEAT_ONE) {
-        /* SPEC 5.4: REPEAT_ONE は常に同一トラックを再開する。 */
+        /* SPEC 5.4: REPEAT_ONE は常に同一トラックを再開する。
+         * シャッフルより優先する(shuffle.posは動かさない)。 */
         next = p->current_entry;
-    } else if (next >= p->playlist->entry_count) {
-        if (p->config->repeat_mode == REPEAT_ALL) {
-            next = 0;
-        } else {
-            LOG_INFO("最終トラックに到達しました (REPEAT_NONE) -> 停止します");
+    } else if (p->shuffle.order) {
+        /* F-25: シャッフル順で次へ。wrapはREPEAT_ALLと同じ判定を使う
+         * (最終トラックの次で先頭に戻るか止まるか、という既存の
+         * repeat_modeの意味をそのままシャッフル順に適用する)。 */
+        next = shuffle_next(&p->shuffle, p->config->repeat_mode == REPEAT_ALL);
+        if (next < 0) {
+            LOG_INFO("シャッフル: 最終トラックに到達しました (REPEAT_NONE) -> 停止します");
             close_current_emu(p);
             p->current_entry = -1;
             return -1;
+        }
+    } else {
+        next = p->current_entry + 1;
+        if (next >= p->playlist->entry_count) {
+            if (p->config->repeat_mode == REPEAT_ALL) {
+                next = 0;
+            } else {
+                LOG_INFO("最終トラックに到達しました (REPEAT_NONE) -> 停止します");
+                close_current_emu(p);
+                p->current_entry = -1;
+                return -1;
+            }
         }
     }
 
@@ -237,10 +279,20 @@ int player_next_track(player_t *p) {
 
 int player_prev_track(player_t *p) {
     if (!p->playlist || p->current_entry < 0) return -1;
+    sync_shuffle(p);
 
-    int prev = p->current_entry - 1;
-    if (prev < 0) {
-        prev = (p->config->repeat_mode == REPEAT_ALL) ? (p->playlist->entry_count - 1) : 0;
+    int prev;
+
+    if (p->shuffle.order) {
+        prev = shuffle_prev(&p->shuffle, p->config->repeat_mode == REPEAT_ALL);
+        /* シーケンシャル版と同じく、先頭で止まる場合はSTOPPEDにはせず
+         * 現在のトラックへ留まる(replay)。 */
+        if (prev < 0) prev = p->current_entry;
+    } else {
+        prev = p->current_entry - 1;
+        if (prev < 0) {
+            prev = (p->config->repeat_mode == REPEAT_ALL) ? (p->playlist->entry_count - 1) : 0;
+        }
     }
 
     return player_play_entry(p, prev);
