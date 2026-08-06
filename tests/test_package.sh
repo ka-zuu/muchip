@@ -47,7 +47,8 @@ scripts/build-aarch64.sh
 scripts/build-host.sh
 scripts/fetch-sysroot.sh
 packaging/muGBS/mux_launch.sh
-tests/test_package.sh"
+tests/test_package.sh
+.githooks/pre-push"
 
 for s in $SHELL_SCRIPTS; do
 	sh -n "$s" 2>/dev/null || fail "$s" "A-1 sh -n が通らない"

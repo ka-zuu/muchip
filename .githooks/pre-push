@@ -1,0 +1,54 @@
+#!/bin/sh
+# .githooks/pre-push
+#
+# master への直接 push を拒否する。 (P13)
+#
+# 本来は GitHub 側の branch protection / ruleset で強制したいが、無料プラン
+# かつ private リポジトリでは該当 API がどちらも 403 を返す
+# ("Upgrade to GitHub Pro or make this repository public to enable this
+#  feature.")。そこでリポジトリに追跡されるフックで代用する。
+#
+# 有効化 (クローンごとに1回必要):
+#
+#   git config core.hooksPath .githooks
+#
+# core.hooksPath は .git/config に入る設定であり、リポジトリを追跡する
+# だけでは自動で有効にならない。README の「開発フロー」に手順を書いてある。
+#
+# 制約: これは自衛であって強制ではない。git push --no-verify や
+# 環境変数 MUGBS_ALLOW_PUSH_MASTER=1 で意図的に抜けられる。本当の強制が
+# 要るようになったら次のどちらかを行うこと:
+#   a) リポジトリを public にする (ruleset が無料で使える)
+#   b) GitHub Pro にする
+#
+# タグの push は素通しする。scripts/release.sh が v<version> タグを
+# push するため。
+#
+set -e
+
+PROTECTED="${MUGBS_PROTECTED_BRANCH:-master}"
+
+die() {
+	echo "エラー: $1" >&2
+	shift
+	for line in "$@"; do echo "  $line" >&2; done
+	exit 1
+}
+
+[ "${MUGBS_ALLOW_PUSH_MASTER:-0}" = "1" ] && exit 0
+
+# git は "<local ref> <local sha> <remote ref> <remote sha>" の並びを
+# 標準入力で1行ずつ渡してくる。remote_ref だけ見ればよい。
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+	[ -n "$remote_ref" ] || continue
+	[ "$remote_ref" = "refs/heads/$PROTECTED" ] || continue
+	die "$PROTECTED へ直接 push しようとしています。" \
+		"このリポジトリは PR 経由でのみ $PROTECTED を更新する運用です。" \
+		"  git switch -c <ブランチ名>" \
+		"  git push -u origin <ブランチ名>" \
+		"  gh pr create --fill" \
+		"どうしても直接 push が必要なときだけ:" \
+		"  MUGBS_ALLOW_PUSH_MASTER=1 git push origin $PROTECTED"
+done
+
+exit 0
