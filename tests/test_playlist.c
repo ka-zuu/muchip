@@ -10,12 +10,17 @@
 #include <string.h>
 
 #include "config.h"
+#include "miniz.h"
 #include "playlist.h"
 #include "test_util.h"
 
+/* 合成GBSのバイト列 (ヘッダ0x70 + コード2バイト)。 */
+#define SYNTHETIC_GBS_SIZE (0x70 + 2)
+
 /* tests/fixtures/make_gbs.py のC版簡易実装。ヘッダのみ有効で、
- * initがGB APUのチャンネル1に書き込むだけの最小GBSを生成する。 */
-static void write_synthetic_gbs(const char *path, int track_count) {
+ * initがGB APUのチャンネル1に書き込むだけの最小GBSを out に組み立てる。
+ * out は SYNTHETIC_GBS_SIZE バイト以上であること。 */
+static void build_synthetic_gbs(unsigned char *out, int track_count) {
     unsigned char hdr[0x70];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'G'; hdr[1] = 'B'; hdr[2] = 'S'; hdr[3] = 1;
@@ -32,9 +37,15 @@ static void write_synthetic_gbs(const char *path, int track_count) {
 
     unsigned char code[2] = {0xC9, 0xC9}; /* init: RET / play: RET */
 
+    memcpy(out, hdr, sizeof(hdr));
+    memcpy(out + sizeof(hdr), code, sizeof(code));
+}
+
+static void write_synthetic_gbs(const char *path, int track_count) {
+    unsigned char buf[SYNTHETIC_GBS_SIZE];
+    build_synthetic_gbs(buf, track_count);
     FILE *f = fopen(path, "wb");
-    fwrite(hdr, 1, sizeof(hdr), f);
-    fwrite(code, 1, sizeof(code), f);
+    fwrite(buf, 1, sizeof(buf), f);
     fclose(f);
 }
 
@@ -184,6 +195,109 @@ static int test_multi_file_and_missing(void) {
     return 0;
 }
 
+/* ---- zip を組み立てるヘルパ (T-14用) --------------------------------------
+ *
+ * tests/test_archive.c の write_test_zip() と同趣旨だが、あちらは内容を
+ * strlen() で測るためNULを含むバイナリ(合成GBS)を入れられない。ここでは
+ * (ポインタ, 長さ) の組を取る。 */
+typedef struct {
+    const char *name;
+    const void *data;
+    size_t size;
+} zip_member_t;
+
+static void write_binary_zip(const char *zip_path, const zip_member_t *members, int count) {
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_writer_init_file(&zip, zip_path, 0)) {
+        fprintf(stderr, "mz_zip_writer_init_file failed: %s\n", zip_path);
+        exit(1);
+    }
+    for (int i = 0; i < count; i++) {
+        if (!mz_zip_writer_add_mem(&zip, members[i].name, members[i].data, members[i].size,
+                                    MZ_BEST_COMPRESSION)) {
+            fprintf(stderr, "mz_zip_writer_add_mem failed: %s\n", members[i].name);
+            exit(1);
+        }
+    }
+    if (!mz_zip_writer_finalize_archive(&zip)) {
+        fprintf(stderr, "mz_zip_writer_finalize_archive failed\n");
+        exit(1);
+    }
+    mz_zip_writer_end(&zip);
+}
+
+/* T-14: zip内に「1曲ごとの単曲m3u」が複数入っている場合
+ * (zophar.net の配布パック形式)、全てがマージされて全曲再生できること。
+ * 修正前は最初の1つだけが採用され1曲しか再生できなかった (P9)。
+ *
+ * わざと中央ディレクトリの順序を曲順と逆に詰めることで、名前順ソートが
+ * 効いていることも同時に確認する。 */
+static int test_zip_multiple_m3u(void) {
+    unsigned char gbs[SYNTHETIC_GBS_SIZE];
+    build_synthetic_gbs(gbs, 3);
+
+    const char *m3u1 = "GAME.gbs::GBS,1,BGM #01,0:39,,10\n";
+    const char *m3u2 = "GAME.gbs::GBS,2,BGM #02,1:02,,10\n";
+    const char *m3u3 = "GAME.gbs::GBS,3,Jingle #01,0:05,,10\n";
+
+    /* 追加順(=中央ディレクトリ順)は 03, 01, 02 とバラバラにしておく。 */
+    zip_member_t members[] = {
+        { "03 Jingle #01.m3u", m3u3, strlen(m3u3) },
+        { "GAME.gbs",           gbs,  sizeof(gbs) },
+        { "01 BGM #01.m3u",    m3u1, strlen(m3u1) },
+        { "02 BGM #02.m3u",    m3u2, strlen(m3u2) },
+    };
+    char *zip = path_in("multi_m3u.zip");
+    write_binary_zip(zip, members, (int)(sizeof(members) / sizeof(members[0])));
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(zip, &cfg, &pl) == 0);
+    /* 3つのm3uがマージされ、3曲すべてが列挙される(修正前は1曲だった)。 */
+    CHECK(pl->entry_count == 3);
+    /* 全て同じ .gbs を指すので1ソースにまとまる(=トラック切替のたびに
+     * zip展開とgme_open_dataをやり直さない)。 */
+    CHECK(pl->source_count == 1);
+    /* ファイル名順に連結されるので 01 -> 02 -> 03 の並びになる。 */
+    CHECK_STREQ(pl->entries[0].title, "BGM #01");
+    CHECK_STREQ(pl->entries[1].title, "BGM #02");
+    CHECK_STREQ(pl->entries[2].title, "Jingle #01");
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* zip内のm3uが1つだけの場合も従来どおり動くこと(連結処理の退行防止)。 */
+static int test_zip_single_m3u(void) {
+    unsigned char gbs[SYNTHETIC_GBS_SIZE];
+    build_synthetic_gbs(gbs, 2);
+
+    const char *m3u = "GAME.gbs::GBS,1,First,0:10\n"
+                       "GAME.gbs::GBS,2,Second,0:20\n";
+    zip_member_t members[] = {
+        { "GAME.gbs",  gbs, sizeof(gbs) },
+        { "GAME.m3u", m3u, strlen(m3u) },
+    };
+    char *zip = path_in("single_m3u.zip");
+    write_binary_zip(zip, members, 2);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(zip, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 2);
+    CHECK(pl->source_count == 1);
+    CHECK_STREQ(pl->entries[0].title, "First");
+    CHECK_STREQ(pl->entries[1].title, "Second");
+
+    playlist_free(pl);
+    return 0;
+}
+
 int main(void) {
     setup_tmpdir();
 
@@ -192,6 +306,8 @@ int main(void) {
     if (test_open_m3u_directly()) return 1;
     if (test_hex_track_number()) return 1;
     if (test_multi_file_and_missing()) return 1;
+    if (test_zip_single_m3u()) return 1;
+    if (test_zip_multiple_m3u()) return 1;
 
     printf("test_playlist: すべて成功\n");
     return 0;

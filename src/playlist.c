@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h> /* strcasecmp */
 #include <sys/stat.h>
 
 #include "archive.h"
@@ -370,10 +371,27 @@ static int playlist_open_gbs(playlist_t *pl, const char *path, const mugbs_confi
     return rc;
 }
 
+/* zip内のm3uエントリを名前順に並べるための比較関数 (qsort用)。
+ * archive_list() は中央ディレクトリの列挙順を返すだけでソートしないため、
+ * "01 BGM #01.m3u" ... "18 Jingle #01.m3u" を曲順に並べるにはここで
+ * 明示的に並べ替える必要がある。 */
+static int m3u_entry_cmp(const void *a, const void *b) {
+    const archive_entry_t *const *pa = a;
+    const archive_entry_t *const *pb = b;
+    return strcasecmp((*pa)->name, (*pb)->name);
+}
+
 /* .zip を開く (SPEC 5.3)。
- *   - .m3u が(1つ以上)含まれる場合: 最初の1つに従い、build_from_m3u_text_zip()
- *     でセグメントごとにzip内のファイルを解決する。複数ある場合は警告のうえ
- *     最初の1つのみ使う(SPECに複数時の挙動指定は無いため、実装方針として明記)。
+ *   - .m3u が(1つ以上)含まれる場合: **全ての** .m3u を名前順に連結して1つの
+ *     テキストとみなし、build_from_m3u_text_zip() でセグメントごとにzip内の
+ *     ファイルを解決する。zophar.net の配布パックのように1曲ごとの単曲m3uを
+ *     18個同梱する形式が実在し、最初の1つだけを採用すると1曲しか再生できない
+ *     ため (P9で修正。SPEC 5.3 / T-14)。
+ *     連結してから m3u_split_segments() に通すのがポイントで、同じ .gbs を
+ *     指す行は既存のセグメント分割ロジックが自然に1ソースへまとめてくれる
+ *     (=「Track 1/18」と表示され、トラック切替のたびにzip展開とgme_open_data
+ *     をやり直す無駄も無い)。異なる .gbs を指すm3uが混在する場合も、
+ *     セグメント分割がそのままソースを分ける。
  *   - m3u が無い場合: zip内の音楽ファイルすべてを列挙し、各々の全トラックを
  *     自動命名で列挙する。SPEC本文は「1つだけなら即座に開く／複数ならユーザーに
  *     選択させる」だが、対話選択はUI(P5)の仕事であり、playlist_open()の時点では
@@ -396,27 +414,50 @@ static int playlist_open_zip(playlist_t *pl, const char *path, const mugbs_confi
     int acount = 0;
     archive_list(ar, &aentries, &acount);
 
-    int m3u_idx = -1;
+    /* zip内の全m3uを名前順に集める。 */
+    archive_entry_t **m3us = NULL;
+    int m3u_count = 0;
     for (int i = 0; i < acount; i++) {
         if (!aentries[i].is_m3u) continue;
-        if (m3u_idx >= 0) {
-            LOG_WARN("zip内に複数のm3uがあります。最初の1つ(%s)のみ使用します", aentries[m3u_idx].name);
-            break;
-        }
-        m3u_idx = i;
+        m3us = realloc(m3us, sizeof(*m3us) * (size_t)(m3u_count + 1));
+        m3us[m3u_count++] = &aentries[i];
+    }
+    if (m3u_count > 1) {
+        qsort(m3us, (size_t)m3u_count, sizeof(*m3us), m3u_entry_cmp);
+        LOG_INFO("zip内に%d個のm3uがあります。名前順に連結して1つのプレイリストにします",
+                  m3u_count);
     }
 
     int rc;
-    if (m3u_idx >= 0) {
-        void *text = NULL;
+    if (m3u_count > 0) {
+        /* 全m3uのテキストを改行区切りで連結する。archive_extract() の戻りは
+         * NUL終端されないので、常に長さで扱うこと。 */
+        char *text = NULL;
         size_t len = 0;
-        if (archive_extract(ar, aentries[m3u_idx].index, &text, &len) != 0) {
+        for (int i = 0; i < m3u_count; i++) {
+            void *part = NULL;
+            size_t part_len = 0;
+            if (archive_extract(ar, m3us[i]->index, &part, &part_len) != 0) {
+                LOG_WARN("zip内のm3uを展開できませんでした。スキップします: %s", m3us[i]->name);
+                continue;
+            }
+            /* +1 は区切りの改行。連結後にNUL終端はしない(長さで渡すため)。 */
+            text = realloc(text, len + part_len + 1);
+            memcpy(text + len, part, part_len);
+            len += part_len;
+            text[len++] = '\n';
+            free(part);
+        }
+        free(m3us);
+        if (!text) {
+            LOG_ERR("zip内のm3uを1つも読めませんでした: %s", path);
             archive_free_entries(aentries, acount);
             return -1;
         }
-        rc = build_from_m3u_text_zip(pl, (const char *)text, len, path, cfg);
+        rc = build_from_m3u_text_zip(pl, text, len, path, cfg);
         free(text);
     } else {
+        free(m3us);
         rc = -1;
         for (int i = 0; i < acount; i++) {
             if (!aentries[i].is_music) continue;
