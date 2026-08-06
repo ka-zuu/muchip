@@ -43,7 +43,6 @@ static int test_defaults(void) {
     CHECK(c.volume == 80);
     CHECK(c.show_all_files == 0);
     CHECK(c.last_path[0] == 0);
-    CHECK(c.voice_mute_mask == 0);
     CHECK(c.gamecontroller_db[0] == 0);
     CHECK(c.controller_mapping[0] == 0);
     return 0;
@@ -90,7 +89,6 @@ static int test_spec_sample(void) {
     CHECK(c.volume == 80);
     CHECK(c.show_all_files == 0);
     CHECK_STREQ(c.last_path, "/mnt/mmc/MUSIC");
-    CHECK(c.voice_mute_mask == 0);
     return 0;
 }
 
@@ -290,7 +288,6 @@ static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
     CHECK(a->volume == b->volume);
     CHECK(a->show_all_files == b->show_all_files);
     CHECK_STREQ(a->last_path, b->last_path);
-    CHECK(a->voice_mute_mask == b->voice_mute_mask);
     CHECK_STREQ(a->gamecontroller_db, b->gamecontroller_db);
     CHECK_STREQ(a->controller_mapping, b->controller_mapping);
     return 0;
@@ -327,21 +324,9 @@ static int test_roundtrip_mutated(void) {
     c.volume = 65;
     c.show_all_files = 1;
     snprintf(c.last_path, sizeof(c.last_path), "/mnt/mmc/MUSIC/Game.gbs");
-    c.voice_mute_mask = 10;
     snprintf(c.gamecontroller_db, sizeof(c.gamecontroller_db), "/usr/lib/gamecontrollerdb.txt");
     snprintf(c.controller_mapping, sizeof(c.controller_mapping),
              "03000000091200000031000011010000,MyPad,a:b1,b:b0,platform:Linux,");
-    return roundtrip(&c);
-}
-
-/* mute_mask (F-10) が「全ボイスミュート」まで往復できること。
- * config_save() はクランプせずに書き、config_load() だけがクランプするため、
- * 上限が MUGBS_MUTABLE_VOICES ビットぶんより狭いと、UIで全ミュートした状態が
- * 再起動で別のチャンネルに化ける。 */
-static int test_roundtrip_all_voices_muted(void) {
-    mugbs_config_t c;
-    config_set_defaults(&c);
-    c.voice_mute_mask = (1 << MUGBS_MUTABLE_VOICES) - 1;
     return roundtrip(&c);
 }
 
@@ -370,7 +355,6 @@ int main(void) {
     if (test_input_section()) return 1;
     if (test_roundtrip_defaults()) return 1;
     if (test_roundtrip_mutated()) return 1;
-    if (test_roundtrip_all_voices_muted()) return 1;
     if (test_save_failure()) return 1;
 
     printf("test_config: すべて成功\n");

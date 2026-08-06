@@ -42,17 +42,6 @@ else()
 endif()
 add_test(NAME test_scope COMMAND test_scope)
 
-# P8: T-10(4chミュート)。gen_fixture_gbs.c を GEN_FIXTURE_GBS_NO_MAIN 付きで
-# 一緒にコンパイルし、4ボイスすべてが鳴る合成GBSを実行時に書き出して使う。
-# SDLには依存せず gme_static だけをリンクする(test_playlist と同じ形)。
-add_executable(test_mute test_mute.c gen_fixture_gbs.c)
-target_compile_definitions(test_mute PRIVATE GEN_FIXTURE_GBS_NO_MAIN)
-target_include_directories(test_mute PRIVATE . ../src)
-target_link_libraries(test_mute PRIVATE gme_static m)
-set_target_properties(test_mute PROPERTIES LINKER_LANGUAGE CXX)
-target_link_options(test_mute PRIVATE -static-libstdc++ -static-libgcc)
-add_test(NAME test_mute COMMAND test_mute)
-
 add_executable(test_archive test_archive.c ../src/archive.c)
 target_include_directories(test_archive PRIVATE . ../src)
 target_link_libraries(test_archive PRIVATE miniz)

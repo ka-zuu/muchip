@@ -1,17 +1,14 @@
-/* gen_fixture_gbs.c - ヘッドレスUIスモークテスト(--ui-script)と
- * チャンネルミュートテスト(test_mute.c, T-10)用の合成GBSフィクスチャ生成器。
- * (SPEC 10.3)
+/* gen_fixture_gbs.c - ヘッドレスUIスモークテスト(--ui-script)用の
+ * 合成GBSフィクスチャ生成器。 (SPEC 10.3)
  *
  * 著作権上の理由からリポジトリに本物の.gbsは含めないため、GBSヘッダと
  * ごく短いGame Boy機械語を自前で組み立てる。
  *
- * P8まではinit/playとも `RET` だけの「何も鳴らない」擬似GBSだったが、
- * それでは T-10(4chミュート: 該当チャンネルのみ無音になる)を機械的に
- * 検証できない。そこでinitルーチンに GB APU のレジスタ書き込み列を
- * 生成させ、**4ボイス(Square 1 / Square 2 / Wave / Noise)すべてが
- * 同時に鳴る**ようにした。各ボイスは長さカウンタもエンベロープも
- * 使わないため、トリガ後は永久に一定音量で鳴り続ける(ミュートの
- * 有無を差分で判定するのに都合が良い)。
+ * initルーチンに GB APU のレジスタ書き込み列を生成させ、4ボイス
+ * (Square 1 / Square 2 / Wave / Noise)すべてが同時に鳴るようにしてある
+ * (P8, F-14 ビジュアライザの波形が実際に動くことを目視確認できるように)。
+ * 各ボイスは長さカウンタもエンベロープも使わないため、トリガ後は
+ * 永久に一定音量で鳴り続ける。
  *
  * 使い方: gen_fixture_gbs <output.gbs> [track_count]
  */
@@ -70,9 +67,7 @@ static const unsigned char APU_INIT[][2] = {
 /* LD A,n (2バイト) + LDH (n),A (2バイト) */
 #define BYTES_PER_WRITE 4
 
-/* static にしないのは、tests/test_mute.c が GEN_FIXTURE_GBS_NO_MAIN 付きで
- * この .c をそのままコンパイル・リンクしてフィクスチャ生成を再利用するため。 */
-void write_synthetic_gbs(const char *path, int track_count) {
+static void write_synthetic_gbs(const char *path, int track_count) {
     /* initルーチン本体 + 末尾のRET、その後ろにplayルーチンのRET。 */
     unsigned char code[APU_INIT_COUNT * BYTES_PER_WRITE + 2];
     int n = 0;
@@ -111,7 +106,6 @@ void write_synthetic_gbs(const char *path, int track_count) {
     fclose(f);
 }
 
-#ifndef GEN_FIXTURE_GBS_NO_MAIN
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "使い方: %s <output.gbs> [track_count]\n", argv[0]);
@@ -121,4 +115,3 @@ int main(int argc, char **argv) {
     write_synthetic_gbs(argv[1], track_count);
     return 0;
 }
-#endif

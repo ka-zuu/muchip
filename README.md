@@ -5,14 +5,14 @@ muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック�
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
 **P0〜P8 完了（v1.0.0）**。SPEC の MUST 要件（F-01〜F-08）に加え、
-SHOULD/NICE 要件のうち F-10 チャンネルミュート・F-14 ビジュアライザ・
-F-20 EQ まで実装済み。SDL2 の Browser/Player/TrackList/Settings/Voices
-画面をホスト上でキーボード操作から通しで確認でき、`config.ini` の読み書き
-（終了時オートセーブ・直近パスの記憶）にも対応する。CLI ハーネス
-（`--list`/`--cli`。CI・自動検証用）も引き続き使える。`.muxapp` へパッケージ
-して実機の Archive Manager からインストールし、物理ボタンだけで
-Browser→Player→TrackList→Voices→Settings→終了まで一巡できることを実機で
-確認済み（下記「muOS へのインストール」参照）。
+SHOULD/NICE 要件のうち F-14 ビジュアライザ・F-20 EQ を実装済み
+（F-10 チャンネルミュートは実装した上で不要と判断し削除した。`PLAN.md` 参照）。
+SDL2 の Browser/Player/TrackList/Settings 画面をホスト上でキーボード操作から
+通しで確認でき、`config.ini` の読み書き（終了時オートセーブ・直近パスの
+記憶）にも対応する。CLI ハーネス（`--list`/`--cli`。CI・自動検証用）も
+引き続き使える。`.muxapp` へパッケージして実機の Archive Manager から
+インストールし、物理ボタンだけで Browser→Player→TrackList→Settings→終了
+まで一巡できることを実機で確認済み（下記「muOS へのインストール」参照）。
 
 ## ビルド（ホスト / 開発機）
 
@@ -51,7 +51,7 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs       # 1トラック目を再生
 ```
 
-## GUI (Browser / Player / TrackList / Settings / Voices)
+## GUI (Browser / Player / TrackList / Settings)
 
 引数無し、または `--list`/`--cli` 以外の起動でGUI本体が立ち上がる。
 
@@ -69,19 +69,18 @@ ctest --test-dir build --output-on-failure
 
 キーボード操作（実機ではSDL_GameControllerのボタンに対応。SPEC 6.3参照）:
 
-| キー | Browser | Player | TrackList | Settings | Voices |
-|---|---|---|---|---|---|
-| `↑` `↓` | カーソル移動 | 音量 +/- | カーソル移動 | 項目選択 | チャンネル選択 |
-| `←` `→` | ページ送り | シーク -5s/+5s | ページ送り | 値を増減 | ミュート切替 |
-| `Z` (A相当) | 開く | 再生/一時停止 | ジャンプ再生 | 値を増やす | ミュート切替 |
-| `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る | 保存して戻る | 保存して戻る |
-| `A` (X相当) | — | TrackListを開く | Playerへ戻る | — | — |
-| `S` (Y相当) | — | リピートモード切替 | — | — | 全ミュート解除 |
-| `Q`/`W` (L1/R1) | — | 前/次トラック | — | — | — |
-| `1`/`2` (L2/R2) | — | 前/次ファイル | — | — | — |
-| `Return` (Start相当) | Settingsを開く | Settingsを開く | — | 保存して戻る | 保存して戻る |
-| `Space` (Select相当) | — | Voicesを開く | — | — | 保存して戻る |
-| `Esc` | 終了 | 終了 | 終了 | — | — |
+| キー | Browser | Player | TrackList | Settings |
+|---|---|---|---|---|
+| `↑` `↓` | カーソル移動 | 音量 +/- | カーソル移動 | 項目選択 |
+| `←` `→` | ページ送り | シーク -5s/+5s | ページ送り | 値を増減 |
+| `Z` (A相当) | 開く | 再生/一時停止 | ジャンプ再生 | 値を増やす |
+| `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る | 保存して戻る |
+| `A` (X相当) | — | TrackListを開く | Playerへ戻る | — |
+| `S` (Y相当) | — | リピートモード切替 | — | — |
+| `Q`/`W` (L1/R1) | — | 前/次トラック | — | — |
+| `1`/`2` (L2/R2) | — | 前/次ファイル | — | — |
+| `Return` (Start相当) | Settingsを開く | Settingsを開く | — | 保存して戻る |
+| `Esc` | 終了 | 終了 | 終了 | — |
 
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
@@ -100,17 +99,7 @@ Player限定だが、ファイルを開くまで設定に入れないのは初�
 依存を増やさない選択をしている。UI文言は英語のみ対応（GBSのメタデータは
 basic latin 以外は `?` にフォールバックする）。
 
-### チャンネルミュート (F-10) とビジュアライザ (F-14)
-
-Player 画面で **Select** を押すと Voices パネルが開き、GB APU の4チャンネル
-（Square 1 / Square 2 / Wave / Noise）を個別にミュートできる。パネルは
-Player の上に重なるだけなので、**波形を見ながら**チャンネルを抜き差しできる。
-設定は `[voices] mute_mask` として保存され、ファイルを切り替えても
-再起動しても維持される。
-
-SPEC 6.1 は「Settings に EQ・チャンネルミュート」、SPEC 6.3 は
-「Player の Select でミュートパネル」と食い違っている。6.3 を採った
-（意図的な逸脱。`PLAN.md` 参照）。
+### ビジュアライザ (F-14)
 
 Player 画面にはシークバーの下に簡易オシロスコープを表示する。
 libgme の公開 C API にはチャンネル別の PCM を取り出す手段が無いため

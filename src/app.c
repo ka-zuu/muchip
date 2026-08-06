@@ -20,7 +20,6 @@ typedef enum {
     SCREEN_PLAYER,
     SCREEN_TRACKLIST,
     SCREEN_SETTINGS, /* P6: SPEC 6.1。START で Browser/Player どちらからも開く */
-    SCREEN_VOICES,   /* P8: SPEC 6.3 のチャンネルミュートパネル。Player から SELECT で開く */
 } app_screen_t;
 
 typedef struct {
@@ -44,13 +43,9 @@ typedef struct {
     int settings_scroll;
     app_screen_t settings_return; /* Settingsを抜けたら戻る画面(Browser/Player) */
 
-    int voices_sel; /* ミュートパネルのカーソル(戻り先は常にPlayerなので保持しない) */
-
     /* F-14 ビジュアライザ。app_update_scope() が1フレームに1回だけ
      * player から取り込み、トリガ(立ち上がりゼロ交差)を合わせたもの。
-     * draw_player() は描くだけ -- draw_voices() が draw_player() を
-     * 下敷きに呼ぶため、描画関数側で取り込むと1フレームに2回
-     * audio_lock することになる。 */
+     * draw_player() は描くだけ。 */
     short scope[AUDIO_SCOPE_SAMPLES];
     int scope_len;
 
@@ -330,9 +325,6 @@ static void handle_browser_input(app_t *app, input_action_t a) {
     }
 }
 
-/* ミュートパネルで実際に操作できるボイス数(実体は下記のパネル節)。 */
-static int voices_shown(const app_t *app);
-
 static void handle_player_input(app_t *app, input_action_t a) {
     switch (a) {
         case INPUT_UP:
@@ -394,86 +386,6 @@ static void handle_player_input(app_t *app, input_action_t a) {
             app->settings_scroll = 0;
             app->screen = SCREEN_SETTINGS;
             break;
-        case INPUT_SELECT:
-            /* SPEC 6.3: Player 画面の Select はチャンネルミュートパネル。
-             * SELECT 単押しは INPUT_QUIT に化けない(input.c は START と
-             * 同時押しのときだけ QUIT にする)ので衝突しない。 */
-            if (voices_shown(app) <= 0) {
-                set_status(app, "No track loaded");
-                break;
-            }
-            if (app->voices_sel >= voices_shown(app)) app->voices_sel = 0;
-            app->screen = SCREEN_VOICES;
-            break;
-        default:
-            break;
-    }
-}
-
-/* ---- チャンネルミュートパネル (P8, F-10) --------------------------------
- * SPEC 6.1 は「SettingsにEQ・チャンネルミュート」、SPEC 6.3 は
- * 「Player画面のSelectでチャンネルミュートパネル」と食い違っている。
- * 6.3 を採った: 波形(F-14)と一緒に見ながら切り替えられる方が実用的で、
- * ミュートは「設定」よりも演奏中の操作に近いため(PLAN.mdに逸脱として記録)。
- *
- * 表示するのは MUGBS_MUTABLE_VOICES 本まで。config_save() は
- * voice_mute_mask をクランプせずに書き、config_load() だけが
- * 0..(2^MUGBS_MUTABLE_VOICES - 1) にクランプするため、それを超えるビットを
- * 立てると「保存 -> 再起動」で別のチャンネルがミュートされる不整合になる。
- * mugbs が開くのは GBS (常に4ボイス) なので実際には一致するが、
- * 上限を明示的に効かせておく。 */
-
-/* 実際に操作できるボイス数。 */
-static int voices_shown(const app_t *app) {
-    int n = app->player.voice_count;
-    return n > MUGBS_MUTABLE_VOICES ? MUGBS_MUTABLE_VOICES : n;
-}
-
-/* mask のうち、実際に表示している本数ぶんだけを見る。 */
-static int voice_is_muted(const app_t *app, int index) {
-    return (app->cfg->voice_mute_mask >> index) & 1;
-}
-
-static void voices_toggle(app_t *app, int index) {
-    if (index < 0 || index >= voices_shown(app)) return;
-    app->cfg->voice_mute_mask ^= (1 << index);
-    player_apply_config(&app->player);
-}
-
-/* パネルを閉じる。Settings と同じく、抜けるときに保存して実機の
- * 電源断でミュート設定が失われないようにする(app_leave_settings と同じ作法)。 */
-static void app_leave_voices(app_t *app) {
-    app->screen = SCREEN_PLAYER;
-    if (app->config_path) {
-        config_save(app->cfg, app->config_path);
-    }
-}
-
-static void handle_voices_input(app_t *app, input_action_t a) {
-    int n = voices_shown(app);
-    switch (a) {
-        case INPUT_UP:
-            if (app->voices_sel > 0) app->voices_sel--;
-            break;
-        case INPUT_DOWN:
-            if (app->voices_sel < n - 1) app->voices_sel++;
-            break;
-        case INPUT_LEFT:
-        case INPUT_RIGHT:
-        case INPUT_A:
-            /* 左右でもトグルする(on/offの2値なので増減の区別が要らない)。 */
-            voices_toggle(app, app->voices_sel);
-            break;
-        case INPUT_Y:
-            /* 全解除。1本ずつ戻すのが面倒な「ソロ聴き」からの復帰用。 */
-            app->cfg->voice_mute_mask = 0;
-            player_apply_config(&app->player);
-            break;
-        case INPUT_B:
-        case INPUT_SELECT:
-        case INPUT_START:
-            app_leave_voices(app);
-            break;
         default:
             break;
     }
@@ -513,13 +425,9 @@ static void handle_tracklist_input(app_t *app, input_action_t a) {
  *
  * mugbs_config_t のフィールドをoffsetofで指す1枚の表で駆動する。
  * SET_INT/SET_DOUBLE/SET_BOOL/SET_ENUMの4種のみをここで扱う。
- * ここに含めていないのは:
- *   - sample_rate: オーディオデバイスの再オープンが必要(P6以降も非対応)
- *   - voice_mute_mask: ビットマスクなのでこの表では表現できない。
- *     SPEC 6.3 に従い Player 画面の SELECT パネル(draw_voices)で操作する
- *     (SPEC 6.1 は Settings に置くと書いており食い違うが、6.3 を採った。
- *      PLAN.md に逸脱として記録)
- * eq_bass/eq_treble は P8 で音へ反映されるようになったので表に入れてある。 */
+ * sample_rate はオーディオデバイスの再オープンが必要なため含めていない
+ * (P6以降も非対応)。eq_bass/eq_treble は P8 で音へ反映されるようになった
+ * ので表に入れてある。 */
 
 typedef enum {
     SET_INT,
@@ -655,7 +563,6 @@ static void app_dispatch(app_t *app, input_action_t a) {
         case SCREEN_PLAYER:     handle_player_input(app, a); break;
         case SCREEN_TRACKLIST:  handle_tracklist_input(app, a); break;
         case SCREEN_SETTINGS:   handle_settings_input(app, a); break;
-        case SCREEN_VOICES:     handle_voices_input(app, a); break;
     }
 }
 
@@ -894,65 +801,6 @@ static void draw_settings(app_t *app) {
             UI_TEXT_SMALL, dim, footer_text);
 }
 
-static const char *voices_item_text(void *ctx, int index) {
-    app_t *app = (app_t *)ctx;
-    static char buf[128];
-    const char *name = app->player.voice_names[index];
-    /* 等幅8x8フォントなので固定幅のラベル列が ui.c を触らずに揃う。 */
-    snprintf(buf, sizeof(buf), "%-12s %s", name ? name : "?",
-             voice_is_muted(app, index) ? "MUTE" : "on");
-    return buf;
-}
-
-/* Player の内容を下敷きにして、その上へミュートパネルを重ねる。
- * こうすると波形(F-14)を見ながらミュートを切り替えられる。
- * 座標はすべて metrics から導出する(SPEC 6.2 座標のハードコード禁止)。 */
-static void draw_voices(app_t *app) {
-    ui_t *ui = &app->ui;
-    const SDL_Color panel_bg = { 24, 24, 36, 255 };
-    const SDL_Color border = { 90, 90, 120, 255 };
-    const SDL_Color fg = { 230, 230, 230, 255 };
-    const SDL_Color dim = { 150, 150, 160, 255 };
-
-    draw_player(app);
-
-    int n = voices_shown(app);
-    int pad = ui->metrics.pad;
-    /* ヘッダ1行 + ボイス n 行 + フッタ1行 ぶんの高さ。 */
-    int inner_h = ui->metrics.line_h * (n + 2) + pad * 2;
-    ui_rect_t panel;
-    panel.w = ui->screen_w - pad * 4;
-    panel.h = inner_h;
-    panel.x = pad * 2;
-    /* 画面下寄せ(フッタのすぐ上)にする。中央寄せにすると Player 側の
-     * 波形(F-14)をちょうど覆ってしまい、「ミュートの効果を波形で見る」という
-     * このパネルの狙いが潰れる。 */
-    if (panel.h > ui->screen_h) panel.h = ui->screen_h;
-    panel.y = ui->screen_h - ui->metrics.footer_h - panel.h - pad;
-    if (panel.y < 0) panel.y = 0;
-
-    ui_fill_rect(ui, panel, panel_bg);
-    ui_draw_rect(ui, panel, border);
-
-    int x = panel.x + pad;
-    int y = panel.y + pad;
-    int content_w = panel.w - pad * 2;
-
-    ui_text(ui, x, y, UI_TEXT_BODY, fg, "Voices");
-    y += ui->metrics.line_h;
-
-    ui_rect_t list = { x, y, content_w, ui->metrics.line_h * n };
-    /* パネルは全ボイスが一度に収まる高さで作るのでスクロールは起きないが、
-     * ui_draw_list() の契約に合わせて scroll の実体は渡す必要がある。 */
-    int scroll = 0;
-    ui_draw_list(ui, list, n, app->voices_sel, -1, &scroll, voices_item_text, app);
-    y += list.h + (ui->metrics.line_h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
-
-    ui_text_clipped(ui, x, y, content_w, UI_TEXT_SMALL, dim,
-                     /* 320x240 でも切り詰められない長さに収めてある */
-                     "A:Toggle  Y:Unmute all  B:Close");
-}
-
 /* ---- 起動時のBrowser開始位置 (F-13) ------------------------------------- */
 
 /* last_path をまずディレクトリとして開いてみて、失敗したら「ファイルの
@@ -1088,7 +936,6 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
             case SCREEN_PLAYER:    draw_player(&app); break;
             case SCREEN_TRACKLIST: draw_tracklist(&app); break;
             case SCREEN_SETTINGS:  draw_settings(&app); break;
-            case SCREEN_VOICES:    draw_voices(&app); break;
         }
         /* --screenshot(開発用): 毎フレーム上書きすることで、ループを抜けた
          * 時点のファイルが「最後に描かれた画面」になる。ui_present() の後だと

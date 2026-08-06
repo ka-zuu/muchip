@@ -17,13 +17,6 @@
 #define MUGBS_PATH_MAX     1024
 #define MUGBS_MAPPING_MAX   512
 
-/* voice_mute_mask で永続化できるボイス数 (F-10)。config.c の KEYS[] が
- * [voices] mute_mask を 0..15 にクランプするのと必ず一致させること。
- * config_save() 側はクランプしないため、ここを超えるビットを立てると
- * 「保存 -> 再読込」で別のチャンネルがミュートされる不整合になる。
- * UI(app.c のミュートパネル)はこの数までしか行を出さない。 */
-#define MUGBS_MUTABLE_VOICES 4
-
 typedef enum {
     REPEAT_NONE = 0,
     REPEAT_ONE,
@@ -39,19 +32,13 @@ typedef struct {
 
     /* [audio] */
     double stereo_depth;
-    int eq_bass;   /* P8で音に反映する。P6は読み書きのみ */
+    int eq_bass;   /* P8で音に反映する (F-20) */
     int eq_treble; /* 同上 */
     int volume;    /* 0-100 */
 
     /* [ui] */
     int show_all_files;
     char last_path[MUGBS_PATH_MAX]; /* F-13: 直近に開いたファイル/ディレクトリ。空=未設定 */
-
-    /* [voices] */
-    int voice_mute_mask; /* INIキー名は [voices] mute_mask (SPEC 7)。
-                             bit i が voice i のミュート。GBSは4ボイス
-                             (Square 1/Square 2/Wave/Noise)なので
-                             MUGBS_MUTABLE_VOICES ビットまで。 */
 
     /* [input]
      * muOS実機の物理ボタンは、SDLのゲームコントローラDBが読み込まれていれば

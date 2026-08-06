@@ -36,8 +36,7 @@ typedef enum {
 
 typedef struct {
     const char *section;
-    const char *key;      /* INI上のキー名。構造体のフィールド名と一致しなくてよい
-                             (SPEC 7 は [voices] mute_mask、構造体は voice_mute_mask) */
+    const char *key;      /* INI上のキー名。構造体のフィールド名と一致しなくてよい */
     config_kind_t kind;
     size_t offset;        /* offsetof(mugbs_config_t, ...) */
     double min, max;      /* CFG_INT / CFG_DOUBLE のクランプ範囲 */
@@ -61,10 +60,6 @@ static const config_key_t KEYS[] = {
 
     { "ui", "show_all_files", CFG_BOOL, offsetof(mugbs_config_t, show_all_files), 0, 0, 0 },
     { "ui", "last_path",      CFG_STR,  offsetof(mugbs_config_t, last_path),      0, 0, MUGBS_PATH_MAX },
-
-    /* 上限は MUGBS_MUTABLE_VOICES ビットぶん (4ボイス -> 0..15)。 */
-    { "voices", "mute_mask", CFG_INT, offsetof(mugbs_config_t, voice_mute_mask),
-      0, (1 << MUGBS_MUTABLE_VOICES) - 1, 0 },
 
     { "input", "gamecontroller_db",  CFG_STR, offsetof(mugbs_config_t, gamecontroller_db),  0, 0, MUGBS_PATH_MAX },
     { "input", "controller_mapping", CFG_STR, offsetof(mugbs_config_t, controller_mapping), 0, 0, MUGBS_MAPPING_MAX },
@@ -177,8 +172,6 @@ void config_set_defaults(mugbs_config_t *c) {
 
     c->show_all_files = 0;
     c->last_path[0] = 0;
-
-    c->voice_mute_mask = 0;
 
     c->gamecontroller_db[0] = 0;
     c->controller_mapping[0] = 0;

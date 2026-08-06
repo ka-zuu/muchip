@@ -24,9 +24,6 @@ static void close_current_emu(player_t *p) {
     audio_clear_scope(&p->audio); /* 停止後に直前の波形が残らないように (F-14) */
     p->current_source = -1;
     p->state = PLAYER_STOPPED;
-    /* voice_names[] は libgme の静的文字列を指しているだけなので解放不要。
-     * ただし delete 済みの emu に紐づく情報を UI に見せないためクリアする。 */
-    p->voice_count = 0;
 }
 
 /* config の eq_bass/eq_treble を emu へ適用する (F-20)。
@@ -42,29 +39,18 @@ static void apply_equalizer(Music_Emu *emu, const mugbs_config_t *cfg) {
     gme_set_equalizer(emu, &eq);
 }
 
-/* 新しく開いた emu へ、config の内容と voice 情報キャッシュを焼き込む。
- * gme_open_*() の直後に一度だけ呼ぶ。まだ audio_set_emu() でコールバックへ
- * 渡していない段階なので、ここでは audio_lock は要らない。
+/* 新しく開いた emu へ config の内容を焼き込む。gme_open_*() の直後に
+ * 一度だけ呼ぶ。まだ audio_set_emu() でコールバックへ渡していない段階
+ * なので、ここでは audio_lock は要らない。
  * (再生中の値変更は player_apply_config() 側が担当する) */
 static void configure_new_emu(player_t *p, Music_Emu *emu) {
     gme_enable_accuracy(emu, 1);
     gme_set_stereo_depth(emu, p->config->stereo_depth);
 
-    /* F-10: ファイルを切り替えてもミュート設定が維持されるのはこの経路。
-     * gme_mute_voices() は require(sample_rate()) を持つため、
-     * emu を開いた後でしか呼べない。 */
-    gme_mute_voices(emu, p->config->voice_mute_mask);
-
     /* F-20: 必ず gme_open_*() の後に呼ぶ。Classic_Emu::setup_buffer() が
      * ロード時に set_equalizer(equalizer()) を呼ぶため、ロード前に設定しても
      * buf が未確定で bass_freq が反映されない。 */
     apply_equalizer(emu, p->config);
-
-    p->voice_count = gme_voice_count(emu);
-    if (p->voice_count > MUGBS_MAX_VOICES) p->voice_count = MUGBS_MAX_VOICES;
-    for (int i = 0; i < p->voice_count; i++) {
-        p->voice_names[i] = gme_voice_name(emu, i);
-    }
 }
 
 /* 既に開いている p->emu 上で track_index のトラックを開始する。
@@ -297,18 +283,16 @@ void player_apply_config(player_t *p) {
     /* volume: atomic なのでロック不要。 */
     audio_set_volume(&p->audio, p->config->volume);
 
-    /* stereo_depth / voice_mute_mask / eq_*: 現在開いているemuへ即時反映する。
-     * Effects_Buffer::config() も Classic_Emu::mute_voices_() も
-     * Classic_Emu::set_equalizer_() も再確保を行わないため、再生中に
-     * 呼んでも安全(vendor/game-music-emu/gme/Effects_Buffer.cpp,
-     * Classic_Emu.cpp 参照)。ただしいずれも gme_play() と同時に
-     * 走らせてはならないので audio_lock で囲む。
+    /* stereo_depth / eq_*: 現在開いているemuへ即時反映する。
+     * Effects_Buffer::config() も Classic_Emu::set_equalizer_() も
+     * 再確保を行わないため、再生中に呼んでも安全(vendor/game-music-emu/gme/
+     * Effects_Buffer.cpp, Classic_Emu.cpp 参照)。ただしいずれも
+     * gme_play() と同時に走らせてはならないので audio_lock で囲む。
      * emuが無い(未再生)場合は何もしない -- 次に player_play_entry() が
      * 開くときに configure_new_emu() が同じ値を焼き込む。 */
     if (p->emu) {
         audio_lock(&p->audio);
         gme_set_stereo_depth(p->emu, p->config->stereo_depth);
-        gme_mute_voices(p->emu, p->config->voice_mute_mask);
         apply_equalizer(p->emu, p->config);
         audio_unlock(&p->audio);
     }

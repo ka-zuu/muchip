@@ -5,8 +5,9 @@
 `docs/` (追加され次第) を参照。
 
 現在のスコープ: **P0〜P8 完了 (v1.0.0)**。コア再生エンジン + UI +
-設定ファイル + 解像度非依存化 + muOS向けパッケージング + SHOULD/NICE要件
-(F-10 チャンネルミュート / F-14 ビジュアライザ / F-20 EQ) まで実装済み。
+設定ファイル + 解像度非依存化 + muOS向けパッケージング + SHOULD/NICE要件の
+うち F-14 ビジュアライザ / F-20 EQ まで実装済み(F-10 チャンネルミュートは
+実装した上でユーザー判断により削除。下記「P8の設計判断」参照)。
 
 ## SPEC からの既知の乖離（実装前に libgme 本体を確認して判明）
 
@@ -96,17 +97,21 @@
       Browser→ファイルを開く→Player→TrackList→トラックジャンプ→Player→
       Settingsで値変更→GUIDE単体で終了→再起動→F-13復元、まで実機で
       すべて実測確認した。詳細は下記「P7の設計判断」参照
-- [x] **P8** — チャンネルミュート(F-10)、ビジュアライザ(F-14)、EQ(F-20)
-      完了条件: SHOULD/NICE要件の3点が音とUIの両方に繋がり、実機で確認できる。
-      **達成**: `[voices] mute_mask`/`[audio] eq_bass`/`eq_treble` は P6 で
-      読み書きだけ実装済みだったものを、`player.c` 経由で実際に
-      `gme_mute_voices()`/`gme_set_equalizer()` へ流し込むようにした。
-      UIは SPEC 6.3 に従い Player 画面の SELECT でミュートパネル、
-      EQ は Settings の2項目。ビジュアライザは混合出力からの
-      簡易オシロスコープ(SPEC F-14 が許容する「波形」の方)。
-      T-10 は `tests/test_mute.c` で自動検証できるようにした
-      (そのために合成GBSフィクスチャを「実際に4ch鳴る」ものへ作り替えた)。
-      詳細は下記「P8の設計判断」参照。P8完了に伴い版を 1.0.0 に上げた
+- [x] **P8** — ビジュアライザ(F-14)、EQ(F-20)。**チャンネルミュート(F-10)は
+      実装した後、ユーザーの判断で不要と削除した**
+      完了条件: 残した2要件が音とUIの両方に繋がり、実機で確認できる。
+      **達成**: `[audio] eq_bass`/`eq_treble` は P6 で読み書きだけ実装済み
+      だったものを、`player.c` 経由で実際に `gme_set_equalizer()` へ
+      流し込むようにした。EQ は Settings の2項目。ビジュアライザは
+      混合出力からの簡易オシロスコープ(SPEC F-14 が許容する「波形」の方)。
+      **F-10 チャンネルミュートは一度実装した**(`gme_mute_voices()`を
+      emu焼き込み・再生中両方に配線、Player画面SELECTでのミュートパネル、
+      T-10を自動検証する`tests/test_mute.c`、そのための「実際に4ch鳴る」
+      合成GBSフィクスチャまで揃え、ホストで動作・実機投入直前まで確認した)
+      が、リリース直前にユーザーから「この機能は要らない」との判断があり、
+      関連コード一式(`SCREEN_VOICES`・`voice_mute_mask`・`test_mute.c`等)を
+      削除した。合成GBSフィクスチャが音を出す実装だけはビジュアライザの
+      目視確認に有用なため残した(詳細は下記「P8の設計判断」)
 
 ## P5の設計判断（SPEC 4.2/6章 との差分・前倒し）
 
@@ -662,23 +667,32 @@ SPEC 6.1 は Player 画面に「4chメータ」と書いており、チャンネ
 - 一時停止・停止時はリングを無音で埋める(`audio_clear_scope()`)。
   そうしないと直前の波形が凍りついたまま残る。
 
-### ミュートUI(F-10): SPEC 6.1 と 6.3 の食い違いは 6.3 を採った
+### チャンネルミュート(F-10): 実装後にユーザー判断で削除した
 
-SPEC 6.1 の画面表は「Settings に … EQ・チャンネルミュート」、
-SPEC 6.3 の入力表は「Player の Select でチャンネルミュートパネル」で、
-同じ機能の置き場所が食い違っている。**6.3 を採った**:
+当初は SPEC 6.3(「Player の Select でチャンネルミュートパネル」)に従い、
+`gme_mute_voices()` を emu オープン直後と再生中(`player_apply_config()`)の
+両方に配線し、Player 画面 SELECT で開くパネル(`SCREEN_VOICES`)、
+T-10 を自動検証する `tests/test_mute.c`、そのための「実際に4ch鳴る」
+合成GBSフィクスチャまで実装し、ホストで動作確認済みだった
+(SPEC 6.1 の「Settings に EQ・チャンネルミュート」と 6.3 の食い違いは
+6.3 を採る判断もしていた -- 波形を見ながら切り替えられる方が実用的で、
+ミュートは「設定」より演奏中の操作に近いため)。
 
-- ミュートは「設定」よりも演奏中の操作に近い。聴きながら抜き差しできる
-  べきで、そのたびに Settings へ入り直すのは操作感が悪い。
-- パネルを Player の上に重ねる実装(`draw_voices()` が先頭で
-  `draw_player()` を呼ぶ)にしたため、**波形(F-14)を見ながら**
-  チャンネルを切り替えられる。パネルは画面中央ではなくフッタ直上に
-  置いている -- 中央だとちょうど波形を覆ってしまい、この狙いが潰れる。
-- `setting_def_t` の表は `offsetof` で1フィールドを指す設計なので、
-  ビットマスクである `voice_mute_mask` はそもそも表現できない。
-  SET_BITMASK のような種別を足すよりパネルの方が素直だった。
+しかし実機投入直前にユーザーから「この機能は要らない」との判断があり、
+関連コードを一式削除した(`SCREEN_VOICES`・`voices_*`関連の入力/描画
+ハンドラ・`player_t.voice_count`/`voice_names[]`・
+`config.h`の`voice_mute_mask`/`MUGBS_MUTABLE_VOICES`・
+`tests/test_mute.c`・`ui_smoke.script`のパネル操作)。
+`config.c`の`KEYS[]`から`[voices] mute_mask`も除いたため、
+このキーを含む古い`config.ini`は「未知のキー」としてWARN付きで
+無視される(既存の後方許容の仕組みがそのまま効く)。
 
-EQ(`eq_bass`/`eq_treble`)の方は素直に `SETTINGS[]` へ2行足すだけで済んだ。
+合成GBSフィクスチャ(`tests/gen_fixture_gbs.c`)が「実際に4ch鳴る」実装
+だけは残した。ミュート判定には使わなくなったが、ビジュアライザ(F-14)の
+波形が実際に動くことをホストで目視確認する手段として引き続き有用なため。
+
+EQ(`eq_bass`/`eq_treble`)は削除対象ではないため、そのまま
+`SETTINGS[]` へ2行足すだけで実装が完結している。
 
 ### EQ(F-20): ノブ(-100..100)から libgme の物理量への変換
 
@@ -716,31 +730,29 @@ config.ini を作っただけで音が変わる」ことになる。`gme_equaliz
 
 P7 までの `tests/gen_fixture_gbs.c` は init/play とも `RET` だけで、
 **一切音を出さない**擬似GBSだった(プレイリスト構築の検証には十分だった)。
-これでは T-10「4chミュート: 該当チャンネルのみ無音になる」を機械的に
-検証できないため、init ルーチンに GB APU のレジスタ書き込み列
-(`LD A,n` / `LDH (n),A` の羅列)を生成させ、4ボイスすべてが同時に鳴る
-ようにした。長さカウンタもエンベロープも使わないので、トリガ後は
-一定音量で鳴り続ける(ミュートの有無を差分で判定するのに都合が良い)。
+これでは(当時実装していた)T-10「4chミュート: 該当チャンネルのみ無音に
+なる」を機械的に検証できないため、init ルーチンに GB APU のレジスタ
+書き込み列(`LD A,n` / `LDH (n),A` の羅列)を生成させ、4ボイスすべてが
+同時に鳴るようにした。長さカウンタもエンベロープも使わないので、
+トリガ後は一定音量で鳴り続ける。
 
 レジスタの書き順には意味がある。libgme の `Gb_Apu::write_register()` は
 電源OFF中に NR51 を書くと `osc.enabled` を落とすため、**NR52(電源)を
 最初に**書く必要がある。
 
-実測値(0.5秒レンダリングのRMS): mask=0 で 11204、mask=15 で **厳密に0**、
-各単一ビットでいずれも減少。`tests/test_mute.c` はこれを
-「bit i が voice i に一対一で対応」「全ミュートは厳密な無音」
-「各ボイスが単独で音を出す」という形で固定している。
+ミュート機能自体は削除したが(上記参照)、この「音が出る」実装は
+ビジュアライザ(F-14)の波形をホストで目視確認する手段として残した。
 
 ### 開発用オプション `--screenshot` を追加した
 
 実機には `/dev/fb0` をダンプするという確認手段があるが(P5/P7で活用)、
-ホストにはそれが無く、波形やミュートパネルのレイアウトを目で見る手段が
-無かった。`--ui-script` と同じ非公開オプションとして `--screenshot FILE`
-を足し、`ui_save_screenshot()`(`SDL_RenderReadPixels`+`SDL_SaveBMP`)で
-終了直前の1フレームをBMPへ書き出せるようにした。`SDL_VIDEODRIVER=offscreen`
-でも動くため、ヘッドレスのまま6解像度ぶんのレイアウトを機械的に確認できる。
-これで実機へ持って行く前に「320x240で波形が他の要素を押し出さないか」
-「パネルが波形を覆っていないか」を潰せた。
+ホストにはそれが無く、波形のレイアウトを目で見る手段が無かった。
+`--ui-script` と同じ非公開オプションとして `--screenshot FILE` を足し、
+`ui_save_screenshot()`(`SDL_RenderReadPixels`+`SDL_SaveBMP`)で終了直前の
+1フレームをBMPへ書き出せるようにした。`SDL_VIDEODRIVER=offscreen`でも
+動くため、ヘッドレスのまま6解像度ぶんのレイアウトを機械的に確認できる。
+これで実機へ持って行く前に「320x240で波形が他の要素を押し出さないか」を
+潰せた。
 
 ### ASan/UBSanでの既知の失敗(P8とは無関係)
 
@@ -748,8 +760,8 @@ ASan ビルドでは `test_playlist`/`test_archive`/`test_browser` の3つが
 LeakSanitizer で失敗する。いずれもテストハーネス自身の `path_in()` が
 `strdup()` した文字列を意図的に解放していないためで(「プロセスは短命な
 テストなので解放しない」とコメントに明記されている)、プロダクション
-コードのリークではない。P8で追加・変更したコード(`test_mute`/`test_eq`/
-`test_scope`/6解像度の`test_ui_smoke`)はすべて ASan/UBSan で緑。
+コードのリークではない。P8で追加・変更したコード(`test_eq`/`test_scope`/
+6解像度の`test_ui_smoke`)はすべて ASan/UBSan で緑。
 
 ## 検証手順
 
@@ -771,7 +783,7 @@ ctest --test-dir build --output-on-failure
 ./build/mugbs --cli Game.gbs
 ./build/mugbs --cli --duration 8 Game.gbs
 
-# GUI: Browser/Player/TrackList/Settings/Voices をキーボードで操作する
+# GUI: Browser/Player/TrackList/Settings をキーボードで操作する
 ./build/mugbs                         # カレントディレクトリのBrowserから開始
 ./build/mugbs --start-dir /path/to/music
 ./build/mugbs --window 720x720        # 別解像度でレイアウト確認(ホストのみ。掴んで伸縮も可)
@@ -783,12 +795,11 @@ ctest --test-dir build --output-on-failure
 cat /tmp/test.ini                     # 変更が保存されていることを確認
 ./build/mugbs --config /tmp/test.ini  # last_path 等が復元されることを確認
 
-# GUI (P8): チャンネルミュート・EQ・波形
+# GUI (P8): EQ・波形
 ./build/mugbs --config /tmp/test.ini Game.gbs
-#   Player で波形が動く / Space(SELECT) で Voices パネル
-#   -> ↑↓で選択、Z(A)でミュート、S(Y)で全解除、X(B)で戻る(保存される)
+#   Player で波形が動く
 #   Return(START) で Settings -> EQ bass / EQ treble を LEFT/RIGHT で振る
-grep -E 'mute_mask|eq_' /tmp/test.ini # 保存されていることを確認
+grep -E 'eq_' /tmp/test.ini           # 保存されていることを確認
 
 # レイアウトを目で見る(--screenshot は非公開の開発用オプション)。
 # ホストには実機の /dev/fb0 に当たるものが無いのでこれで代用する。
