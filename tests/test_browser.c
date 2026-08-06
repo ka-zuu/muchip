@@ -100,6 +100,41 @@ static int test_move_and_page(void) {
     return 0;
 }
 
+/* P9: 1ステップのカーソル移動は端で反対側へ折り返す。
+ * ページ送りは従来どおりクランプすること(上の test_move_and_page が担保)。 */
+static int test_move_wrap(void) {
+    browser_t b;
+    memset(&b, 0, sizeof(b));
+    CHECK(browser_open_dir(&b, g_tmpdir, 1) == 0);
+    CHECK(b.count == 5);
+
+    b.selected = 0;
+    browser_move_wrap(&b, -1);
+    CHECK(b.selected == b.count - 1); /* 先頭からUP -> 末尾へ */
+    browser_move_wrap(&b, 1);
+    CHECK(b.selected == 0);           /* 末尾からDOWN -> 先頭へ */
+
+    b.selected = 2;
+    browser_move_wrap(&b, 1);
+    CHECK(b.selected == 3);           /* 途中は普通に動く */
+
+    /* ±1以外の値でも素直に回ること(剰余実装の確認)。 */
+    b.selected = 0;
+    browser_move_wrap(&b, -7);
+    CHECK(b.selected == 3);           /* (0-7) mod 5 == 3 */
+
+    browser_free(&b);
+
+    /* 空のディレクトリでは何もしない(selectedを触らない)。 */
+    browser_t empty;
+    memset(&empty, 0, sizeof(empty));
+    browser_move_wrap(&empty, 1);
+    CHECK(empty.selected == 0);
+    CHECK(empty.count == 0);
+
+    return 0;
+}
+
 static int test_enter_and_up(void) {
     browser_t b;
     memset(&b, 0, sizeof(b));
@@ -193,6 +228,7 @@ int main(void) {
 
     if (test_sort_and_filter()) return 1;
     if (test_move_and_page()) return 1;
+    if (test_move_wrap()) return 1;
     if (test_enter_and_up()) return 1;
     if (test_root_boundary()) return 1;
     if (test_self_refresh_same_cwd_pointer()) return 1;

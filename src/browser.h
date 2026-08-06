@@ -37,7 +37,14 @@ void browser_free(browser_t *b);
 /* selected をdelta動かす(範囲内にクランプ)。 */
 void browser_move(browser_t *b, int delta);
 
-/* 1ページ分(呼び出し側が渡す行数)動かす。browser_move()と同じくクランプする。 */
+/* selected をdelta動かし、端を越えたら反対側へ折り返す(P9)。
+ * D-Pad上下による1ステップのカーソル移動専用。ページ送りに使ってはならない
+ * (何件も飛ぶ移動が折り返すと、押した回数によって着地位置が変わり
+ * 分かりにくくなるため。SPEC 6.3 の注記を参照)。 */
+void browser_move_wrap(browser_t *b, int delta);
+
+/* 1ページ分(呼び出し側が渡す行数)動かす。browser_move()と同じくクランプする
+ * (折り返さない)。 */
 void browser_page(browser_t *b, int page_size);
 
 /* 現在のディレクトリの親へ移動する。ルートに達している場合は何もしない

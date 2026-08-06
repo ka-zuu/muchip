@@ -291,8 +291,10 @@ static void app_next_source(app_t *app) {
 
 static void handle_browser_input(app_t *app, input_action_t a) {
     switch (a) {
-        case INPUT_UP:    browser_move(&app->browser, -1); break;
-        case INPUT_DOWN:  browser_move(&app->browser, 1); break;
+        /* 1ステップのカーソル移動は端で折り返す。ページ送り(LEFT/RIGHT)は
+         * クランプのまま(SPEC 6.3)。 */
+        case INPUT_UP:    browser_move_wrap(&app->browser, -1); break;
+        case INPUT_DOWN:  browser_move_wrap(&app->browser, 1); break;
         case INPUT_LEFT:  browser_page(&app->browser, -list_visible_rows(app)); break;
         case INPUT_RIGHT: browser_page(&app->browser, list_visible_rows(app)); break;
         case INPUT_A: {
@@ -386,11 +388,12 @@ static void handle_player_input(app_t *app, input_action_t a) {
 static void handle_tracklist_input(app_t *app, input_action_t a) {
     int n = app->pl ? app->pl->entry_count : 0;
     switch (a) {
+        /* 端で折り返す(P9)。n==0 のときは何もしない(n-1 が負になるため)。 */
         case INPUT_UP:
-            if (app->tracklist_sel > 0) app->tracklist_sel--;
+            if (n > 0) app->tracklist_sel = (app->tracklist_sel + n - 1) % n;
             break;
         case INPUT_DOWN:
-            if (app->tracklist_sel < n - 1) app->tracklist_sel++;
+            if (n > 0) app->tracklist_sel = (app->tracklist_sel + 1) % n;
             break;
         case INPUT_LEFT:
             app->tracklist_sel -= list_visible_rows(app);
@@ -521,11 +524,12 @@ static void app_leave_settings(app_t *app) {
 
 static void handle_settings_input(app_t *app, input_action_t a) {
     switch (a) {
+        /* 端で折り返す(P9)。SETTINGS_COUNT はコンパイル時定数なので0にならない。 */
         case INPUT_UP:
-            if (app->settings_sel > 0) app->settings_sel--;
+            app->settings_sel = (app->settings_sel + SETTINGS_COUNT - 1) % SETTINGS_COUNT;
             break;
         case INPUT_DOWN:
-            if (app->settings_sel < SETTINGS_COUNT - 1) app->settings_sel++;
+            app->settings_sel = (app->settings_sel + 1) % SETTINGS_COUNT;
             break;
         case INPUT_LEFT:
             adjust_setting(app, -1);

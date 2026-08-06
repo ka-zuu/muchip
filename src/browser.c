@@ -120,6 +120,15 @@ void browser_move(browser_t *b, int delta) {
     if (b->selected >= b->count) b->selected = b->count - 1;
 }
 
+void browser_move_wrap(browser_t *b, int delta) {
+    if (b->count == 0) return;
+    /* delta は ±1 想定だが、剰余で任意の値に対しても素直に回るようにする。 */
+    int n = b->count;
+    int sel = (b->selected + delta) % n;
+    if (sel < 0) sel += n;
+    b->selected = sel;
+}
+
 void browser_page(browser_t *b, int page_size) {
     browser_move(b, page_size);
 }
