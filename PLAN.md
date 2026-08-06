@@ -120,6 +120,15 @@
       残っていないこと、を確認した。この過程で「十字キー押しっぱなしで
       連続操作できない」という実機特有の課題が見つかり、D-padの長押し
       リピートを追加した(下記「D-pad長押しリピートを追加した」参照)。
+- [ ] **P9** — 実機フィードバック対応(未着手。次セッションで着手予定)
+      完了条件: SPEC T-14が通り、下記5項目がすべて実機で確認できる。
+      内容は下記「P9で対応する実機フィードバック」に詳細を記録した。
+      1. zip内に複数の`.m3u`があるとき最初の1つしか使われないバグの修正
+      2. 音量調整機能の完全削除(常に最大出力)
+      3. リスト画面のカーソルが端で反対側へ折り返す
+      4. Player画面のボタン再割当(UP/DOWN=ファイル切替、
+         LEFT/RIGHT=トラック切替、L1/R1=シーク)
+      5. Player画面に現ディレクトリのファイル一覧を追加、波形を下部へ移動
 
 ## P5の設計判断（SPEC 4.2/6章 との差分・前倒し）
 
@@ -800,6 +809,173 @@ GameController切断時は `dpad_held[]` をクリアし、幽霊リピートが
 
 実機で D-pad を押しっぱなしにしてカーソル移動・値変更が連続で効くことを
 ユーザーに確認してもらい、問題ないとの回答を得た。
+
+## P9で対応する実機フィードバック（未着手・次セッションで着手）
+
+v1.0.0を実機で使い込んだユーザーから5件のフィードバックがあった。
+実装はまだしていない（この節は次セッションが着手する際の設計メモ）。
+5件のうち曖昧さが残る箇所は `AskUserQuestion` で確認済みで、
+以下は確定した決定事項として記録する。
+
+### 1. zip内に複数の`.m3u`があると1曲しか再生されないバグ
+
+**原因（実データで確認済み）**: `src/playlist.c` の `playlist_open_zip()`
+(`m3u_idx` を探すループ、`archive_find`/`is_m3u` 判定の直後)が、zip内に
+`.m3u` が複数あった場合「最初の1つだけ使い、残りは警告して捨てる」実装に
+なっている。ところが zophar.net 配布パックには**1曲ごとに個別の`.m3u`を
+同梱する形式**が実在する。実機の
+`Downtown Special - ... (EMU).zophar.zip` を `unzip -l` で確認したところ:
+
+```
+DMG-JXJ.gbs
+01 BGM #01.m3u   (163 bytes、1トラックだけを指す)
+02 BGM #02.m3u
+...
+18 Jingle #01.m3u
+```
+
+のように **18個の単曲m3u** が入っており、内容は
+`DMG-JXJ.gbs::GBS,0,BGM #01 - ...,0:39,,10` のように1エントリだけ。
+現状の実装は `01 BGM #01.m3u` だけを採用するため `[1/1]` としか
+再生できない(実機ログの `再生: [1/1] "BGM #01 - ..."` で確認済み)。
+
+**修正方針**: `playlist_open_zip()` の「複数m3uは最初の1つだけ」ロジックを
+撤廃し、**zip内の全`.m3u`を `build_from_m3u_text_zip()` に順番に通して
+1つのプレイリストへマージする**(既存の「1ファイルが複数セグメントを持つ
+m3u」を複数ソースとして扱うのと同じモデル)。ファイル名のソート順
+(zip列挙順。`archive_list()` は中央ディレクトリの列挙順を返す。
+辞書順ソートしたい場合は列挙後にqsortが要るか要確認)で連結すれば
+`01, 02, ..., 18` の順に自然と並ぶ想定。同じ`.gbs`を18回開き直す
+(ソースごとに`archive_extract`+`gme_open_data`)ことになるが、
+初回スキャン(`playlist_open`)は1回きりの処理であり許容範囲。
+
+**検証**: SPEC T-14として追加済み。`tests/test_playlist.c` に近い形で、
+1つの合成GBSを指す複数の単曲m3uをzipに固めて `playlist_open()` に通し、
+`entry_count` が m3u の数だけ増えることを確認するテストを足すとよい
+(miniz でメモリ上にzipを組み立てるヘルパが要る。`tests/test_archive.c`
+の zip構築方法を参考にできる)。
+
+### 2. 音量調整機能を完全に削除する
+
+実機のハードウェア音量(muOS/OS側のミキサー)と本アプリのソフトウェア
+音量が別々に効き、「アプリ内の音量を上げたつもりが本体側が絞られたまま」
+のような紛らわしさがあるとのフィードバック。ユーザーの判断で
+**音量調整機能そのものを削除し、常に最大出力(100)で `gme_play()` する**
+ことにした(Settingsに「100固定で表示だけ残す」案もあったが、
+「完全に削除」を選択)。
+
+削除対象(このセッションでの調査で洗い出し済み。すべて `grep -n volume`
+で見つかる):
+- `src/config.h:37` の `int volume;` フィールド
+- `src/config.c:59` の `KEYS[]` エントリ(`{"audio","volume",...}`)、
+  `src/config.c:171` の既定値代入(`c->volume = 80;`)
+- `src/audio.h`/`src/audio.c` の `mugbs_audio_t.volume`
+  (`SDL_atomic_t`)、`audio_set_volume()`、`audio_callback()` 内の
+  ソフト音量の乗算ループ(`src/audio.c:31-35`あたり)。**乗算ループごと
+  削除してよい**(常に100倍のショートカット経路だけが残る形になる)
+- `src/player.c:110`(`player_init`)と `src/player.c:284`
+  (`player_apply_config`)の `audio_set_volume(&p->audio, ...)` 呼び出し
+- `src/app.c:328-338`あたりの `handle_player_input()` の
+  `INPUT_UP`/`INPUT_DOWN`(音量+/-)ケース。ここを削除すると
+  Player画面のUP/DOWNが空くので、そのまま下記4番目のファイル切替に使う
+- `src/app.c:452`あたりの `SETTINGS[]` の `"Volume"` 行
+- `src/app.c:683`あたりの `draw_player()` の `status_line` から
+  `vol:%d` 表示を除く(`repeat:%s` だけになる)
+- `SPEC.md` の config.ini サンプル・6.1画面表は今回のセッションで
+  先行して修正済み(`[audio] volume` キー削除、Playerの音量表示記述削除)
+
+`audio_callback()` の音量ループを削除すると、`Uint8 *stream` を直接
+`gme_play()` へ渡すだけの経路になり、既存の「volume==100のときは
+乗算をスキップする」高速パスがコード上も実体として常時有効になる
+(コメントもそれに合わせて更新すること)。
+
+### 3. リスト画面のカーソルを端で折り返す(ラップアラウンド)
+
+**対象**: 単純なUP/DOWNカーソル移動のみ。**ページ送り(Browserの
+LEFT/RIGHT、`browser_page()`)は対象外(現状のクランプのまま)**
+—— 複数件ジャンプするページ送りを折り返すと、押した回数によって
+着地位置が毎回変わり分かりにくくなるため、意図的に対象から外す
+(ユーザーへの確認では明示的に問うていないが、依頼文が
+「カーソル移動」と言っている範囲で解釈した。実装時に違和感があれば
+再度確認すること)。
+
+修正箇所:
+- `src/browser.c:116-121` の `browser_move()`。現状は
+  page移動と共用の関数なので、単純1ステップの場合だけ折り返す
+  引数(例: `browser_move(browser_t*, int delta, int wrap)`)を足すか、
+  `INPUT_UP`/`INPUT_DOWN`専用の薄いラッパを新設するか、どちらかを選ぶ。
+  `browser_page()` は既存の(wrap無し)呼び出しのままにすること
+- `src/app.c` の `handle_tracklist_input()` の `INPUT_UP`/`INPUT_DOWN`
+  (現在は `if (sel > 0) sel--;` 式のクランプ)
+- `src/app.c` の `handle_settings_input()` の `INPUT_UP`/`INPUT_DOWN`
+  (同様のクランプ)
+- 下記4/5番目で新設する Player画面のファイル一覧のカーソルにも同様に
+  適用すること
+
+### 4. Player画面のボタン再割当
+
+**新マッピング**(SPEC 6.3は先行して更新済み):
+
+| ボタン | 旧 | 新 |
+|---|---|---|
+| UP/DOWN | 音量+/-(2番の削除で空く) | 前/次の`.gbs`ファイルへ切替(即再生) |
+| LEFT/RIGHT | シーク -5s/+5s | 前/次トラック |
+| L1/R1 | 前/次トラック | シーク -5s/+5s |
+| L2/R2 | 前/次ファイル | (未使用) |
+| Select | (P8でミュートパネル→既に未使用) | (未使用のまま) |
+
+`src/app.c` の `handle_player_input()`(現状 `INPUT_UP`/`INPUT_DOWN`が
+音量、`INPUT_LEFT`/`INPUT_RIGHT`がシーク、`INPUT_L1`/`INPUT_R1`が
+`player_prev_track`/`player_next_track`、`INPUT_L2`/`INPUT_R2`が
+`app_prev_source`/`app_next_source`)を丸ごと入れ替える。
+`app_prev_source()`/`app_next_source()`(`src/app.c:255-291`、
+source(=ファイル)を跨ぐ最初のエントリへジャンプするロジック)は
+そのまま使い、呼び出し元を`INPUT_L2`/`INPUT_R2`から`INPUT_UP`/`INPUT_DOWN`
+へ移すだけでよい。同様に`player_prev_track`/`player_next_track`の
+呼び出しを`INPUT_L1`/`INPUT_R1`から`INPUT_LEFT`/`INPUT_RIGHT`へ、
+シーク処理(`player_tell_ms`+`player_seek`、現在`INPUT_LEFT`/`INPUT_RIGHT`
+ケースの中身)を`INPUT_L1`/`INPUT_R1`へ、それぞれ移設する。
+
+### 5. Player画面にファイル一覧を追加、波形を下部へ移動
+
+**内容**: Player画面の中央に「現在のファイルが属するディレクトリの
+ファイル一覧」(Browserと同じ`.gbs`/`.m3u`/`.zip`一覧。
+`show_all_files`設定も反映)を表示し、再生中のファイルをハイライトする。
+波形ビジュアライザ(現在ステータス行の下、`src/app.c:692-699`あたり)は
+その下に移動する。UP/DOWN(4番の新マッピング)を押すと、この一覧上で
+カーソルが連動して動き、即座に該当ファイルへ切り替わって再生を始める
+(TrackListのようにカーソルだけ動かして決定ボタンで開く方式ではなく、
+即切替。ユーザー確認済み)。
+
+**実装方針**:
+- `app_t`(`src/app.c`)に `browser_t player_files;` のような専用の
+  `browser_t` インスタンスを追加する(Browser画面の `app->browser` とは
+  別物。Player中は`app->browser`を破壊したくない —— Browserへ戻ったとき
+  にカーソル位置が保持されている必要があるため)。ファイルを開くたび
+  (`app_open_path()`)に、そのファイルの`dirname`で
+  `browser_open_dir(&app->player_files, dir, app->cfg->show_all_files)`
+  を呼んで再構築し、`browser_select_by_name()`で現在のファイル名へ
+  カーソルを合わせる
+  - ただしzip内の`.gbs`を開いている場合(`playlist_source_t.zip_entry`
+    が非NULL)、「ディレクトリ」の概念がファイルシステム上に無いので
+    どう扱うか要検討(zipのあるディレクトリ = zipファイル自身を1項目
+    として見せる、等)。今回のフィードバックの主眼はSDカード上の
+    `.gbs`を直接ブラウズする場合と思われるので、zip内ファイルの扱いは
+    実装時に確認するか、素直に「zipファイルが属するディレクトリ」を
+    見せる(=zip自身がハイライトされる1項目として一覧に出る)のが
+    自然
+  - UP/DOWNで一覧のカーソルを動かしたら、`browser_selected_path()`で
+    パスを取り、`app_open_path()`(既存。ファイルを開いて即再生開始する
+    関数)をそのまま呼べばよい
+- 描画(`draw_player()`, `src/app.c:622`以降): タイトル・メタ情報・
+  シークバー・ステータス行のレイアウトはそのまま、その下に
+  `ui_draw_list()` + 新規`player_files_item_text()`でファイル一覧を挟み、
+  波形(`ui_draw_waveform()`呼び出し)をさらにその下へ移動する。
+  高さ配分は要調整(現状波形は`line_h*5`固定。一覧を挟むぶん、
+  低解像度での省略ガード(`wave_avail`判定と同様のもの)を一覧側にも
+  用意すること)
+- カーソルのラップアラウンドは3番の対応と合わせて、このファイル一覧にも
+  適用する
 
 ## 検証手順
 
