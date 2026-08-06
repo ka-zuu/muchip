@@ -11,7 +11,9 @@ cmake_minimum_required(VERSION 3.13)
 # 1.0.0 = MUST要件(F-01〜F-08)に加え、P8のSHOULD/NICE要件
 # (F-10 チャンネルミュート / F-14 ビジュアライザ / F-20 EQ) まで実装し、
 # 実機で動作を確認した状態。
-project(mugbs VERSION 1.0.0 LANGUAGES C CXX)
+# 1.0.1 = Player画面の文字サイズ修正(Issue #3)とCI/リリース自動化。
+# ユーザー向けの新機能は無いためpatchバンプ。
+project(mugbs VERSION 1.0.1 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
