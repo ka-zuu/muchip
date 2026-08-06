@@ -1,0 +1,125 @@
+# .github/workflows/ci.yml
+#
+# ホスト(x86_64 Linux)向けビルドと CTest を GitHub Actions で回す。 (SPEC 10.4)
+#
+# 実機(aarch64)向けのクロスビルドはここでは行わない。クロスビルドには実機から
+# 抜いた sysroot/ (実機の libc.so.6 と libSDL2 の実体) が必要で、これは実機
+# 由来のバイナリなのでリポジトリに含めない方針だから。実機向けの .muxapp は
+# 開発機で scripts/release.sh が作り、GitHub Release へアップロードする。
+# 詳細は PLAN.md の「P13の設計判断」を参照。
+#
+# workflow_call を持たせてあるのは release-guard.yml から丸ごと再利用するため。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_call:
+
+# PR へ追い push したら古い実行は止める。master への push は
+# 「この commit で緑だった」という記録なので止めない。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  host-build-test:
+    name: ホストビルド + CTest
+    runs-on: ubuntu-24.04
+    steps:
+      # vendor/game-music-emu はフォーク (ka-zuu/game-music-emu の mugbs
+      # ブランチ) を指しており、P12 の独自パッチが入っている。upstream には
+      # 無いコミットなので submodules: recursive は必須。
+      # action は tag ではなく commit SHA で固定する (tag は動かせるため)。
+      - name: チェックアウト (submodule 込み)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      # libsdl2-ttf-dev は入れない。フォントは vendor/font8x8 を
+      # コンパイル時に埋め込んでおり、実行時の外部アセットロードは無い。
+      # zip/unzip が無いと test_package が 77 を返して SKIP になる。
+      # shellcheck が無いと test_package のシェル静的解析が無効になる
+      # (MUGBS_REQUIRE_SHELLCHECK=1 を立てているので、消えれば失敗する)。
+      - name: 依存パッケージ
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libsdl2-dev cmake build-essential zip unzip shellcheck
+
+      # 失敗を追うとき「どの版で起きたか」が分かるように残しておく。
+      # 特に shellcheck は版が上がると新しい指摘が増えうる。
+      - name: 環境の記録
+        run: |
+          cmake --version | head -1
+          gcc --version | head -1
+          pkg-config --modversion sdl2
+          shellcheck --version | sed -n '2p'
+
+      - name: ビルド
+        run: ./scripts/build-host.sh
+
+      # ヘッドレスUIスモークは tests/CMakeLists.txt が
+      # SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy を設定するので、
+      # ランナーに X も音声デバイスも要らない。
+      #
+      # SKIP を失敗として扱う。ローカルでは zip/unzip が無ければ
+      # test_package が飛ぶのは妥当だが、CI で依存を入れ忘れて検査が
+      # 無言で消えるのは困る。--no-tests=error はテストが1件も無い
+      # (= CMake 側の構成ミス) 場合に緑にしないためのもの。
+      - name: CTest
+        env:
+          MUGBS_REQUIRE_SHELLCHECK: "1"
+        run: |
+          set -o pipefail
+          ctest --test-dir build --output-on-failure --no-tests=error \
+                -j"$(nproc)" 2>&1 | tee ctest.log
+          if grep -q '\*\*\*Skipped' ctest.log; then
+            echo "::error::SKIP されたテストがあります (CI では許容しません)"
+            exit 1
+          fi
+
+  sanitizers:
+    name: ASan/UBSan ビルド + CTest
+    runs-on: ubuntu-24.04
+    steps:
+      - name: チェックアウト (submodule 込み)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: 依存パッケージ
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libsdl2-dev cmake build-essential
+
+      # -fno-sanitize-recover=all が肝。これが無いと UBSan は診断を
+      # 標準エラーへ出すだけで終了コードは 0 のままなので、CTest が
+      # 未定義動作を見逃して「緑」になる。
+      - name: ビルド (ASan/UBSan)
+        run: |
+          cmake -B build-asan -DTARGET_HOST=ON -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          cmake --build build-asan -j"$(nproc)"
+
+      # detect_leaks は既定で有効だが、「意図して有効にしている」ことを
+      # 残すために明示する (P13 C3 でテストハーネス側の意図的リークを
+      # 潰し、detect_leaks=0 で逃げるのをやめた)。
+      # test_package はシェルスクリプトと zip の構造検査でサニタイザと
+      # 無関係なうえ、実行するのは sh なので除外する。
+      - name: CTest (LeakSanitizer 有効)
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          ctest --test-dir build-asan --output-on-failure --no-tests=error \
+                -j"$(nproc)" -E '^test_package$'

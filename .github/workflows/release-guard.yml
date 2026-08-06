@@ -1,0 +1,55 @@
+# .github/workflows/release-guard.yml
+#
+# v* タグが push されたときに、リリースの前提が崩れていないかを検査する。
+# (SPEC 9.5)
+#
+# .muxapp そのものは CI では作れない (クロスビルドに必要な sysroot/ が実機
+# 由来のバイナリでリポジトリに無い)。したがってこのワークフローは
+# 「成果物を作る」のではなく「開発機で作った成果物を公開してよいか」を
+# 裏取りするためのもの。scripts/release.sh はリリースを *下書き* として
+# 作るので、これが緑になったのを見てから
+#   gh release edit v<version> --draft=false
+# で公開する。
+#
+# full-ci ジョブの価値は「クリーンなチェックアウトでテストが緑になること」を
+# 見られる点にある。開発機の build/ に残った古いオブジェクトや、コミットし
+# 忘れたファイルを検出できるのはここだけ。
+name: Release Guard
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+jobs:
+  version-guard:
+    name: タグ・バージョン・CHANGELOG の整合性
+    runs-on: ubuntu-24.04
+    steps:
+      # CMakeLists.txt と CHANGELOG.md しか見ないので submodule は要らない。
+      - name: チェックアウト
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: タグ名と CMakeLists.txt のバージョンが一致するか
+        run: |
+          version=$(./scripts/package.sh --print-version)
+          echo "CMakeLists.txt: $version / タグ: $GITHUB_REF_NAME"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::タグ $GITHUB_REF_NAME と CMakeLists.txt の $version が一致しません"
+            exit 1
+          fi
+
+      # 切り出しロジックは scripts/release.sh に一本化してあるので
+      # ここでは呼ぶだけ。節が無い/空なら release.sh 側が非0で落ちる。
+      - name: CHANGELOG.md に該当バージョンの節があるか
+        run: |
+          ./scripts/release.sh --print-notes
+
+  full-ci:
+    name: フルCI
+    needs: version-guard
+    uses: ./.github/workflows/ci.yml

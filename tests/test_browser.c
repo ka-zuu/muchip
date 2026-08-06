@@ -12,23 +12,7 @@
 #include "browser.h"
 #include "test_util.h"
 
-static char g_tmpdir[256];
-
-static void setup_tmpdir(void) {
-    const char *base = getenv("TMPDIR");
-    if (!base) base = "/tmp";
-    snprintf(g_tmpdir, sizeof(g_tmpdir), "%s/mugbs_test_browser_XXXXXX", base);
-    if (!mkdtemp(g_tmpdir)) {
-        fprintf(stderr, "mkdtemp failed\n");
-        exit(1);
-    }
-}
-
-static char *path_in(const char *name) {
-    char buf[512];
-    snprintf(buf, sizeof(buf), "%s/%s", g_tmpdir, name);
-    return strdup(buf);
-}
+/* g_tmpdir / setup_tmpdir() / path_in() は test_util.h にある。 */
 
 static void make_dir(const char *path) {
     if (mkdir(path, 0755) != 0) {
@@ -144,9 +128,7 @@ static int test_enter_and_up(void) {
 
     b.selected = 0;
     CHECK(browser_enter(&b, 0) == 1);
-    char *expected_sub = path_in("sub");
-    CHECK_STREQ(b.cwd, expected_sub);
-    free(expected_sub);
+    CHECK_STREQ(b.cwd, path_in("sub"));
     CHECK(b.count == 0); /* subは空ディレクトリ */
 
     CHECK(browser_up(&b, 0) == 1);
@@ -161,9 +143,7 @@ static int test_enter_and_up(void) {
 
     char path[512];
     CHECK(browser_selected_path(&b, path, sizeof(path)) == 0);
-    char *expected_file = path_in("apple.m3u");
-    CHECK_STREQ(path, expected_file);
-    free(expected_file);
+    CHECK_STREQ(path, path_in("apple.m3u"));
 
     browser_free(&b);
     return 0;
@@ -224,7 +204,7 @@ static int test_select_by_name(void) {
 }
 
 int main(void) {
-    setup_tmpdir();
+    setup_tmpdir("browser");
 
     if (test_sort_and_filter()) return 1;
     if (test_move_and_page()) return 1;

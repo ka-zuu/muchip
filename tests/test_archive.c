@@ -24,23 +24,7 @@
         }                                                                           \
     } while (0)
 
-static char g_tmpdir[256];
-
-static void setup_tmpdir(void) {
-    const char *base = getenv("TMPDIR");
-    if (!base) base = "/tmp";
-    snprintf(g_tmpdir, sizeof(g_tmpdir), "%s/mugbs_test_archive_XXXXXX", base);
-    if (!mkdtemp(g_tmpdir)) {
-        fprintf(stderr, "mkdtemp failed\n");
-        exit(1);
-    }
-}
-
-static char *path_in(const char *name) {
-    char buf[512];
-    snprintf(buf, sizeof(buf), "%s/%s", g_tmpdir, name);
-    return strdup(buf);
-}
+/* g_tmpdir / setup_tmpdir() / path_in() は test_util.h にある。 */
 
 /* 指定したエントリ名・内容でzipを1つ書き出す。 */
 static void write_test_zip(const char *zip_path, const char *const *names,
@@ -164,7 +148,7 @@ static int test_reject_oversized_entry(void) {
 }
 
 int main(void) {
-    setup_tmpdir();
+    setup_tmpdir("archive");
 
     if (test_list_and_classify()) return 1;
     if (test_find_case_and_path_insensitive()) return 1;

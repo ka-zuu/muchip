@@ -595,6 +595,22 @@ cd package_root && zip -r ../muGBS-1.0.0.muxapp . -x '.*' -x '__MACOSX/*'
 
 インストールは実機の `Applications > Archive Manager` から行う。
 
+### 9.5 リリース（P13）
+
+- タグは `vX.Y.Z`。版番号の唯一の情報源は `CMakeLists.txt` の
+  `project(mugbs VERSION ...)`
+- ユーザー向けの変更履歴は `CHANGELOG.md`。見出しは
+  `## vX.Y.Z - YYYY-MM-DD` の1行固定で、これが GitHub Release 本文の生成元
+- リリース作業は `scripts/release.sh` に集約する。検査 → ホストビルド +
+  CTest → クロスビルド → `.muxapp` 生成 → タグ → 下書きリリース、の順で、
+  取り返しのつかない操作は最後にまとめる
+- **`.muxapp` は CI では作らない。** クロスビルドには実機から抜いた
+  `sysroot/` が要り、これは実機由来のバイナリなのでリポジトリに置かない
+  （8.3 参照）。GitHub Actions 側（`release-guard.yml`）が行うのは、
+  タグ・`CMakeLists.txt`・`CHANGELOG.md` の整合性と、クリーンな
+  チェックアウトでのフル CI だけ
+- リリースは**下書きとして作り**、Release Guard が緑になってから公開する
+
 ---
 
 ## 10. テスト計画
@@ -629,6 +645,24 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 `tests/fixtures/` には **合成した最小GBSファイル**（ヘッダのみ有効な擬似ファイル）と、
 各種パターンの `.m3u` テキストのみを置く。m3uパーサのユニットテストはこれで行う。
 
+### 10.4 CI（GitHub Actions、P13）
+
+`.github/workflows/ci.yml` が PR と master への push で次を回す。
+
+| ジョブ | 内容 |
+|---|---|
+| ホストビルド + CTest | `scripts/build-host.sh` → `ctest`。`MUGBS_REQUIRE_SHELLCHECK=1` を立て、SKIP が1件でもあれば失敗させる |
+| ASan/UBSan | `-fsanitize=address,undefined -fno-sanitize-recover=all`、`ASAN_OPTIONS=detect_leaks=1` |
+
+- ヘッドレスUIスモークは `SDL_VIDEODRIVER=dummy` / `SDL_AUDIODRIVER=dummy`
+  で走るのでランナーに X も音声デバイスも要らない
+- **CI でクロスビルドはしない**（9.5 参照）。実機検証は人手で行い、結果は
+  `PLAN.md` に記録する
+- シェルスクリプトの静的解析は専用ジョブを作らず `tests/test_package.sh`
+  に集約する（検査対象リストを二重管理しないため）
+- `-fno-sanitize-recover=all` は必須。これが無いと UBSan は診断を出すだけで
+  終了コードが 0 のままになり、CTest が未定義動作を見逃して緑になる
+
 ---
 
 ## 11. 実装フェーズ
@@ -647,6 +681,10 @@ Claude Code は以下の順で実装し、各フェーズ末尾でビルドが�
 | **P7** | クロスコンパイル、muxappパッケージング | 実機で起動・再生できる |
 | **P8** | ビジュアライザ、EQ（チャンネルミュートは実装後ユーザー判断で削除） | SHOULD/NICE要件 |
 | **P9** | 実機フィードバック対応（zip複数m3uマージ、音量調整の廃止、カーソル折り返し、Player入力再割当、Playerへのファイル一覧追加） | T-14が通り、各項目が実機で確認できる |
+| **P10** | 実機フィードバック対応・第2弾（シャッフル再生 F-25 ほか） | 各項目が実機で確認できる |
+| **P11** | Player画面から Repeat/Shuffle を直接変える Yコンボ | 実機で物理ボタンだけで切り替えられる |
+| **P12** | m3uの10進トラック番号が0始まりであることに対応 | zophar.net 配布パックで宣言通りのトラックが鳴る |
+| **P13** | GitHub の PR 運用・CI・リリース自動化 | PR で CI が回り、`scripts/release.sh` でタグと Release が作れる |
 
 ---
 
@@ -659,7 +697,16 @@ Claude Code は以下の順で実装し、各フェーズ末尾でビルドが�
   コメントで明記する
 - **絶対パスのハードコード禁止**（`/mnt/mmc` 等）
 - ログ: `LOG_INFO` / `LOG_WARN` / `LOG_ERR` マクロを用意し、stderr に出す
-- 依存追加は事前に相談すること（バイナリサイズと実機の glibc 互換性に直結するため）
+- 依存追加は事前に相談すること（バイナリサイズと実機の glibc 互換性に直結するため）。
+  ただし **shellcheck のような開発ツールはこの制限の対象外**（成果物に入らないため）。
+  無い環境でもテストは通ること
+- シェルスクリプトは **POSIX sh**。`shellcheck -s sh -S warning` が通ること
+  （`mux_launch.sh` は実機の busybox ash で動くので bashism = SC3xxx は致命的）
+- シェルスクリプトを追加したら `tests/test_package.sh` の `SHELL_SCRIPTS` に
+  必ず加える（`sh -n` と shellcheck の対象がそこで一元管理されている）
+- **master へは直接コミット・push しない。** ブランチを切って PR を出す
+  （P13。`git config core.hooksPath .githooks` で `.githooks/pre-push` を
+  有効にしておくこと）
 
 ---
 
@@ -680,6 +727,29 @@ Claude Code は以下の順で実装し、各フェーズ末尾でビルドが�
 - [ ] ボタン番号を決め打ちしていないか
 - [ ] zip内に `.m3u` が複数ある場合、最初の1つだけでなく**全て**処理して
       マージしたか（曲ごとに1ファイルの配布形式が実在する。5.3参照）
+- [ ] submodule の gitlink が**公開リモートから取得できる**コミットを
+      指しているか（P13 で実際に壊れていた。upstream に無い独自パッチを
+      当てたまま upstream の url を指していると、開発機以外では
+      `git clone --recurse-submodules` が失敗し CI が一切動かない。
+      `scripts/release.sh` がリリース前にこれを検査する）
+- [ ] UBSan を掛けたビルドで `-fno-sanitize-recover=all` を付けたか
+      （既定では診断を出しても終了コードが 0 のままで、テストが偽の緑になる）
+- [ ] シェルスクリプトを追加したとき `tests/test_package.sh` の
+      `SHELL_SCRIPTS` に加えたか
+
+### public 化するときの TODO
+
+現在このリポジトリは private。public にする場合は追加で以下が要る。
+
+- [ ] `LICENSE` を置く。`.muxapp` は libgme（LGPL-2.1）を静的リンクして
+      いるので、再リンク可能な形の提供かライセンス選択で条件を満たすこと
+- [ ] libgme の独自パッチは既に public フォーク
+      （ka-zuu/game-music-emu の `mugbs` ブランチ）にあるので、
+      リリース本文からそこへリンクする
+- [ ] branch protection / ruleset を有効にする（public なら無料で使える。
+      private + 無料プランでは API が 403 を返すため `.githooks/pre-push`
+      で代用している）
+- [ ] README に CI バッジを付ける（private では未認証だと表示されない）
 
 ---
 
