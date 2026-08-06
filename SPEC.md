@@ -358,7 +358,7 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 | A | 決定・開く | 決定：カーソルが指すファイルを開いて再生 |
 | B | 上の階層へ | Browserへ戻る |
 | X | — | TrackList を開く |
-| Y | — | リピートモード切替 |
+| Y | — | （単体では未使用。下記「Yコンボ」参照） |
 | L1 / R1 | — | シーク -5s / +5s |
 | L2 / R2 | — | 前/次ソース（開いている m3u/zip 内でファイルを跨ぐ） |
 | Start | — | Settings |
@@ -379,6 +379,15 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 > Playerのファイル一覧）のD-Pad Up/Downによる単純なカーソル移動は、
 > 最下段でDownを押すと先頭へ、先頭でUpを押すと最下段へ折り返す。
 > ページ送り（Browserの D-Pad Left/Right）は対象外（クランプのまま）。
+
+> **Yコンボ（P11）**: Settings画面まで入らずにRepeat/Shuffleを変えられる
+> よう、Player画面で `Y` を押しながら D-Pad を押すと意味が変わる。
+> `Y+Left`/`Y+Right` でRepeatモードを1段ずつ進める・戻す（Settings画面の
+> 並びと同じ none→one→all の順で循環）。`Y+Up`/`Y+Down` でShuffleを
+> 明示的にon/off（トグルではない。D-Padの長押しリピートで連射されても
+> 同じ値を再代入するだけになるようにするため）。`Y`単体（押して離すだけ）
+> は何もしない。Playerのステータス行（`repeat:xxx shuffle:on/off`）で
+> 変更後の値をすぐ確認できる。
 
 > **D-Pad長押しリピート（P8実機検証で追加済み）**: GameControllerの
 > ボタンはキーボードと違いOSレベルのキーリピートを持たないため、
