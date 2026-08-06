@@ -347,6 +347,27 @@ git config core.hooksPath .githooks
 ドキュメントだけの変更で CI を回したくないときは、コミットメッセージに
 `[skip ci]` を入れる（private リポジトリの Actions 無料枠は 2000 分/月）。
 
+## 機能追加のフロー（Issue駆動、P13）
+
+思いついたことは気軽に GitHub Issue へ。**テンプレートも必須項目もない**
+（`.github/ISSUE_TEMPLATE/` は意図的に置いていない。GitHub 既定の自由記述
+Issue のまま）。SPEC.md への影響（新規 F-xx が要るか）や実機検証の要否を
+Issue 作成時点で書く必要は無い。
+
+着手するときは、ターミナルで `claude` を起動して Issue を渡す
+（例:「Issue #N をやって」）。SPEC/PLAN への影響判断・実機検証要否・
+`CHANGELOG.md` への追記は、その場で Claude Code が Issue の内容を読んで
+判断し、実装後の PR 本文（`.github/pull_request_template.md` の各チェック
+項目）に自分で書き込む。「人間が事前にチェックリストを埋める」から
+「エージェントが判断して報告する」へ役割を変えている。
+
+PR は `Closes #N` で対応する Issue を閉じるようにする。
+
+Issue コメントで `@claude` とタグ付けするだけで自動着手させたくなったら、
+公式の Claude Code GitHub Action（`claude` CLI 内で `/install-github-app`）
+へ発展させる選択肢がある（現時点では未導入。無料プランの private
+リポジトリでも Actions の無料枠内で動作する）。
+
 ## CI（GitHub Actions、P13）
 
 `.github/workflows/ci.yml` が PR と `master` への push で2つのジョブを回す。
