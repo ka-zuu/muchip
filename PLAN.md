@@ -1701,6 +1701,17 @@ GitHub Release の本文を書く元も無かった。
 ただし `scripts/release.sh` が生成した `.muxapp` を実機へ入れて起動できる
 ことをもって最終確認とする（リリース手順そのものの検証を兼ねる）。
 
+**完了。** `./scripts/release.sh` でタグ `v1.0.0` と GitHub Release
+（下書き）を作成し、Release Guard ワークフロー（タグ・
+`CMakeLists.txt`・`CHANGELOG.md` の整合性 + クリーンなチェックアウトでの
+フル CI）が緑になったことを確認してから `gh release edit v1.0.0
+--draft=false` で公開した。`gh release download` で取得した
+`muGBS-1.0.0.muxapp`（SHA256:
+`b9f2d551ce15005535371229b5504dd991380a339b410d5a55c78fc9ffbc9021`）を
+実機へ転送し、Archive Manager から展開・起動して再生できることを
+ユーザーが確認済み。
+https://github.com/ka-zuu/gbs-player/releases/tag/v1.0.0
+
 ## 検証手順
 
 ```sh
