@@ -24,6 +24,12 @@
  *     自前解釈はしない)
  * SPEC 6.3 の「SDL_Joystickにフォールバックし、config.iniでマッピング
  * 上書きを可能にする」は、この形で満たす(PLAN.mdに乖離として記録)。
+ *
+ * D-pad長押しリピート(P8実機検証で追加): SDL_GameControllerのボタンは
+ * キーボードと違いOSレベルのキーリピートを持たず、押しっぱなしでも
+ * SDL_CONTROLLERBUTTONDOWNは最初の1回しか来ない。input_t.dpad_held[]で
+ * 押下状態と経過時間を自前追跡し、input_poll()がSDLイベントの無いときに
+ * リピートを合成して返す(下記 input_t 参照)。
  */
 #ifndef MUGBS_INPUT_H
 #define MUGBS_INPUT_H
@@ -62,6 +68,16 @@ typedef struct {
     /* L2/R2(アナログトリガー軸)のエッジ検出用の直前の押下状態。 */
     int trigger_l_down;
     int trigger_r_down;
+
+    /* D-pad(UP/DOWN/LEFT/RIGHT)長押しリピート用。キーボードと違い
+     * SDL_GameControllerのボタンにはOSレベルのキーリピートが無く、
+     * SDL_CONTROLLERBUTTONDOWNは押した瞬間の単発イベントしか来ない。
+     * 実機の物理ボタンで「押しっぱなしでカーソル移動/値変更ができず
+     * しんどい」というフィードバックを受けて追加した(SPECには無い、
+     * 実機確認で見つかったUX改善)。
+     * index: 0=UP, 1=DOWN, 2=LEFT, 3=RIGHT */
+    int dpad_held[4];
+    Uint32 dpad_next_repeat_at[4]; /* 次にリピートを発火するSDL_GetTicks()時刻 */
 
     /* START+SELECT同時押しでの終了(SPEC 6.3「Menu長押し=終了」の代替)用。
      * GameController の GUIDE ボタン(muOSのMENU相当)は muOS 側のオーバーレイに

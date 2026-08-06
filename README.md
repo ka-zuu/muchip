@@ -82,6 +82,10 @@ ctest --test-dir build --output-on-failure
 | `Return` (Start相当) | Settingsを開く | Settingsを開く | — | 保存して戻る |
 | `Esc` | 終了 | 終了 | 終了 | — |
 
+`↑↓←→` は押しっぱなしで長押しリピートする(初回350ms後から70ms間隔)。
+GameController(実機の物理ボタン)はキーボードと違いOSレベルのキー
+リピートを持たないため、`src/input.c` が自前で追跡している。
+
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
 意図的に広げてある。`PLAN.md` 参照）。Volume・Repeat・Stereo depth・

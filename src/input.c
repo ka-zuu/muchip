@@ -15,6 +15,32 @@
 #define HELD_START  (1u << 0)
 #define HELD_SELECT (1u << 1)
 
+/* D-pad長押しリピートのタイミング(input_t.dpad_held[]参照)。
+ * 押してから最初のリピートまでは長めに、以降は速めにして、
+ * 「1回押すだけの操作」を誤爆させずに長押しでの連続移動を素早くする。 */
+#define DPAD_REPEAT_DELAY_MS 350
+#define DPAD_REPEAT_RATE_MS   70
+
+static int dpad_index(input_action_t a) {
+    switch (a) {
+        case INPUT_UP:    return 0;
+        case INPUT_DOWN:  return 1;
+        case INPUT_LEFT:  return 2;
+        case INPUT_RIGHT: return 3;
+        default:          return -1;
+    }
+}
+
+static input_action_t dpad_action(int index) {
+    switch (index) {
+        case 0: return INPUT_UP;
+        case 1: return INPUT_DOWN;
+        case 2: return INPUT_LEFT;
+        case 3: return INPUT_RIGHT;
+        default: return INPUT_NONE;
+    }
+}
+
 static input_action_t key_to_action(SDL_Keycode k) {
     switch (k) {
         case SDLK_UP:     return INPUT_UP;
@@ -169,7 +195,22 @@ void input_shutdown(input_t *in) {
 
 int input_poll(input_t *in, input_action_t *out) {
     SDL_Event ev;
-    if (!SDL_PollEvent(&ev)) return 0;
+    if (!SDL_PollEvent(&ev)) {
+        /* 新しいSDLイベントが無くても、D-padが押しっぱなしならリピートを
+         * 合成して返す(SDL_CONTROLLERBUTTONDOWNは単発でOSリピートが無い
+         * ため。上記 dpad_held[] 参照)。1回の呼び出しでは最大1件だけ返し、
+         * 呼び出し側のポーリングループに複数回呼んでもらう(他のイベント
+         * 種別の扱いと揃える)。 */
+        Uint32 now = SDL_GetTicks();
+        for (int i = 0; i < 4; i++) {
+            if (in->dpad_held[i] && now >= in->dpad_next_repeat_at[i]) {
+                in->dpad_next_repeat_at[i] = now + DPAD_REPEAT_RATE_MS;
+                *out = dpad_action(i);
+                return 1;
+            }
+        }
+        return 0;
+    }
 
     switch (ev.type) {
         case SDL_QUIT:
@@ -192,6 +233,12 @@ int input_poll(input_t *in, input_action_t *out) {
         case SDL_CONTROLLERBUTTONDOWN: {
             input_action_t a = controller_button_to_action(ev.cbutton.button);
 
+            int di = dpad_index(a);
+            if (di >= 0) {
+                in->dpad_held[di] = 1;
+                in->dpad_next_repeat_at[di] = SDL_GetTicks() + DPAD_REPEAT_DELAY_MS;
+            }
+
             /* START+SELECT同時押しでの終了検出(GUIDEがmuOS側に吸われて
              * 届かない場合の代替。SPEC 6.3「Menu長押し=終了」相当)。 */
             if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) in->held_mask |= HELD_START;
@@ -204,11 +251,14 @@ int input_poll(input_t *in, input_action_t *out) {
             return 1;
         }
 
-        case SDL_CONTROLLERBUTTONUP:
+        case SDL_CONTROLLERBUTTONUP: {
+            int di = dpad_index(controller_button_to_action(ev.cbutton.button));
+            if (di >= 0) in->dpad_held[di] = 0;
             if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) in->held_mask &= ~HELD_START;
             if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) in->held_mask &= ~HELD_SELECT;
             *out = INPUT_NONE;
             return 1;
+        }
 
         case SDL_CONTROLLERAXISMOTION: {
             *out = INPUT_NONE;
@@ -242,6 +292,8 @@ int input_poll(input_t *in, input_action_t *out) {
                 LOG_WARN("GameControllerが切断されました");
                 SDL_GameControllerClose(in->controller);
                 in->controller = NULL;
+                /* 切断中に押しっぱなしと誤認して幽霊リピートを出し続けないように。 */
+                memset(in->dpad_held, 0, sizeof(in->dpad_held));
             }
             *out = INPUT_NONE;
             return 1;
