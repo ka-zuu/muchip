@@ -46,6 +46,7 @@ SHELL_SCRIPTS="scripts/package.sh
 scripts/build-aarch64.sh
 scripts/build-host.sh
 scripts/fetch-sysroot.sh
+scripts/release.sh
 packaging/muGBS/mux_launch.sh
 tests/test_package.sh
 .githooks/pre-push"
