@@ -21,8 +21,13 @@ SDL2 の Browser/Player/TrackList/Settings 画面をホスト上でキーボー�
 
 ```sh
 sudo apt update && sudo apt install -y \
-    pkg-config libsdl2-dev libsdl2-ttf-dev cmake build-essential git
+    pkg-config libsdl2-dev cmake build-essential git
 ```
+
+SDL2_ttf は不要（フォントは `vendor/font8x8` をコンパイル時に埋め込んでいる）。
+`ctest` を完全な形で回すには追加で `zip` `unzip` `shellcheck` があるとよい
+（無い場合、`.muxapp` の構造検証はスキップされ、シェルスクリプトの静的解析は
+飛ばされる。CI は3つとも入れる）。
 
 初回のみ submodule を取得:
 
