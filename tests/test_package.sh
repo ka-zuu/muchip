@@ -40,17 +40,35 @@ mkdir -p "$WORK"
 dd if=/dev/zero of="$WORK/dummy-mugbs" bs=1024 count=1 2>/dev/null
 
 # --- A. シェルスクリプトの構文 ----------------------------------------------
+# 検査対象はこのリポジトリのシェルスクリプト全部。新しくシェルスクリプトを
+# 追加したら必ずこのリストにも足すこと (SPEC 12)。
+SHELL_SCRIPTS="scripts/package.sh
+scripts/build-aarch64.sh
+scripts/build-host.sh
+scripts/fetch-sysroot.sh
+packaging/muGBS/mux_launch.sh
+tests/test_package.sh"
 
-for s in scripts/package.sh scripts/build-aarch64.sh scripts/build-host.sh \
-	scripts/fetch-sysroot.sh packaging/muGBS/mux_launch.sh; do
+for s in $SHELL_SCRIPTS; do
 	sh -n "$s" 2>/dev/null || fail "$s" "A-1 sh -n が通らない"
 done
 
-# shellcheck があれば追加で見る(無ければスキップ)。POSIX sh として検査する。
+# 静的解析は shellcheck に任せる。POSIX sh (-s sh) として検査するので、
+# 実機の busybox ash で動く mux_launch.sh に bashism が紛れ込むと SC3xxx で
+# 落ちる。SC3xxx の severity は warning なので -S error では拾えない。
+#
+# なお shellcheck は開発ツールであって muGBS のビルド成果物の依存では
+# ないので、手元に無ければ黙って飛ばす
+# (SPEC 12 の「依存追加は事前に相談」の対象外)。
+# ただしそれだと CI で apt を書き忘れたときに検査が無言で消えるため、
+# MUGBS_REQUIRE_SHELLCHECK=1 のときだけは「無いこと」自体を失敗にする。
+# CI (.github/workflows/ci.yml) と scripts/release.sh がこれを立てる。
 if command -v shellcheck >/dev/null 2>&1; then
-	shellcheck -s sh -S error scripts/package.sh scripts/build-aarch64.sh \
-		packaging/muGBS/mux_launch.sh ||
-		fail "shellcheck" "A-2 error レベルの指摘がある"
+	# shellcheck disable=SC2086 # SHELL_SCRIPTS は意図的に単語分割させる
+	shellcheck -s sh -S warning $SHELL_SCRIPTS ||
+		fail "shellcheck" "A-2 warning 以上の指摘がある"
+elif [ "${MUGBS_REQUIRE_SHELLCHECK:-0}" = "1" ]; then
+	fail "shellcheck" "A-2 MUGBS_REQUIRE_SHELLCHECK=1 だが shellcheck が無い"
 fi
 
 # --- B. バージョンの一致 ----------------------------------------------------
