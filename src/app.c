@@ -878,6 +878,13 @@ static void draw_player(app_t *app) {
         src = &app->pl->sources[e->source_index];
     }
 
+    /* Issue #3: 情報ブロックの文字サイズ。実機(640x480, scale=1.0)で
+     * UI_TEXT_SMALL は 8x8フォントの等倍=8pxで、再生位置やトラック番号まで
+     * それに載っていて読めなかった。よく目をやる再生位置だけ曲名と同格の
+     * TITLE(3x)へ、その他はリスト行と同じ BODY(2x) へ上げてある
+     * (時間 > トラック番号 の階層を作る)。SMALL のままにしたのはフッタだけ。
+     * 8x8フォントなのでサイズ段階はどれも8の整数倍で、ドットが均一に拡大される。
+     * 送り量は各行が実際に使うサイズ段階から導出する(SPEC 6.2)。 */
     ui_text_clipped(ui, x, y, content_w, UI_TEXT_TITLE, fg, e ? e->title : "(no track)");
     y += ui_glyph_size(ui, UI_TEXT_TITLE) + ui->metrics.pad;
 
@@ -889,24 +896,27 @@ static void draw_player(app_t *app) {
     snprintf(meta, sizeof(meta), "%s  %s",
              (src && src->author[0]) ? src->author : "",
              (src && src->copyright[0]) ? src->copyright : "");
-    ui_text_clipped(ui, x, y, content_w, UI_TEXT_SMALL, dim, meta);
+    ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, meta);
     y += ui->metrics.line_h + ui->metrics.pad;
 
     char trackno[32];
     snprintf(trackno, sizeof(trackno), "Track %d/%d",
              app->pl ? app->player.current_entry + 1 : 0, app->pl ? app->pl->entry_count : 0);
-    ui_text(ui, x, y, UI_TEXT_SMALL, dim, trackno);
-    y += ui->metrics.line_h + ui->metrics.pad;
+    ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, trackno);
+    y += ui->metrics.line_h;
 
     int pos_ms = player_tell_ms(&app->player);
     int dur_ms = player_current_duration_ms(&app->player);
     char timebuf[64];
     snprintf(timebuf, sizeof(timebuf), "%d:%02d / %d:%02d",
              pos_ms / 60000, (pos_ms / 1000) % 60, dur_ms / 60000, (dur_ms / 1000) % 60);
-    ui_text(ui, x, y, UI_TEXT_SMALL, fg, timebuf);
-    y += ui->metrics.line_h;
+    /* 長尺のm3u(時間が3桁分)でも画面外へ出ないよう、他の行と同じく
+     * ui_text_clipped() で描く。 */
+    ui_text_clipped(ui, x, y, content_w, UI_TEXT_TITLE, fg, timebuf);
+    y += ui_glyph_size(ui, UI_TEXT_TITLE) + ui->metrics.pad;
 
-    ui_rect_t bar = { x, y, content_w, ui->metrics.pad * 2 };
+    /* バーの高さは pad*2 だと TITLE の時間表示の下で細すぎたので pad*3。 */
+    ui_rect_t bar = { x, y, content_w, ui->metrics.pad * 3 };
     float ratio = dur_ms > 0 ? (float)pos_ms / (float)dur_ms : 0.0f;
     const SDL_Color bar_bg = { 50, 50, 60, 255 };
     ui_draw_progress(ui, bar, ratio, accent, bar_bg);
@@ -919,10 +929,13 @@ static void draw_player(app_t *app) {
     char status_line[128];
     snprintf(status_line, sizeof(status_line), "%s  repeat:%s  shuffle:%s",
              state_label, repeat_label, app->cfg->shuffle ? "on" : "off");
-    ui_text(ui, x, y, UI_TEXT_SMALL, dim, status_line);
+    ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, status_line);
     y += ui->metrics.line_h;
 
-    int footer_y = ui->screen_h - ui->metrics.footer_h + (ui->metrics.footer_h - ui->metrics.glyph) / 2;
+    /* フッタはSMALLのままなので、縦センタリングもSMALLのグリフで測る
+     * (metrics.glyph は BODY 相当。以前はこれを使っていて数px下にずれていた)。 */
+    int footer_y = ui->screen_h - ui->metrics.footer_h
+                    + (ui->metrics.footer_h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
 
     /* ステータス行の下からフッタ帯の上までを
      *   [同一ディレクトリのファイル一覧(P9)] -> [ビジュアライザ(F-14)]
@@ -984,8 +997,8 @@ static void draw_player(app_t *app) {
                                    content_w, row_h };
         const SDL_Color msg_bg = { 30, 30, 42, 255 };
         ui_fill_rect(ui, msg_bg_rect, msg_bg);
-        int msg_y = msg_bg_rect.y + (row_h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
-        ui_text_clipped(ui, x, msg_y, content_w, UI_TEXT_SMALL, err, app->status);
+        int msg_y = msg_bg_rect.y + (row_h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2;
+        ui_text_clipped(ui, x, msg_y, content_w, UI_TEXT_BODY, err, app->status);
     }
 
     /* 終了操作(SPEC 6.3「Menu長押し=終了」+ P6で追加したStart+Select代替)を

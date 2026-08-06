@@ -1712,6 +1712,106 @@ GitHub Release の本文を書く元も無かった。
 ユーザーが確認済み。
 https://github.com/ka-zuu/gbs-player/releases/tag/v1.0.0
 
+## Issue #3: Player画面の文字サイズ
+
+「けっこう文字が小さいところも多い。640:480前提にして、全体のバランスを
+整える」という Issue。着手前に 640x480（実機と同じ `scale = 1.0`）で
+`--screenshot` を4画面分撮って現状を確認したところ、原因ははっきりしていた。
+
+`UI_TEXT_SMALL` は `8 * 1 * scale` = **8px**、つまり内蔵の 8x8 ビットマップ
+フォントの等倍である。そして Player 画面は曲名（TITLE = 24px）以外の
+ほぼ全部の情報が、この 8px に載っていた——再生位置・トラック番号・
+作者/著作権・`PLAYING repeat:… shuffle:…`・フッタ。他の画面
+（Browser / TrackList / Settings）はリスト行が BODY = 16px なので、
+実際に「異様に小さい」のは Player の情報ブロックだけだった。
+
+ユーザーに確認して対象を絞った:
+
+- 直すのは Player の Track・再生時間まわり。**フッタは小さいままでよい**
+- Browser / TrackList / Settings のリスト行（16px）は現状維持
+- ドットが崩れないよう **8 の整数倍**を保つ
+- Player で一覧と波形が競合するなら一覧を優先
+
+### サイズ段階の割り当てを変えるだけで済ませた
+
+`ui.h` のサイズ段階は既に 8 / 16 / 24px（1x / 2x / 3x）で、**どれも 8 の
+整数倍**になっている。つまり「整数倍を保ったまま大きくする」という要求は、
+`ui.c` にも `ui_metrics_compute()` にも手を入れず、`draw_player()` が
+どの段階を使うかを差し替えるだけで満たせる。中間サイズ（12px や 20px）を
+足す案もあったが、8x8 を 1.5 倍・2.5 倍すると行によって線が 1px と 2px に
+分かれて太さがムラになるため採らなかった。`SDL_HINT_RENDER_SCALE_QUALITY`
+を `"0"`（最近傍）にしているのと同じ理由である。
+
+結果、変更は `src/app.c` の `draw_player()` だけに収まった。
+`tests/test_ui_metrics.c` の期待値（`m.glyph == 16` など）も、
+他画面のレイアウトも一切影響を受けない。
+
+| 要素 | 変更前 | 変更後 | 640x480 |
+|---|---|---|---|
+| 曲名 | TITLE | 変更なし | 24px |
+| ゲーム名 | BODY | 変更なし | 16px |
+| author / copyright | SMALL | **BODY** | 8 → 16px |
+| `Track n/m` | SMALL | **BODY** | 8 → 16px |
+| `0:00 / 2:38` | SMALL | **TITLE** | 8 → 24px |
+| プログレスバー高 | `pad*2` | **`pad*3`** | 8 → 12px |
+| `PLAYING repeat:… shuffle:…` | SMALL | **BODY** | 8 → 16px |
+| 一時ステータスメッセージ | SMALL | **BODY** | 8 → 16px |
+| フッタ | SMALL | **変更なし** | 8px |
+
+**再生位置だけ TITLE（3x）に上げて曲名と同格にした。** 一番よく目をやる
+情報で、指摘の中心がここだったため。`Track n/m` は曲名の索引にすぎないので
+BODY（2x）に留め、「時間 > トラック番号」の階層を作っている。
+これで Player 画面は TITLE（曲名・再生位置）/ BODY（それ以外）/
+SMALL（フッタだけ）の3段階に整理された。
+
+### 一覧の行数も波形の高さも変わらない
+
+情報ブロックは文字が大きくなったぶん縦に伸びるが、**行数自体は増えて
+いない**（`Track n/m` と時間はもともと別々の行で、その後も別々のまま）。
+640x480 での y の推移:
+
+```
+y = pad                                     4
+曲名   TITLE   y += glyph(TITLE) + pad  ->  32
+ゲーム BODY    y += line_h              ->  52
+meta   BODY    y += line_h + pad        ->  76
+Track  BODY    y += line_h              ->  96
+時間   TITLE   y += glyph(TITLE) + pad  -> 124
+バー   pad*3   y += bar.h + pad*2       -> 144
+状態   BODY    y += line_h              -> 164
+band_h = (480 - footer_h 28) - 164 - pad = 284  ->  14行
+  一覧 = min(14 - PLAYER_WAVE_MIN_ROWS, PLAYER_LIST_MAX_ROWS) = 7行(140px)
+  波形 = 14 - 7 = 7行(140px)
+```
+
+一覧 7 行・波形 140px は変更前と同じ。したがって
+`PLAYER_LIST_MAX_ROWS` / `PLAYER_WAVE_MIN_ROWS` は触っていないし、
+P10 の「波形をフッタ近くまで大きく」という実機フィードバックへの対応も
+そのまま維持されている。ユーザー回答の「一覧を優先」は、低解像度で
+足りなくなったときに一覧へ先に配る既存の分配ロジックがそのまま満たす。
+
+### ついでに直した2点
+
+- **時間表示が `ui_text()` だった**。他の行は `ui_text_clipped()` なのに
+  ここだけクリップしておらず、長尺の m3u（分が3桁）で画面外へ出うる。
+  `trackno` / `status_line` も含めて `ui_text_clipped()` に揃えた
+- **フッタの縦センタリングが `ui->metrics.glyph`（= BODY 相当）基準だった**。
+  実際に描いているのは SMALL の文字なので、640x480 で 4px 下にずれていた。
+  `ui_glyph_size(ui, UI_TEXT_SMALL)` に直した
+
+### 検証
+
+ホストビルドの CTest 16件（`MUGBS_REQUIRE_SHELLCHECK=1`、SKIP なし）と
+ASan/UBSan ビルドの 15件がいずれも緑。CTest と同じ6解像度
+（320x240 / 480x320 / 640x480 / 720x720 / 1024x768 / 1280x720）で
+Player 画面を `--ui-script` + `--screenshot` で撮り、はみ出し・重なりが
+無いこと、一覧が7行あること、波形がフッタ直前まで出ていることを目視確認した。
+一時ステータスメッセージのオーバーレイは、壊した `.gbs` を置いた
+ディレクトリを開いて `Failed to open:` を出させ、320x240 でも行の中に
+収まっていることを確認した。
+
+**実機検証は必要**（レイアウトの実寸に関わる変更）。結果はここへ追記する。
+
 ## 検証手順
 
 ```sh
