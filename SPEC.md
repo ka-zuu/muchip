@@ -232,9 +232,9 @@ GBS/NSF系の拡張M3Uは以下の形式を取る（1行1トラック）：
 
 ```
 # コメント行
-Game.gbs::GBS,1,Title Screen,0:32,,0:05
+Game.gbs::GBS,0,Title Screen,0:32,,0:05
 Game.gbs::GBS,$02,Overworld,2:34,2:34,0:08
-Game.gbs::GBS,3,Battle,1:45
+Game.gbs::GBS,2,Battle,1:45
 ```
 
 フィールド（カンマ区切り、空欄あり）:
@@ -243,9 +243,22 @@ Game.gbs::GBS,3,Battle,1:45
 <file>::<TYPE>,<track>,<title>,<time>,<loop>,<fade>,<artist>,<amp>
 ```
 
-- `<track>` は10進または `$` 始まりの16進
+- `<track>` は10進または `$` 始まりの16進。**どちらも0始まり**
+  （GBSの生のsubtrack索引と同じ。P12でこの前提に修正した。
+  `vendor/game-music-emu/gme/Gbs_Emu.cpp` の `flags_` パッチ参照）
 - `<time>` は `m:ss.mmm` 形式。`-` はループ扱い
 - 空欄は省略可
+
+> **10進トラック番号は0始まり（P12）**: 同梱の libgme (`game-music-emu`) は
+> 元々、10進で書かれたm3uトラック番号を「1始まり」とみなし内部で-1する
+> 仕様だった(`$`始まりの16進はこの対象外)。ところが実機で実際に使う
+> zophar.net配布パックのm3uは10進トラック番号が0始まり
+> (`GBS,0,...`が1曲目)であり、この前提と食い違って全曲が1つズレて
+> 再生される不具合があった。KSS形式が既に持っていた
+> `flags_ |= 0x02`(「10進もそのまま使う」)を`vendor/game-music-emu/gme/Gbs_Emu.cpp`
+> のGBS形式にも適用して修正した(GBSヘッダの`first_track`フィールドは
+> libgme内で一切参照されておらず、native表現が0始まりであることとも
+> 整合する)。詳細はPLAN.mdの「P12」を参照。
 
 #### 実装方針
 

@@ -170,6 +170,25 @@
       ショットでPlayerのステータス行(`repeat:xxx shuffle:on/off`)が
       正しく変わることを確認済み。**実機での「押しながら」の押下感自体は
       未確認**(下記「P11の残作業」参照)。
+- [x] **P12** — m3uの10進トラック番号が0始まりであることに対応(完了。
+      実機での最終確認は未実施)
+      ユーザーから「m3uで2曲目を再生すると、GBS内の1曲目が再生される」
+      という報告があり調査した。原因は同梱のlibgme(`game-music-emu`)側の
+      前提の誤りで、GBSのm3uにある10進トラック番号を「1始まり」とみなし
+      内部で-1していたため、実際に多くのGBS配布パック(zophar.net製など)
+      が使う「0始まり」の慣習と1つズレていた。
+      `vendor/game-music-emu/gme/Gbs_Emu.cpp`に1行のパッチ(KSSと同じ
+      `flags_ |= 0x02`)を当てて修正した。詳細は下記
+      「P12: m3uトラック番号の0始まり/1始まり問題」を参照。
+      **実機の実データ(Parodius (EMU).zophar)を使い、SDLのdiskオーディオ
+      ドライバでPCMを書き出してFFTピーク周波数を比較し、修正前は
+      「宣言0」が本来「宣言1」の音(441Hz)ではなく別の不正な音(329Hz。
+      不正index -1 由来)を再生していたこと、修正後は「宣言0」が
+      正しく441Hz(旧「宣言1」と統計値まで一致)、「宣言1」が新たな
+      330Hzになったことを実測で確認した。** ctest 16件すべて緑
+      (タイトルだけを見ていた既存テストの10進トラック番号を0始まりへ
+      更新)、ASan/UBSanビルドでも緑。**実機muxappでの最終的な耳での
+      確認はこれから**(下記「P12の残作業」参照)。
 
 ## P5の設計判断（SPEC 4.2/6章 との差分・前倒し）
 
@@ -1348,6 +1367,146 @@ Playerのステータス行が`repeat:none shuffle:on`のように正しく変�
    (Yを離せば通常どおり動くこと)
 5. GameControllerが実機で認識されている状態で、Y+D-Padの組み合わせが
    キーボードと同じように機能すること
+
+## P12: m3uトラック番号の0始まり/1始まり問題
+
+P11を実機で確認したユーザーから「m3uで2曲目を再生すると、GBS内の1曲目が
+再生される」という報告があった。
+
+### 原因
+
+同梱している`vendor/game-music-emu`(libgme)は、m3uに10進数で書かれた
+トラック番号を「1始まり」とみなし、実際の索引として使う前に**内部で-1する**
+仕様になっている(`gme/Gme_File.cpp`の`Gme_File::remap_track_()`)。
+`$`始まりの16進数はこの-1の対象外(常に0始まりの生索引として扱われる)。
+
+```cpp
+if ( e.track >= 0 )
+{
+    *track_io = e.track;
+    if ( !(type_->flags_ & 0x02) )
+        *track_io -= e.decimal_track;   /* decimal_track: 10進で書かれていれば1、16進なら0 */
+}
+```
+
+`flags_ & 0x02`が立っている形式(現状KSSのみ、`gme/Kss_Emu.cpp`)はこの-1が
+適用されない。GBS(`gme/Gbs_Emu.cpp`)にはこのビットが立っておらず、
+常に10進トラック番号から-1される。
+
+実機の実データ(muOS機、`/mnt/sdcard/ROMS/VGM/GBS/Parodius (EMU).zophar/`)を
+SSHで確認したところ、各m3uの10進トラック番号は**0始まり**だった:
+
+```
+01 Parodius Ondo.m3u        → DMG-PVJ.gbs::GBS,0,Parodius Ondo...
+02 Hello.m3u                 → DMG-PVJ.gbs::GBS,1,Hello...
+03 Theme of Vic Viper.m3u   → DMG-PVJ.gbs::GBS,2,...
+...
+28 Game Over!!.m3u            → DMG-PVJ.gbs::GBS,23,Game Over!!...
+```
+
+(zophar.net配布のGBSパックに共通の慣習。P9で複数m3uzip対応を入れたときの
+`Downtown Special...zophar.zip`も同じく`GBS,0,...`だった。)
+
+libgmeの「10進は1始まり」という前提とこの実際の慣習が食い違うため:
+- 宣言「1」(`02 Hello.m3u`)は 1-1=0 されて、本来「宣言0」
+  (`01 Parodius Ondo.m3u`)が指すはずの物理トラックを再生してしまう
+  (ユーザー報告の「2曲目→1曲目」はこれ)
+- 宣言「0」(`01 Parodius Ondo.m3u`)は 0-1=-1 という不正な索引になる。
+  `remap_track_()`の範囲チェックは`*track_io >= raw_track_count_`だけで
+  **負の値を弾かない**ため、エラーにはならず不正な索引のまま
+  `Gbs_Emu::start_track_()`の`cpu::r.a = track;`まで届く(8bitレジスタへの
+  暗黙変換で0xFFになり、意味の無いsubtrackが再生される)
+
+GBSヘッダには`header_.first_track`というフィールドが存在するが、
+`Gbs_Emu.cpp`内では一切参照されていない(`track_count`しか使わない)。
+つまりGBSのネイティブなsubtrack選択(`cpu::r.a`に渡す値)はもともと
+0始まりであり、「1始まり変換」という発想自体がGBSの実装と整合しない。
+
+### 修正
+
+`vendor/game-music-emu/gme/Gbs_Emu.cpp`の`gme_gbs_type_`の`flags_`に、
+KSSと同じ`0x02`ビットを立てた(1行差分)。これでGBSの10進トラック番号も
+16進と同様、-1されずそのまま生索引として使われる。
+
+```cpp
+static gme_type_t_ const gme_gbs_type_ =
+    { "Game Boy", 0, &new_gbs_emu, &new_gbs_file, "GBS", 0x01 | 0x02 };
+```
+
+`vendor/game-music-emu`は本物のgit submoduleなので、修正はsubmodule側で
+コミットしてから(ローカルのみ。upstream `libgme/game-music-emu`への
+push権限は無い)、親リポジトリ側でgitlinkを更新してコミットする2段階に
+なる。
+
+### なぜ実機のGBSヘッダ側を疑わなかったか
+
+`header_.first_track`が未使用という事実(grep一発で確認できた)が
+決め手になった。もしGBSが「1始まり」を前提にしていたなら、
+このフィールドを使って`cpu::r.a`に渡す値を補正するはずだが、
+そのようなコードは存在しない。よって「1始まり」はlibgmeのM3U実装が
+(おそらくGBS以外の一部形式を想定して)一律に適用した仮定であり、
+GBS自体の設計とは無関係と判断した。
+
+### なぜタイトルベースのテストではこのバグを検出できないか
+
+`Gme_File::track_info()`の「m3u情報で上書きする」ロジックは、
+`playlist[track]`(`track`は**remap前**、呼び出し側が渡したm3u内での
+出現順)から`song`(曲名)を取る。GBS自体の`track_info_()`は渡された
+トラック番号を一切使わない(GBSヘッダのgame/author/copyrightを
+返すだけ)。つまり**曲名は常に「m3u上の何番目のエントリか」だけで決まり、
+remapの正しさ(実際に鳴る物理トラック)を一切反映しない**。
+これが、既存のタイトルだけを見るテスト群がこのバグを何年も検出
+できなかった(そしてtest_playlist.cに新設したテストも、
+libgmeパッチの有無に関わらず成功することを確認済み)理由。
+
+### 検証方法(実データでのA/Bテスト)
+
+ユニットテストでは検出できないため、実機のSDカードから実際の
+`DMG-PVJ.gbs`と`01 Parodius Ondo.m3u`/`02 Hello.m3u`をSSH経由で
+ローカルへコピーし、`SDL_AUDIODRIVER=disk`(SDLの組み込み機能。
+実デバイスの代わりにPCMをファイルへ書き出す)を使って
+`--cli --repeat none --track 1`でレンダリングし、Pythonで
+FFTピーク周波数とRMSを比較した:
+
+```
+パッチ前 宣言0 (01 Ondo)  → 329Hz, rms 3721.3   (不正index由来の別物)
+パッチ前 宣言1 (02 Hello) → 441Hz, rms 3522.6
+パッチ後 宣言0 (01 Ondo)  → 441Hz, rms 3522.6   ← パッチ前の宣言1と統計値まで一致
+パッチ後 宣言1 (02 Hello) → 330Hz, rms 3836.4   ← 新たに出てきた別の値
+```
+
+「パッチ前の宣言1」と「パッチ後の宣言0」が数値まで一致していることが、
+「1つズレて再生されていた」ことと「そのズレが解消された」ことの
+直接証拠になっている。
+
+### 既存テストへの影響
+
+`tests/test_playlist.c`のm3uテスト用フィクスチャは、上記の修正前提(1始まり)
+で10進トラック番号を書いていたため(例: 3トラックのGBSに対し
+`GBS,3,...`のように末尾トラックを1始まりで指定)、パッチ適用後は
+範囲外(0始まりなら有効な索引は0..2)になって落ちた。全て0始まりに
+書き換えた(`test_sidecar_m3u`/`test_open_m3u_directly`/
+`test_multi_file_and_missing`/`test_zip_multiple_m3u`/`test_zip_single_m3u`)。
+16進を使う`test_hex_track_number`はこの修正の影響を受けないため
+変更していない。`tests/test_m3u.c`は`m3u_split_segments()`
+(ファイル名だけを見るセグメント分割ロジック)の単体テストで、
+トラック番号自体は解釈しないため無関係(変更不要)。
+
+## P12の残作業（実機検証）
+
+ホスト側の修正・実データでのA/B検証までは完了しているが、
+**実機muxappでの最終的な耳での確認はまだ**。`.muxapp`を作って投入し、
+以下を確認すること:
+
+1. `Parodius (EMU).zophar`パック(またはユーザーが実際に使っている他の
+   zophar.net配布パック)を開き、`01`から`28`まで順に再生して、
+   曲名(m3uファイル名)と実際に鳴る曲が対応していること
+   (「2曲目を再生すると1曲目が鳴る」というズレが解消されていること)
+2. P9で扱った複数m3uzip(`Downtown Special...zophar.zip`)も、
+   `GBS,0,...`始まりの実データだったため、このパッチの影響を受ける。
+   18曲が正しい順・正しい曲で再生されることを再確認する
+3. 16進トラック番号を使うm3u(あれば)がこれまでどおり正しく再生されること
+   (このパッチの影響を受けないはずだが、実データで念のため確認)
 
 ## 検証手順
 
