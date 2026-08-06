@@ -76,14 +76,20 @@ add_executable(gen_fixture_gbs gen_fixture_gbs.c)
 
 set(UI_SMOKE_DIR ${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_fixtures)
 set(UI_SMOKE_GBS ${UI_SMOKE_DIR}/Game.gbs)
+# P9: Player画面のファイル一覧を動かすには2つ以上ファイルが要る(1つだと
+# カーソルが動かず、折り返しも決定も何も踏めない)。
+# strcasecmp("Game.gbs","Game2.gbs") は '.'(0x2E) < '2'(0x32) なので
+# Game.gbs が添字0のまま = スクリプト先頭の A の挙動は従来どおり。
+set(UI_SMOKE_GBS2 ${UI_SMOKE_DIR}/Game2.gbs)
 add_custom_command(
-    OUTPUT ${UI_SMOKE_GBS}
+    OUTPUT ${UI_SMOKE_GBS} ${UI_SMOKE_GBS2}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${UI_SMOKE_DIR}
     COMMAND gen_fixture_gbs ${UI_SMOKE_GBS} 2
+    COMMAND gen_fixture_gbs ${UI_SMOKE_GBS2} 3
     DEPENDS gen_fixture_gbs
-    COMMENT "Generating synthetic GBS fixture for UI smoke test"
+    COMMENT "Generating synthetic GBS fixtures for UI smoke test"
 )
-add_custom_target(ui_smoke_fixture ALL DEPENDS ${UI_SMOKE_GBS})
+add_custom_target(ui_smoke_fixture ALL DEPENDS ${UI_SMOKE_GBS} ${UI_SMOKE_GBS2})
 
 # P6: SPEC 6.2「解像度非依存」の完了条件(複数解像度でレイアウトが破綻しない)を
 # CTestでも見るため、実機やその他muOS対応機種を代表する複数の解像度で

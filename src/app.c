@@ -437,24 +437,64 @@ static void handle_browser_input(app_t *app, input_action_t a) {
     }
 }
 
+/* Player画面のファイル一覧 (P9) のカーソルを delta 動かす。
+ * ファイル領域 [first_file, count-1] の中で端は反対側へ折り返す。
+ * 再生中の曲は変えない(決定は A)。 */
+static void player_list_move(app_t *app, int delta) {
+    int lo = app->player_list_first_file;
+    int hi = app->player_list.count - 1;
+    if (hi < lo) return; /* 一覧が空、または全部ディレクトリ */
+
+    int n = hi - lo + 1;
+    int rel = (app->player_list.selected - lo + delta) % n;
+    if (rel < 0) rel += n;
+    app->player_list.selected = lo + rel;
+    /* scroll は ui_draw_list() が selected に追従させるので触らない。 */
+}
+
+/* Player画面のファイル一覧でカーソルが指すファイルを開いて再生する (A)。 */
+static void player_list_open_selected(app_t *app) {
+    int lo = app->player_list_first_file;
+    int hi = app->player_list.count - 1;
+    if (hi < lo) return;
+    /* 既に鳴っているファイルなら何もしない(頭出しし直さない)。 */
+    if (app->player_list.selected == app->player_list_playing) return;
+
+    char path[MUGBS_PATH_MAX];
+    if (browser_path_at(&app->player_list, app->player_list.selected, path, sizeof(path)) != 0) {
+        return;
+    }
+
+    /* 成功すれば app_open_path() の中の app_sync_player_list() が、実際に
+     * 開けたファイルからカーソルと player_list_playing を作り直す。
+     * 失敗すれば app_open_path() は status を出して即 return するだけなので、
+     * カーソルはここに残り、黄色い印は前の(いま鳴っている)ファイルを
+     * 指したままになる = 一覧と実際の再生が食い違わない。 */
+    app_open_path(app, path);
+}
+
 static void handle_player_input(app_t *app, input_action_t a) {
     switch (a) {
-        /* UP/DOWN はP9で音量調整を廃止して空いた。P9 C5でファイル一覧の
-         * カーソル移動に割り当てる。 */
-        case INPUT_LEFT: {
-            int pos = player_tell_ms(&app->player) - 5000;
-            if (pos < 0) pos = 0;
-            player_seek(&app->player, pos);
+        /* UP/DOWN: 中央のファイル一覧のカーソル移動(端で折り返す)。
+         * P9で音量調整を廃止して空いたスロットを再利用している。 */
+        case INPUT_UP:
+            player_list_move(app, -1);
             break;
-        }
-        case INPUT_RIGHT: {
-            int dur = player_current_duration_ms(&app->player);
-            int pos = player_tell_ms(&app->player) + 5000;
-            if (dur > 0 && pos > dur) pos = dur;
-            player_seek(&app->player, pos);
+        case INPUT_DOWN:
+            player_list_move(app, 1);
             break;
-        }
+        case INPUT_LEFT:
+            player_prev_track(&app->player);
+            break;
+        case INPUT_RIGHT:
+            player_next_track(&app->player);
+            break;
         case INPUT_A:
+            /* 決定: カーソルが指すファイルを開く(Browser/TrackListと同じく
+             * A=決定で統一する。再生/一時停止は SELECT へ移した)。 */
+            player_list_open_selected(app);
+            break;
+        case INPUT_SELECT:
             player_toggle_pause(&app->player);
             break;
         case INPUT_B:
@@ -472,12 +512,19 @@ static void handle_player_input(app_t *app, input_action_t a) {
             app->cfg->repeat_mode = next;
             break;
         }
-        case INPUT_L1:
-            player_prev_track(&app->player);
+        case INPUT_L1: {
+            int pos = player_tell_ms(&app->player) - 5000;
+            if (pos < 0) pos = 0;
+            player_seek(&app->player, pos);
             break;
-        case INPUT_R1:
-            player_next_track(&app->player);
+        }
+        case INPUT_R1: {
+            int dur = player_current_duration_ms(&app->player);
+            int pos = player_tell_ms(&app->player) + 5000;
+            if (dur > 0 && pos > dur) pos = dur;
+            player_seek(&app->player, pos);
             break;
+        }
         case INPUT_L2:
             app_prev_source(app);
             break;
