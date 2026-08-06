@@ -34,7 +34,7 @@ typedef struct {
     double stereo_depth;
     int eq_bass;   /* P8で音に反映する (F-20) */
     int eq_treble; /* 同上 */
-    int volume;    /* 0-100 */
+    /* ソフトウェア音量(volume)はP9で廃止した。常に最大出力(audio.h参照)。 */
 
     /* [ui] */
     int show_all_files;

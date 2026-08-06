@@ -12,8 +12,7 @@ A       # Browser: Game.gbs を開く -> Player
 X       # Player -> TrackList
 DOWN    # カーソルをトラック2へ
 A       # トラック2へジャンプ再生 -> Player
-START   # Player -> Settings (P6)
-DOWN    # Volume -> Repeat
+START   # Player -> Settings (P6)。カーソルは先頭の Repeat にある
 RIGHT   # Repeat の値を変える(none/one/all を循環)
 DOWN    # Repeat -> Stereo depth
 RIGHT   # Stereo depth を変える(再生中のemuへ即時反映されるパス)

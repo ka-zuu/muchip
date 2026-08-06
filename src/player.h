@@ -37,7 +37,7 @@ typedef struct {
      * player_shutdown() まで生存させること。P5までは値コピーだったが、
      * 複数のコピーが独立に書き換えられて食い違う問題(P6で発覚)を避けるため
      * ポインタ化した。audioコールバックスレッドはこれを一切参照しないため
-     * (audio.c が触るのは a->emu と a->volume のみ)、ポインタ化しても
+     * (audio.c が触るのは a->emu のみ)、ポインタ化しても
      * 新たなスレッド間共有は生じない。値を変えたら player_apply_config() を
      * 呼ぶこと。 */
     const mugbs_config_t *config;
@@ -99,7 +99,7 @@ int player_tell_ms(player_t *p);
 int player_current_duration_ms(const player_t *p);
 
 /* p->config が指す値の変更を、いま反映できる範囲で反映する。
- * volume は即時、stereo_depth は現在開いている emu へ即時(audio_lock で
+ * stereo_depth / eq_* は現在開いている emu へ即時(audio_lock で
  * 保護。Effects_Buffer::config() は再確保を行わないため再生中に呼んでも
  * 安全 -- vendor/game-music-emu/gme/Effects_Buffer.cpp 参照)。
  * repeat_mode は次のトラック送りから、default_length_sec/fade_length_ms は

@@ -46,7 +46,7 @@ typedef struct {
 /* 並び順がそのまま config_save() の出力順になる。
  * クランプ範囲は「手で書き換えられた不正な値でプログラムが壊れない」ことを
  * 保証するためのもの。例えば sample_rate=0 は audio_init() を失敗させ、
- * volume=999 は audio.c のソフトミキサを飽和させる。 */
+ * eq_bass=999 は gme_set_equalizer() に無茶な値を渡すことになる。 */
 static const config_key_t KEYS[] = {
     { "playback", "default_length_sec", CFG_INT,    offsetof(mugbs_config_t, default_length_sec), 1, 3600,  0 },
     { "playback", "fade_length_ms",     CFG_INT,    offsetof(mugbs_config_t, fade_length_ms),     0, 60000, 0 },
@@ -56,7 +56,6 @@ static const config_key_t KEYS[] = {
     { "audio", "stereo_depth", CFG_DOUBLE, offsetof(mugbs_config_t, stereo_depth), 0.0,  1.0, 0 },
     { "audio", "eq_bass",      CFG_INT,    offsetof(mugbs_config_t, eq_bass),     -100, 100, 0 },
     { "audio", "eq_treble",    CFG_INT,    offsetof(mugbs_config_t, eq_treble),   -100, 100, 0 },
-    { "audio", "volume",       CFG_INT,    offsetof(mugbs_config_t, volume),         0, 100, 0 },
 
     { "ui", "show_all_files", CFG_BOOL, offsetof(mugbs_config_t, show_all_files), 0, 0, 0 },
     { "ui", "last_path",      CFG_STR,  offsetof(mugbs_config_t, last_path),      0, 0, MUGBS_PATH_MAX },
@@ -168,7 +167,6 @@ void config_set_defaults(mugbs_config_t *c) {
     c->stereo_depth = 0.15;
     c->eq_bass = 0;
     c->eq_treble = 0;
-    c->volume = 80;
 
     c->show_all_files = 0;
     c->last_path[0] = 0;

@@ -327,16 +327,8 @@ static void handle_browser_input(app_t *app, input_action_t a) {
 
 static void handle_player_input(app_t *app, input_action_t a) {
     switch (a) {
-        case INPUT_UP:
-            app->cfg->volume += 5;
-            if (app->cfg->volume > 100) app->cfg->volume = 100;
-            player_apply_config(&app->player);
-            break;
-        case INPUT_DOWN:
-            app->cfg->volume -= 5;
-            if (app->cfg->volume < 0) app->cfg->volume = 0;
-            player_apply_config(&app->player);
-            break;
+        /* UP/DOWN はP9で音量調整を廃止して空いた。P9 C5でファイル一覧の
+         * カーソル移動に割り当てる。 */
         case INPUT_LEFT: {
             int pos = player_tell_ms(&app->player) - 5000;
             if (pos < 0) pos = 0;
@@ -449,7 +441,6 @@ typedef struct {
 static const char *const REPEAT_MODE_NAMES[] = { "none", "one", "all" };
 
 static const setting_def_t SETTINGS[] = {
-    { "Volume",          SET_INT,    offsetof(mugbs_config_t, volume),             0,   100,   5, NULL, 0, NULL },
     { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3, NULL },
     { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0, NULL },
     { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0, NULL },
@@ -482,7 +473,7 @@ static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
 }
 
 /* Settingsで変更した値を、いま反映できる範囲で反映する。呼び出し側
- * (adjust_setting)が値変更のたびに呼ぶ。stereo_depth/volumeは
+ * (adjust_setting)が値変更のたびに呼ぶ。stereo_depth/eq_*は
  * player_apply_config()経由で即時、default_length_secはlength_known==0の
  * エントリのduration_msだけをplaylist_apply_default_length()で
  * 再計算する(次トラックからフェード自体が新しい値になるのは
@@ -679,8 +670,7 @@ static void draw_player(app_t *app) {
     const char *state_label = app->player.state == PLAYER_PAUSED ? "PAUSED" :
                                app->player.state == PLAYER_PLAYING ? "PLAYING" : "STOPPED";
     char status_line[128];
-    snprintf(status_line, sizeof(status_line), "%s  repeat:%s  vol:%d",
-             state_label, repeat_label, app->cfg->volume);
+    snprintf(status_line, sizeof(status_line), "%s  repeat:%s", state_label, repeat_label);
     ui_text(ui, x, y, UI_TEXT_SMALL, dim, status_line);
     y += ui->metrics.line_h;
 

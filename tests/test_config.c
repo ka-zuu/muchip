@@ -40,7 +40,6 @@ static int test_defaults(void) {
     CHECK(near(c.stereo_depth, 0.15));
     CHECK(c.eq_bass == 0);
     CHECK(c.eq_treble == 0);
-    CHECK(c.volume == 80);
     CHECK(c.show_all_files == 0);
     CHECK(c.last_path[0] == 0);
     CHECK(c.gamecontroller_db[0] == 0);
@@ -62,20 +61,16 @@ static int test_spec_sample(void) {
         "stereo_depth = 0.15\n"
         "eq_bass      = 0\n"
         "eq_treble    = 0\n"
-        "volume       = 80\n"
         "\n"
         "[ui]\n"
         "show_all_files = false\n"
-        "last_path      = /mnt/mmc/MUSIC\n"
-        "\n"
-        "[voices]\n"
-        "mute_mask = 0\n";
+        "last_path      = /mnt/mmc/MUSIC\n";
 
     mugbs_config_t c;
     config_set_defaults(&c);
     /* 既定値と区別が付くよう、あえて全部ずらしてから読ませる。 */
     c.default_length_sec = 1;
-    c.volume = 1;
+    c.eq_bass = 1;
     c.repeat_mode = REPEAT_NONE;
     c.show_all_files = 1;
 
@@ -86,9 +81,36 @@ static int test_spec_sample(void) {
     CHECK(c.repeat_mode == REPEAT_ALL);
     CHECK(c.sample_rate == 44100);
     CHECK(near(c.stereo_depth, 0.15));
-    CHECK(c.volume == 80);
+    CHECK(c.eq_bass == 0);
     CHECK(c.show_all_files == 0);
     CHECK_STREQ(c.last_path, "/mnt/mmc/MUSIC");
+    return 0;
+}
+
+/* --- 旧バージョンが書いた config.ini をそのまま読めること ---------------
+ *
+ * 実機には P8以前の mugbs が書いた [audio] volume と [voices] mute_mask を
+ * 含む config.ini が残っている。どちらも削除済みの機能なので未知のキーとして
+ * 黙って飛ばし、前後の有効なキーは通常どおり効くこと。 */
+static int test_legacy_keys_from_older_version(void) {
+    mugbs_config_t c;
+    config_set_defaults(&c);
+
+    CHECK(load_str(&c,
+        "[audio]\n"
+        "stereo_depth = 0.5\n"
+        "volume = 80\n"          /* P9で廃止 */
+        "eq_bass = 25\n"
+        "\n"
+        "[voices]\n"             /* P8で廃止 */
+        "mute_mask = 3\n"
+        "\n"
+        "[ui]\n"
+        "show_all_files = true\n") == 0);
+
+    CHECK(near(c.stereo_depth, 0.5));
+    CHECK(c.eq_bass == 25);       /* volume を挟んでも後続のキーが効く */
+    CHECK(c.show_all_files == 1); /* 未知セクションの後も読めている */
     return 0;
 }
 
@@ -107,10 +129,10 @@ static int test_unknown_keys_are_skipped(void) {
         "whatever = 1\n"
         "\n"
         "[audio]\n"
-        "volume = 33\n") == 0);
+        "eq_treble = 33\n") == 0);
 
     CHECK(c.default_length_sec == 42);
-    CHECK(c.volume == 33);
+    CHECK(c.eq_treble == 33);
     return 0;
 }
 
@@ -141,20 +163,20 @@ static int test_clamping(void) {
     config_set_defaults(&c);
     CHECK(load_str(&c,
         "[audio]\n"
-        "volume = 999\n"
+        "eq_bass = 999\n"
         "stereo_depth = 5.0\n"
         "[playback]\n"
         "sample_rate = 0\n") == 0);
-    CHECK(c.volume == 100);
+    CHECK(c.eq_bass == 100);
     CHECK(near(c.stereo_depth, 1.0));
     CHECK(c.sample_rate == 8000);
 
     config_set_defaults(&c);
     CHECK(load_str(&c,
         "[audio]\n"
-        "volume = -5\n"
+        "eq_bass = -999\n"
         "stereo_depth = -1.0\n") == 0);
-    CHECK(c.volume == 0);
+    CHECK(c.eq_bass == -100);
     CHECK(near(c.stereo_depth, 0.0));
     return 0;
 }
@@ -285,7 +307,6 @@ static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
     CHECK(near(a->stereo_depth, b->stereo_depth));
     CHECK(a->eq_bass == b->eq_bass);
     CHECK(a->eq_treble == b->eq_treble);
-    CHECK(a->volume == b->volume);
     CHECK(a->show_all_files == b->show_all_files);
     CHECK_STREQ(a->last_path, b->last_path);
     CHECK_STREQ(a->gamecontroller_db, b->gamecontroller_db);
@@ -321,7 +342,6 @@ static int test_roundtrip_mutated(void) {
     c.stereo_depth = 0.625;
     c.eq_bass = -20;
     c.eq_treble = 35;
-    c.volume = 65;
     c.show_all_files = 1;
     snprintf(c.last_path, sizeof(c.last_path), "/mnt/mmc/MUSIC/Game.gbs");
     snprintf(c.gamecontroller_db, sizeof(c.gamecontroller_db), "/usr/lib/gamecontrollerdb.txt");
@@ -345,6 +365,7 @@ static int test_save_failure(void) {
 int main(void) {
     if (test_defaults()) return 1;
     if (test_spec_sample()) return 1;
+    if (test_legacy_keys_from_older_version()) return 1;
     if (test_unknown_keys_are_skipped()) return 1;
     if (test_malformed_lines()) return 1;
     if (test_clamping()) return 1;

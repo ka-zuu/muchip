@@ -107,7 +107,6 @@ int player_init(player_t *p, const mugbs_config_t *config) {
     if (audio_init(&p->audio, config->sample_rate) != 0) {
         return -1;
     }
-    audio_set_volume(&p->audio, config->volume);
     return 0;
 }
 
@@ -280,9 +279,6 @@ int player_current_duration_ms(const player_t *p) {
 }
 
 void player_apply_config(player_t *p) {
-    /* volume: atomic なのでロック不要。 */
-    audio_set_volume(&p->audio, p->config->volume);
-
     /* stereo_depth / eq_*: 現在開いているemuへ即時反映する。
      * Effects_Buffer::config() も Classic_Emu::set_equalizer_() も
      * 再確保を行わないため、再生中に呼んでも安全(vendor/game-music-emu/gme/
