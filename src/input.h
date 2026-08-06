@@ -55,6 +55,15 @@ typedef enum {
     INPUT_START,
     INPUT_SELECT,
     INPUT_QUIT, /* ウィンドウを閉じる / Menu長押し相当 */
+
+    /* Yを押しながらD-padを押した「コンボ」操作 (P11)。Player画面で
+     * Settingsへ入らずリピート/シャッフルを素早く変えるショートカットに使う
+     * (input_t.y_held 参照)。Y単体(押して離すだけ)はもう何もしない
+     * (以前はリピートモード切替だったが、Y+LEFT/RIGHTへ移した)。 */
+    INPUT_Y_LEFT,
+    INPUT_Y_RIGHT,
+    INPUT_Y_UP,
+    INPUT_Y_DOWN,
 } input_action_t;
 
 typedef struct {
@@ -78,6 +87,12 @@ typedef struct {
      * index: 0=UP, 1=DOWN, 2=LEFT, 3=RIGHT */
     int dpad_held[4];
     Uint32 dpad_next_repeat_at[4]; /* 次にリピートを発火するSDL_GetTicks()時刻 */
+
+    /* Yボタン/キーが押されている間だけ立つ(P11)。D-padのイベントを
+     * INPUT_UP/DOWN/LEFT/RIGHT ではなく INPUT_Y_UP/DOWN/LEFT/RIGHT として
+     * 返すためのモディファイア。押した順序に依存しない(dpad_held[]の
+     * リピート合成時にもその都度この値を見て組み替える)。 */
+    int y_held;
 
     /* START+SELECT同時押しでの終了(SPEC 6.3「Menu長押し=終了」の代替)用。
      * GameController の GUIDE ボタン(muOSのMENU相当)は muOS 側のオーバーレイに

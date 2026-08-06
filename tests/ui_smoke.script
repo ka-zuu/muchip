@@ -17,6 +17,10 @@ DOWN    # 末尾からDOWN -> 先頭(Game.gbs)へ折り返す
 A       # 決定。Game.gbs へ戻る
 SELECT  # 一時停止 (P9でAから移した)
 SELECT  # 再開
+Y_RIGHT # Player: Y+RIGHTでRepeatを直接進める (P11。none/one/allを循環)
+Y_LEFT  # Y+LEFTで1つ戻す
+Y_UP    # Y+UPでShuffleをon
+Y_DOWN  # Y+DOWNでShuffleをoff
 X       # Player -> TrackList
 DOWN    # カーソルをトラック2へ
 A       # トラック2へジャンプ再生 -> Player

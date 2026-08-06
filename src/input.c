@@ -41,6 +41,22 @@ static input_action_t dpad_action(int index) {
     }
 }
 
+/* P11: in->y_held が立っていれば、D-pad方向のアクションをY+方向の
+ * コンボ(INPUT_Y_*)へ差し替える。D-pad以外(Y自身を含む)はそのまま返す。
+ * ボタンの押下イベントだけでなく、dpad_held[]の長押しリピート合成
+ * (下記 input_poll() 参照)からも呼ばれるため、「Dpadを押しっぱなしの
+ * 途中でYを押した/離した」場合もその時点のy_heldで正しく組み替わる。 */
+static input_action_t apply_y_modifier(const input_t *in, input_action_t a) {
+    if (!in->y_held) return a;
+    switch (a) {
+        case INPUT_LEFT:  return INPUT_Y_LEFT;
+        case INPUT_RIGHT: return INPUT_Y_RIGHT;
+        case INPUT_UP:    return INPUT_Y_UP;
+        case INPUT_DOWN:  return INPUT_Y_DOWN;
+        default:          return a;
+    }
+}
+
 static input_action_t key_to_action(SDL_Keycode k) {
     switch (k) {
         case SDLK_UP:     return INPUT_UP;
@@ -205,7 +221,7 @@ int input_poll(input_t *in, input_action_t *out) {
         for (int i = 0; i < 4; i++) {
             if (in->dpad_held[i] && now >= in->dpad_next_repeat_at[i]) {
                 in->dpad_next_repeat_at[i] = now + DPAD_REPEAT_RATE_MS;
-                *out = dpad_action(i);
+                *out = apply_y_modifier(in, dpad_action(i));
                 return 1;
             }
         }
@@ -219,6 +235,8 @@ int input_poll(input_t *in, input_action_t *out) {
 
         case SDL_KEYDOWN: {
             input_action_t a = key_to_action(ev.key.keysym.sym);
+            if (a == INPUT_Y) in->y_held = 1; /* P11: 'S'キーを押している間 */
+
             /* 上下左右以外はキーリピートを無視する(押しっぱなしでA連打等の
              * 誤操作にならないようにする)。 */
             if (ev.key.repeat && a != INPUT_UP && a != INPUT_DOWN &&
@@ -226,12 +244,20 @@ int input_poll(input_t *in, input_action_t *out) {
                 *out = INPUT_NONE;
                 return 1;
             }
-            *out = a;
+            *out = apply_y_modifier(in, a);
+            return 1;
+        }
+
+        case SDL_KEYUP: {
+            if (key_to_action(ev.key.keysym.sym) == INPUT_Y) in->y_held = 0; /* P11 */
+            *out = INPUT_NONE;
             return 1;
         }
 
         case SDL_CONTROLLERBUTTONDOWN: {
             input_action_t a = controller_button_to_action(ev.cbutton.button);
+
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_Y) in->y_held = 1; /* P11 */
 
             int di = dpad_index(a);
             if (di >= 0) {
@@ -247,13 +273,14 @@ int input_poll(input_t *in, input_action_t *out) {
                 a = INPUT_QUIT;
             }
 
-            *out = a;
+            *out = apply_y_modifier(in, a);
             return 1;
         }
 
         case SDL_CONTROLLERBUTTONUP: {
             int di = dpad_index(controller_button_to_action(ev.cbutton.button));
             if (di >= 0) in->dpad_held[di] = 0;
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_Y) in->y_held = 0; /* P11 */
             if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) in->held_mask &= ~HELD_START;
             if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) in->held_mask &= ~HELD_SELECT;
             *out = INPUT_NONE;
@@ -294,6 +321,7 @@ int input_poll(input_t *in, input_action_t *out) {
                 in->controller = NULL;
                 /* 切断中に押しっぱなしと誤認して幽霊リピートを出し続けないように。 */
                 memset(in->dpad_held, 0, sizeof(in->dpad_held));
+                in->y_held = 0; /* P11: Yを押しっぱなしのまま切断された場合の保険 */
             }
             *out = INPUT_NONE;
             return 1;

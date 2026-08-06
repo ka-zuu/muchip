@@ -97,6 +97,8 @@ static input_action_t parse_action_name(const char *name) {
         { "A", INPUT_A }, { "B", INPUT_B }, { "X", INPUT_X }, { "Y", INPUT_Y },
         { "L1", INPUT_L1 }, { "R1", INPUT_R1 }, { "L2", INPUT_L2 }, { "R2", INPUT_R2 },
         { "START", INPUT_START }, { "SELECT", INPUT_SELECT }, { "QUIT", INPUT_QUIT },
+        { "Y_LEFT", INPUT_Y_LEFT }, { "Y_RIGHT", INPUT_Y_RIGHT },
+        { "Y_UP", INPUT_Y_UP }, { "Y_DOWN", INPUT_Y_DOWN },
     };
     for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
         if (strcmp(name, table[i].name) == 0) return table[i].action;
@@ -475,6 +477,22 @@ static void player_list_open_selected(app_t *app) {
     app_open_path(app, path);
 }
 
+/* Y+LEFT/RIGHT (P11): Settings画面に入らずRepeatモードを直接変える
+ * ショートカット。Settingsの並び(none/one/all)と同じ順に±1周させる。 */
+static void app_step_repeat_mode(app_t *app, int direction) {
+    const int n = 3; /* REPEAT_NONE, REPEAT_ONE, REPEAT_ALL */
+    int v = ((int)app->cfg->repeat_mode + direction) % n;
+    if (v < 0) v += n;
+    app->cfg->repeat_mode = (repeat_mode_t)v;
+}
+
+/* Y+UP/DOWN (P11): Shuffleを明示的にon/offする(トグルにしない)。
+ * D-padの長押しリピートでUP/DOWNが連射されても、同じ値を再代入するだけに
+ * なるようにするため(トグルだと押しっぱなしでちらつく)。 */
+static void app_set_shuffle(app_t *app, int on) {
+    app->cfg->shuffle = on ? 1 : 0;
+}
+
 static void handle_player_input(app_t *app, input_action_t a) {
     switch (a) {
         /* UP/DOWN: 中央のファイル一覧のカーソル移動(端で折り返す)。
@@ -506,14 +524,22 @@ static void handle_player_input(app_t *app, input_action_t a) {
             app->tracklist_sel = app->player.current_entry;
             app->screen = SCREEN_TRACKLIST;
             break;
-        case INPUT_Y: {
-            repeat_mode_t next = app->cfg->repeat_mode == REPEAT_NONE ? REPEAT_ONE :
-                                  app->cfg->repeat_mode == REPEAT_ONE ? REPEAT_ALL : REPEAT_NONE;
-            /* config はポインタで player と共有しているため、ここへの代入だけで
-             * 次の player_next_track()/player_prev_track() から反映される。 */
-            app->cfg->repeat_mode = next;
+        /* Y単体(押して離すだけ)はもう何もしない。Yを押しながらの
+         * LEFT/RIGHT/UP/DOWNだけが下記のコンボとして意味を持つ(P11)。
+         * config はポインタで player と共有しているため、ここへの代入だけで
+         * 次の player_next_track()/player_prev_track() から反映される。 */
+        case INPUT_Y_LEFT:
+            app_step_repeat_mode(app, -1);
             break;
-        }
+        case INPUT_Y_RIGHT:
+            app_step_repeat_mode(app, 1);
+            break;
+        case INPUT_Y_UP:
+            app_set_shuffle(app, 1);
+            break;
+        case INPUT_Y_DOWN:
+            app_set_shuffle(app, 0);
+            break;
         case INPUT_L1: {
             int pos = player_tell_ms(&app->player) - 5000;
             if (pos < 0) pos = 0;
