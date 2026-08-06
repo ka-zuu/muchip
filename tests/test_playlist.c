@@ -99,10 +99,12 @@ static int test_no_m3u_auto_naming(void) {
 static int test_sidecar_m3u(void) {
     char *gbs = path_in("sidecar.gbs");
     write_synthetic_gbs(gbs, 3);
+    /* 10進のトラック番号は0始まり(GBSの生のsubtrack索引と同じ。
+     * vendor/game-music-emu/gme/Gbs_Emu.cpp のflags_パッチ参照)。 */
     write_text_file(path_in("sidecar.m3u"),
-        "sidecar.gbs::GBS,1,Title Screen,0:32\n"
-        "sidecar.gbs::GBS,2,Overworld,2:34\n"
-        "sidecar.gbs::GBS,3,Battle,1:45\n");
+        "sidecar.gbs::GBS,0,Title Screen,0:32\n"
+        "sidecar.gbs::GBS,1,Overworld,2:34\n"
+        "sidecar.gbs::GBS,2,Battle,1:45\n");
 
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
@@ -118,14 +120,65 @@ static int test_sidecar_m3u(void) {
     return 0;
 }
 
+/* 実機で使っているzophar.net配布パック(Parodius (EMU).zophar)の実データを
+ * 確認したところ、各m3uの10進トラック番号は0始まりだった
+ * (例: "01 Parodius Ondo.m3u"が"GBS,0,..."、"02 Hello.m3u"が"GBS,1,..."、
+ * ...のように、1曲目から0で始まる)。
+ *
+ * ところが同梱しているgame-music-emu(libgme)は元々、10進のm3uトラック番号を
+ * 「1始まり」とみなして内部で-1する仕様だった(Gme_File::remap_track_()。
+ * 16進($始まり)はこの-1の対象外)。この前提が実際のファイルの0始まり
+ * 慣習と食い違い、宣言「0」は-1されて不正な索引(-1)になり、宣言「N」は
+ * 本来の(N-1)番目のトラックを再生してしまう、というズレが起きていた
+ * (ユーザー報告: 「m3uで2曲目を再生すると、GBS内の1曲目が再生される」)。
+ * vendor/game-music-emu/gme/Gbs_Emu.cpp の flags_ に 0x02
+ * (KSSと同じ「10進もそのまま使う」ビット)を立てるパッチで、GBSの10進の
+ * m3uトラック番号は0始まりのまま(-1されずに)使われるようにした。
+ *
+ * **このテストが検証できる範囲には限界がある**: GBSの
+ * `Gbs_Emu::track_info_()` は渡されたトラック番号を一切使わず(GBSヘッダの
+ * game/author/copyrightをそのまま返すだけ)、m3uロード時のtitle
+ * (`out->song`)も remap 後の値ではなく m3u ファイル上の位置
+ * (`playlist[track]`。track はこちらが渡した0始まりのループ添字で、
+ * remapの結果とは無関係)から取られる。そのため title の一致は
+ * remap(=実際に鳴る物理トラック)の正しさを一切証明しない
+ * (このテストは実際、flags_パッチを外した状態でも成功することを
+ * 確認済み)。ここでは「宣言0がクラッシュ/エラーにならず
+ * entry_countやtitleが崩れない」という限定的なスモークテストとして
+ * 残す。**物理トラックの選択が正しいことの検証は、実機で実際に
+ * Parodius (EMU).zopharパックを聴いて確認する(PLAN.md参照)。** */
+static int test_decimal_track_number_is_zero_based(void) {
+    char *gbs = path_in("zerobased.gbs");
+    write_synthetic_gbs(gbs, 3);
+    char *m3u = path_in("zerobased.m3u");
+    write_text_file(m3u,
+        "zerobased.gbs::GBS,0,First,0:10\n"
+        "zerobased.gbs::GBS,1,Second,0:10\n"
+        "zerobased.gbs::GBS,2,Third,0:10\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(m3u, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 3);
+    /* 修正前は宣言0がremapエラーになり"Track 01"にフォールバックしていた。 */
+    CHECK_STREQ(pl->entries[0].title, "First");
+    CHECK_STREQ(pl->entries[1].title, "Second");
+    CHECK_STREQ(pl->entries[2].title, "Third");
+
+    playlist_free(pl);
+    return 0;
+}
+
 /* T-03: .m3uを直接開く -> 同上。トラック順もm3uの記載順 */
 static int test_open_m3u_directly(void) {
     char *gbs = path_in("direct.gbs");
     write_synthetic_gbs(gbs, 3);
     char *m3u = path_in("direct.m3u");
     write_text_file(m3u,
-        "direct.gbs::GBS,3,Battle,1:45\n"   /* あえて記載順を入れ替える */
-        "direct.gbs::GBS,1,Title Screen,0:32\n");
+        "direct.gbs::GBS,2,Battle,1:45\n"   /* あえて記載順を入れ替える(0始まり) */
+        "direct.gbs::GBS,0,Title Screen,0:32\n");
 
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
@@ -144,7 +197,9 @@ static int test_open_m3u_directly(void) {
 /* T-04: 16進トラック番号($0A)を含むm3u -> エラーにならず曲名が反映される
  * (10番目の生トラックとして正しくremapされたことの間接証拠。
  * remapが失敗していればgme_track_info自体がエラーになりtitleが
- * "Track NN"にフォールバックするはず)。 */
+ * "Track NN"にフォールバックするはず)。16進は元々0始まりの生索引として
+ * 扱われる(decimal_trackフラグが立たないため-1されない)ので、
+ * flags_パッチの影響を受けない。 */
 static int test_hex_track_number(void) {
     char *gbs = path_in("hex.gbs");
     write_synthetic_gbs(gbs, 12); /* $0A=10番目が存在するよう十分な数を確保 */
@@ -172,10 +227,10 @@ static int test_multi_file_and_missing(void) {
     write_synthetic_gbs(gbs_b, 2);
     char *m3u = path_in("multi.m3u");
     write_text_file(m3u,
-        "multiA.gbs::GBS,1,A1,0:10\n"
-        "multiB.gbs::GBS,1,B1,0:10\n"
-        "does_not_exist.gbs::GBS,1,Ghost,0:05\n"
-        "multiA.gbs::GBS,2,A2,0:10\n");
+        "multiA.gbs::GBS,0,A1,0:10\n"
+        "multiB.gbs::GBS,0,B1,0:10\n"
+        "does_not_exist.gbs::GBS,0,Ghost,0:05\n"
+        "multiA.gbs::GBS,1,A2,0:10\n");
 
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
@@ -237,9 +292,9 @@ static int test_zip_multiple_m3u(void) {
     unsigned char gbs[SYNTHETIC_GBS_SIZE];
     build_synthetic_gbs(gbs, 3);
 
-    const char *m3u1 = "GAME.gbs::GBS,1,BGM #01,0:39,,10\n";
-    const char *m3u2 = "GAME.gbs::GBS,2,BGM #02,1:02,,10\n";
-    const char *m3u3 = "GAME.gbs::GBS,3,Jingle #01,0:05,,10\n";
+    const char *m3u1 = "GAME.gbs::GBS,0,BGM #01,0:39,,10\n";
+    const char *m3u2 = "GAME.gbs::GBS,1,BGM #02,1:02,,10\n";
+    const char *m3u3 = "GAME.gbs::GBS,2,Jingle #01,0:05,,10\n";
 
     /* 追加順(=中央ディレクトリ順)は 03, 01, 02 とバラバラにしておく。 */
     zip_member_t members[] = {
@@ -275,8 +330,8 @@ static int test_zip_single_m3u(void) {
     unsigned char gbs[SYNTHETIC_GBS_SIZE];
     build_synthetic_gbs(gbs, 2);
 
-    const char *m3u = "GAME.gbs::GBS,1,First,0:10\n"
-                       "GAME.gbs::GBS,2,Second,0:20\n";
+    const char *m3u = "GAME.gbs::GBS,0,First,0:10\n"
+                       "GAME.gbs::GBS,1,Second,0:20\n";
     zip_member_t members[] = {
         { "GAME.gbs",  gbs, sizeof(gbs) },
         { "GAME.m3u", m3u, strlen(m3u) },
@@ -303,6 +358,7 @@ int main(void) {
 
     if (test_no_m3u_auto_naming()) return 1;
     if (test_sidecar_m3u()) return 1;
+    if (test_decimal_track_number_is_zero_based()) return 1;
     if (test_open_m3u_directly()) return 1;
     if (test_hex_track_number()) return 1;
     if (test_multi_file_and_missing()) return 1;
