@@ -83,6 +83,7 @@
 | F-22 | テンポ調整（`gme_set_tempo`） |
 | F-23 | スリープタイマー |
 | F-24 | 画面消灯状態でのバックグラウンド再生 |
+| F-25 | シャッフル再生（エントリの再生順をランダム化する。P10で実装） |
 
 ---
 
@@ -311,10 +312,18 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 
 - `next_track()` はリピートモード（F-11）を考慮する
   - `REPEAT_NONE`: 最終トラックで STOPPED
-  - `REPEAT_ONE`: 同一トラックを再開
+  - `REPEAT_ONE`: 同一トラックを再開（シャッフルより優先する）
   - `REPEAT_ALL`: 先頭に戻る
 - 曲送りの際は必ず `SDL_LockAudioDevice()` で保護
 - フェード中（`gme_track_ended()` 直前）にユーザーが next を押した場合、即座に切り替える
+- シャッフル再生（F-25, P10）が有効なとき、`next_track()`/`prev_track()` の
+  「次/前」はシャッフル順（`shuffle.c` が管理する `[0, entry_count)` の
+  順列）に従う。`REPEAT_ALL` での周回時は次の周回のぶんだけ並びを作り直す
+  （同じ順番を繰り返さないため）。`REPEAT_ONE` はシャッフルより優先し、
+  常に現在のトラックを再開する。TrackListからのジャンプやL2/R2でのソース
+  切替のように next/prev を経由しない曲変更も、`player_play_entry()` の
+  中でシャッフル順の現在位置を同期し直すため、以降の next/prev はそこを
+  起点に進む。
 
 ---
 
@@ -327,7 +336,7 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 | **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.m3u` `.zip` のみ表示（設定で全表示可） |
 | **Player** | 曲名・ゲーム名・作者・著作権・トラック `n/N`・経過/全体時間・シークバー・**現在のファイルが属するディレクトリのファイル一覧（中央。Browserと同じ拡張子フィルタ。ディレクトリは出さない。カーソルを青、再生中のファイルを黄でハイライト）**・波形ビジュアライザ（下部） |
 | **TrackList** | 現在のファイルの全トラック一覧。直接ジャンプ可能 |
-| **Settings** | デフォルト曲長・リピート・ステレオ深度・EQ |
+| **Settings** | リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・デフォルト曲長・Fade・Show all files。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10） |
 
 > P8で実装したチャンネルミュート(F-10)はユーザー判断により削除済み。
 > 音量調整も同様の理由（本体ハードウェア音量と非連動で紛らわしい）で
@@ -376,6 +385,11 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 > `input.c` が押下状態と経過時間を自前で追跡し、長押し中は
 > UP/DOWN/LEFT/RIGHTを一定間隔で再送する（初回350ms後、以降70ms間隔）。
 
+> **Settings画面の `X`（P10）**: 上表はBrowser/Player限定だが、Settings画面
+> でも `X` を使う。全項目を既定値に戻す確認ダイアログを開き、`A`で確定
+> （`show_all_files`等も含めSETTINGS[]に載っている項目だけを戻す。
+> `last_path`やコントローラ設定は対象外）、`B`でキャンセルする。
+
 ---
 
 ## 7. 設定ファイル
@@ -387,6 +401,7 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 default_length_sec = 150   ; 曲長不明時の再生秒数
 fade_length_ms     = 8000
 repeat_mode        = all   ; none | one | all
+shuffle            = false ; シャッフル再生 (F-25, P10)
 sample_rate        = 44100
 
 [audio]

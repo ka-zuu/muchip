@@ -4,9 +4,10 @@ muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック�
 （曲名・曲長・ループ指定）を正しく扱う。詳細仕様は [`SPEC.md`](./SPEC.md)、
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
-**P0〜P8 完了（v1.0.0）**。SPEC の MUST 要件（F-01〜F-08）に加え、
-SHOULD/NICE 要件のうち F-14 ビジュアライザ・F-20 EQ を実装済み
-（F-10 チャンネルミュートは実装した上で不要と判断し削除した。`PLAN.md` 参照）。
+**P0〜P10 完了（v1.0.0 + 実機フィードバック対応）**。SPEC の MUST 要件
+（F-01〜F-08）に加え、SHOULD/NICE 要件のうち F-14 ビジュアライザ・F-20 EQ・
+F-25 シャッフル再生を実装済み（F-10 チャンネルミュートは実装した上で
+不要と判断し削除した。`PLAN.md` 参照）。
 SDL2 の Browser/Player/TrackList/Settings 画面をホスト上でキーボード操作から
 通しで確認でき、`config.ini` の読み書き（終了時オートセーブ・直近パスの
 記憶）にも対応する。CLI ハーネス（`--list`/`--cli`。CI・自動検証用）も
@@ -75,7 +76,7 @@ ctest --test-dir build --output-on-failure
 | `←` `→` | ページ送り | 前/次トラック | ページ送り | 値を増減 |
 | `Z` (A相当) | 開く | 決定(カーソルのファイルを開く) | ジャンプ再生 | 値を増やす |
 | `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る | 保存して戻る |
-| `A` (X相当) | — | TrackListを開く | Playerへ戻る | — |
+| `A` (X相当) | — | TrackListを開く | Playerへ戻る | リセット確認ダイアログ |
 | `S` (Y相当) | — | リピートモード切替 | — | — |
 | `Q`/`W` (L1/R1) | — | シーク -5s/+5s | — | — |
 | `1`/`2` (L2/R2) | — | 前/次ソース | — | — |
@@ -100,10 +101,17 @@ Player画面の中央には、いま開いているファイルが置かれて�
 
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
-意図的に広げてある。`PLAN.md` 参照）。Repeat・Stereo depth・
-**EQ bass**・**EQ treble**・Default length・Fade・Show all files の7項目を
+意図的に広げてある。`PLAN.md` 参照）。Repeat・**Shuffle**・Stereo depth・
+**EQ bass**・**EQ treble**・Default length・Fade・Show all files の8項目を
 編集でき、抜けるときとアプリ終了時に `config.ini` へ自動保存する
-（`sample_rate` はデバイス再オープンが必要なため対象外）。
+（`sample_rate` はデバイス再オープンが必要なため対象外）。`X`（キーボードは
+`A`）でこれら8項目を一括で既定値に戻す確認ダイアログを開ける
+（`last_path`やコントローラ設定など、Settings画面に出てこない値は対象外）。
+
+Shuffle を有効にすると、次/前トラック（自動送りも含む）がランダムな順で
+進む。1周（全エントリを1回ずつ）したら Repeat が `all` なら次の周のために
+並びを作り直し、`none`なら停止する（順送りのときと同じ考え方）。
+`Repeat: one` はシャッフルより優先し、常に同じトラックを繰り返す。
 
 実機の物理ボタンでの終了は **GUIDEボタン単体、または Start+Select 同時押し**
 （SPEC 6.3「Menu長押し=終了」の代替。GUIDEがmuOS側のオーバーレイに
