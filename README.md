@@ -302,6 +302,15 @@ strip無し生成も指定できる（`ctest -R test_package` が構造検証に
 - `vendor/game-music-emu`（libgme）: git submodule。LGPL/GPL（同梱の
   `license.txt` / `license.gpl2.txt` を参照）。GBS デコードと拡張M3U解析を
   委譲している。自前で GB APU は実装していない。
+
+  **upstream ではなくフォーク https://github.com/ka-zuu/game-music-emu の
+  `mugbs` ブランチを参照している。** P12 で `gme/Gbs_Emu.cpp` に独自パッチ
+  （10進の m3u トラック番号を 0 始まりとして扱う。upstream は 1 始まり前提で
+  1 を引くため、zophar.net 配布の GBS パックで 1 曲ずれる）を当てており、
+  そのコミットは upstream に存在しないため。パッチの内容と実証手順は
+  当該コミットのメッセージと `PLAN.md` の P12 の節を参照。
+  upstream への追従は
+  `git -C vendor/game-music-emu fetch upstream` から行う。
 - `vendor/miniz`: MIT ライセンス。zip 展開に使用（P4 以降）。
   https://github.com/richgel999/miniz より split-file ソースを vendoring。
 - `vendor/font8x8`: パブリックドメイン。UI (P5) の文字描画に使用。
