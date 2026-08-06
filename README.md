@@ -367,6 +367,9 @@ git config core.hooksPath .githooks
 ## リリース手順（P13）
 
 `.muxapp` は必ず開発機で作る（上記のとおり CI では作れない）。
+`scripts/release.sh` は `git` `docker` `zip` `unzip` `sha256sum` `cmake` `gh` に加えて
+**`shellcheck` も必須**（リリース時のテストは静的解析込みで回すため）。
+無ければ冒頭の前提チェックで止まる。
 
 1. `CMakeLists.txt` の `project(mugbs VERSION x.y.z ...)` を上げる
 2. `CHANGELOG.md` の `## Unreleased` を `## vx.y.z - YYYY-MM-DD` に書き換える

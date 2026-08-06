@@ -129,6 +129,13 @@ echo "-- 前提コマンドを確認 --"
 for c in git docker zip unzip sha256sum cmake; do
 	command -v "$c" >/dev/null 2>&1 || die "$c が見つかりません。"
 done
+# 下の CTest は MUGBS_REQUIRE_SHELLCHECK=1 で回すので shellcheck も必須。
+# ここで見ておかないと、クロスビルドの直前まで進んでから
+# test_package の中で落ちることになる。
+command -v shellcheck >/dev/null 2>&1 ||
+	die "shellcheck が見つかりません。" \
+		"リリース時のテストはシェルスクリプトの静的解析込みで回します。" \
+		"  sudo apt install -y shellcheck"
 if [ "$NO_GITHUB" = 0 ]; then
 	command -v gh >/dev/null 2>&1 ||
 		die "gh (GitHub CLI) が見つかりません。" \
