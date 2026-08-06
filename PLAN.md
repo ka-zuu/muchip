@@ -192,6 +192,20 @@
       確認も完了**(下記「P12の実機検証」参照。ユーザーから「OKでした」
       との回答を得た)。
 
+- [x] **P13** — GitHub の PR 運用・CI・リリース自動化(完了)
+      1.0.0 として機能が揃ったので、足回り(PR運用・CI・リリース)を整えた。
+      着手直後に**リポジトリがこの開発機の外で再現不能**という致命的な
+      問題が見つかったので、まずそこから潰している(P12 で当てた libgme の
+      独自パッチがローカルにしか存在せず、`git clone --recurse-submodules`
+      が他所では失敗する状態だった)。
+      成果物: libgme を public フォークへ切り替え / shellcheck の検査を
+      実際に効かせて全シェルスクリプトへ拡張 / テストハーネスのリークを
+      潰して LeakSanitizer を有効化 / GitHub Actions の CI(ホストビルド +
+      CTest、ASan・UBSan) / master 直 push を防ぐ pre-push フックと PR
+      テンプレート / `CHANGELOG.md` / `scripts/release.sh` /
+      タグ検証ワークフロー(Release Guard)。
+      詳細は下記「P13の設計判断」を参照。
+
 ## P5の設計判断（SPEC 4.2/6章 との差分・前倒し）
 
 - **`src/app.c`/`app.h` を新規追加した。** SPEC 4.2 のモジュール構成表には
@@ -1516,11 +1530,184 @@ P11単体の実機検証(Yを押しながらD-Padを押す実際の押下感)は
 (下記「P11の残作業」参照。既にインストール済みなので再投入は不要、
 Player画面でそのまま試せる)。
 
+## P13の設計判断
+
+### submodule が upstream に無いコミットを指していた（着手して最初に発覚）
+
+CI を書く前に調べたところ、`.gitmodules` は
+`https://github.com/libgme/game-music-emu`（upstream）を指しているのに、
+親リポジトリが記録している gitlink は
+
+```
+160000 commit 84bcfe31111828de75b66385781352cc70000908  vendor/game-music-emu
+```
+
+で、これは **P12 でローカルに作った独自コミット**（`Gbs_Emu: treat decimal
+m3u track numbers as 0-based, not 1-based`）だった。
+`git -C vendor/game-music-emu branch -r --contains 84bcfe31` は空、つまり
+どのリモートにも存在しない。この状態では他所での
+`git clone --recurse-submodules` が
+`Fetched in submodule path ... but it did not contain 84bcfe3` で失敗する。
+**CI 以前に、リポジトリがこの開発機の外で再現不能だった。**
+
+libgme を **public** でフォークし（`ka-zuu/game-music-emu` の `mugbs`
+ブランチ）、`.gitmodules` の url をそちらへ向けて解決した。gitlink の SHA は
+変わらないので親リポジトリの実質的な変更は `.gitmodules` だけ。
+public にしたのは、private フォークだと Actions の既定の `GITHUB_TOKEN`
+では読めず PAT / deploy key の管理が要るため。LGPL 的にもパッチ済みソースは
+公開側に置いてある方が素直。submodule の `origin` はフォーク、`upstream` が
+libgme 本家という remote 構成にしてある。
+
+再発防止として、`scripts/release.sh` がリリース前に
+`git -C <submodule> branch -r --contains <sha>` を見て、gitlink が origin
+から取得できなければ落ちるようにした。SPEC 13 のチェックリストにも足した。
+
+**別クローンで `git clone --recurse-submodules` → `build-host.sh` →
+`ctest` 16件全緑になることを確認済み**（これが C1 の完了条件）。
+
+### CI でクロスビルドをしない理由
+
+muOS 実機向けのクロスビルドには `sysroot/`（実機から抜いた `libc.so.6` /
+`libSDL2-2.0.so.0.2800.5` と upstream SDL2 のヘッダ）が必要で、これは
+`scripts/fetch-sysroot.sh` で実機から SSH/SCP して構成する。P7 で
+確立した方法であり、実機の glibc 2.38 が Debian bullseye のクロス
+ツールチェインの 2.31 より新しいという事情から来ている（詳細は
+「P7準備メモ」参照）。
+
+つまり CI 環境だけでは `.muxapp` を作れない。sysroot をリポジトリや
+Release アセットに置けば CI でも作れるようになるが、リポジトリを public に
+するかどうかが未定の現状では、実機ファームウェア由来のバイナリを置く判断を
+先送りしたい。そこで **CD は「タグを打ったら CI が成果物を作る」形ではなく、
+「開発機で `scripts/release.sh` が作ってアップロードし、Actions は整合性の
+裏取りだけをする」形**にした。
+
+この判断は後から変えられる。sysroot を配れるようになったら
+`ci.yml` にクロスビルドのジョブを足すだけでよく、`package.sh` /
+`release.sh` の側は触らずに済む。
+
+### branch protection が使えなかった
+
+PR + CI 必須の運用にしたかったが、
+
+```
+$ gh api repos/ka-zuu/gbs-player/rulesets
+Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)
+$ gh api repos/ka-zuu/gbs-player/branches/master/protection
+Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)
+```
+
+無料プラン + private リポジトリではサーバ側の強制ができない。
+そこでリポジトリに追跡される `.githooks/pre-push` で代用した
+（`git config core.hooksPath .githooks` をクローンごとに1回）。
+
+これは自衛であって強制ではない（`--no-verify` や
+`MUGBS_ALLOW_PUSH_MASTER=1` で抜けられる）。本当の強制が要るように
+なったら (a) public 化（ruleset が無料で使える）(b) GitHub Pro、の2択で
+あることをフック自身のコメントと README に書いてある。
+`refs/tags/*` は素通しする（`release.sh` がタグを push するため）。
+
+### shellcheck を初めて実際に走らせた
+
+`tests/test_package.sh` は P7 の時点から `shellcheck -s sh -S error` を
+呼んでいたが、**開発機に shellcheck が入っておらず一度も実行された
+ことがなかった**（`command -v shellcheck` が偽なら黙って飛ばす作りだった）。
+
+実際に走らせてみると、皮肉にも唯一の指摘対象が呼び出し元のそのファイル
+自身だった。`# shellcheck があれば追加で見る` という日本語コメントが
+shellcheck ディレクティブとしてパースされ、SC1073/SC1072（severity=error）に
+なっていた。`# ` の直後が `shellcheck` で始まる行はコメントではなく
+ディレクティブとして扱われるため。語順を変えて回避した。
+
+併せて次の3点を直した。
+
+1. 検査対象を「一部3ファイル」からリポジトリ内の全シェルスクリプトへ拡張。
+   `tests/test_package.sh` 自身は `sh -n` すらされていなかった。対象は
+   `SHELL_SCRIPTS` 変数に一元化し、SPEC 12 に「追加したらここに足す」と明記
+2. 重大度を `error` から `warning` へ引き上げ。`-s sh` の SC3xxx
+   （bashism 検出）は severity=warning なので `-S error` では拾えない。
+   実機の busybox ash で動く `mux_launch.sh` にこそ効かせたい検査。
+   この状態で指摘は 0 件（残る SC1091 は info で、実機にしか無い
+   `/opt/muos/script/var/func.sh` を追えないという話なので拾わなくてよい）
+3. `MUGBS_REQUIRE_SHELLCHECK=1` のときだけ「shellcheck が無いこと」自体を
+   失敗にする。CI で apt を書き忘れても検査が無言で消えないようにするため。
+   CI と `release.sh` がこれを立てる
+
+### UBSan は既定では偽の緑を出す / path_in のリーク
+
+P5 以降 ASan/UBSan ビルドを検証に使ってきたが、2つ問題があった。
+
+**1つ目**: `test_playlist` / `test_archive` / `test_browser` の3つは
+LeakSanitizer で必ず失敗していた（PLAN にも既知として書いてあった）。
+原因はテストハーネス自身の `path_in()` が `strdup` を返しっぱなしにして
+いたこと。`ASAN_OPTIONS=detect_leaks=0` で回避すると本体側のリークも
+同時に見逃すことになるので、ハーネスを直す方を選んだ。3箇所に重複していた
+`g_tmpdir` / `setup_tmpdir()` / `path_in()` を `tests/test_util.h` へ集約し、
+確保した文字列を覚えておいて `atexit` で一括解放する。atexit ハンドラは
+LIFO で、LeakSanitizer の検査は main より前に登録されるので、こちらの解放が
+必ず先に走る。
+
+`test_util.h` の共有シンボルは `static inline` 関数から参照させている。
+素の `static` にすると、`path_in()` を使わない `test_m3u` などで
+`-Wunused-function` / `-Wunused-variable` が出るため。
+
+**2つ目**: UBSan は既定で `-fsanitize-recover` が効いており、**診断を
+標準エラーへ出しても終了コードは 0 のまま**になる。つまり「ASan/UBSan で
+緑」という従来の記録は、未定義動作を見逃していた可能性があった。
+`-fno-sanitize-recover=all` と `UBSAN_OPTIONS=halt_on_error=1` を付けて
+測り直したところ、**同梱 libgme を含めて新たな指摘は出ず 15件すべて緑**
+だった（`test_package` はシェルと zip の構造検査なので除外）。
+LeakSanitizer が実際に機能していることは、意図的にリークするだけの
+小さなプログラムを同じフラグでビルドして別途確認した。
+
+### CHANGELOG.md を新設した理由
+
+この PLAN.md は 100KB を超える設計ログで、「なぜそう作ったか」を残す文書。
+ユーザーが「このバージョンで何が変わったか」を読む文書ではないし、
+GitHub Release の本文を書く元も無かった。
+
+見出しを `## vX.Y.Z - YYYY-MM-DD` の1行固定にして、これを
+`scripts/release.sh --print-notes` と `release-guard.yml` の契約にした。
+`CMakeLists.txt` の `project()` を1行で書く制約（`package.sh` が sed で
+読むため。`tests/test_package.sh` が一致を検証している）と同じ思想で、
+「機械が読む書式を人間が壊したら機械が気づく」形にしてある。
+
+### release.sh の順序設計
+
+- **取り返しのつかない操作（タグ作成・push・リリース作成）を最後にまとめる。**
+  前段の検査・ビルド・パッケージングで落ちても、リモートには何も残らない
+- **リリースは既定で下書き。** Release Guard ワークフローが緑になったのを
+  確認してから `gh release edit --draft=false` で公開する。成果物が
+  開発機由来である以上、「クリーンなチェックアウトでテストが緑か」を
+  独立に確認できるのはこのワークフローだけなので、そこを通す
+- **`--dry-run` でもクロスビルドと `.muxapp` 生成は実際に行う。** Docker と
+  sysroot が絡む一番不確実な部分こそリハーサルしたいので、ここは飛ばさない
+- ホストビルドは `build/` ではなく専用の `build-release/` を毎回作り直す。
+  古いオブジェクトやコミットし忘れを掴まないようにするのが目的なので、
+  使い回しては意味がない
+- `--print-notes` は `package.sh --print-version` と同じ「早期 exit する
+  問い合わせオプション」。CHANGELOG 切り出しの実装を1箇所に保ち、
+  `release-guard.yml` もこれを呼ぶ
+
+**`set -e` の落とし穴**: `git rev-parse -q --verify ... && die "..."` と
+書くと、rev-parse が失敗した時点で複合コマンドの終了ステータスが非0になり
+`set -e` がスクリプトごと殺す（タグが存在しないという正常系で死ぬ）。
+タグの重複確認は `if` で書いてある。既存スクリプトが多用している
+`cmd || die` の形は安全。
+
+### P13の実機検証
+
+コードの変更は `tests/` 配下（テストハーネスの一時パス生成）だけで、
+`src/` にも `packaging/` にも手を入れていないため、実機固有の検証は不要。
+ただし `scripts/release.sh` が生成した `.muxapp` を実機へ入れて起動できる
+ことをもって最終確認とする（リリース手順そのものの検証を兼ねる）。
+
 ## 検証手順
 
 ```sh
 # 前提（初回のみ）
-sudo apt update && sudo apt install -y pkg-config libsdl2-dev libsdl2-ttf-dev
+sudo apt update && sudo apt install -y pkg-config libsdl2-dev
+# ctest を CI と同じ完全な形で回すなら追加で:
+sudo apt install -y zip unzip shellcheck
 
 # ビルド
 ./scripts/build-host.sh
@@ -1562,13 +1749,44 @@ SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy timeout 2 \
                 --screenshot /tmp/shot.bmp
 # --ui-script と組み合わせれば任意の画面まで進めてから撮れる
 
-# ASan/UBSan (P5から使っている検証。P8のコードも含めて緑であること)
+# ASan/UBSan (P5から使っている検証。CIのsanitizersジョブと同じ内容)
 cmake -B build-asan -DTARGET_HOST=ON -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_C_FLAGS="-fsanitize=address,undefined" \
-      -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"
-cmake --build build-asan -j && ctest --test-dir build-asan --output-on-failure
-#   test_playlist/test_archive/test_browser の3つはテストハーネス自身の
-#   意図的なリーク(path_in の strdup)で失敗する。既知でP8とは無関係
+      -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all" \
+      -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+cmake --build build-asan -j
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 \
+  ctest --test-dir build-asan --output-on-failure -E '^test_package$'
+#   P13以前は test_playlist/test_archive/test_browser の3つが、テスト
+#   ハーネス自身の意図的なリーク(path_in の strdup)で失敗していた。
+#   P13 C3 で path_in を tests/test_util.h へ集約しatexitで解放するよう
+#   直したので、LeakSanitizerを有効にしたまま15件すべて緑になる。
+#   -fno-sanitize-recover=all も必須(無いとUBSanは診断を出すだけで
+#   終了コードが0のままになり、CTestが未定義動作を見逃す)。
+#   test_package はシェルと zip の構造検査なのでサニタイザとは無関係
+```
+
+### CI とリリース（P13）
+
+```sh
+# フックを有効にする(クローンごとに1回)
+git config core.hooksPath .githooks
+git push --dry-run origin HEAD:master   # 拒否されること
+
+# CIと同じ条件でローカルにテストを回す(SKIPが出ないこと)
+MUGBS_REQUIRE_SHELLCHECK=1 ctest --test-dir build --output-on-failure
+
+# リリースノートの切り出しを確認
+./scripts/release.sh --print-notes
+
+# リリースのリハーサル(検査とクロスビルドは実行され、変更操作だけ飛ぶ)
+./scripts/release.sh --dry-run
+
+# 本番
+./scripts/release.sh                                 # タグ + 下書きリリース
+gh run list --workflow=release-guard.yml --limit 1   # 緑を確認
+gh release edit v1.0.0 --draft=false
+gh release download v1.0.0 -D /tmp/rel
+sha256sum /tmp/rel/muGBS-1.0.0.muxapp                # 本文のSHA256と一致すること
 ```
 
 ### クロスビルド・パッケージング・実機検証（P7で確立。実証済みの手順）

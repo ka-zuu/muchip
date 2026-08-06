@@ -50,6 +50,19 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+ASan/UBSan を掛けたい場合（CI が毎回回しているのと同じ内容）:
+
+```sh
+cmake -B build-asan -DTARGET_HOST=ON -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all" \
+      -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+cmake --build build-asan -j
+ctest --test-dir build-asan --output-on-failure -E '^test_package$'
+```
+
+`-fno-sanitize-recover=all` は必ず付けること。無いと UBSan は診断を出すだけで
+終了コードが 0 のままになり、CTest が未定義動作を見逃して緑になる。
+
 実行:
 
 ```sh
@@ -301,6 +314,89 @@ strip無し生成も指定できる（`ctest -R test_package` が構造検証に
 アイコン（`packaging/muGBS/{glyph,grid}/mugbs.png`）は
 `tools/make_glyph.py`（Pillow使用）で生成したものをコミット済み。
 図案を変えたいときだけ再実行する。
+
+## 開発フロー（PR ベース、P13）
+
+`master` へは直接コミット・push しない。ブランチを切って PR を出す。
+
+```sh
+git switch -c <ブランチ名>
+# ... 作業 ...
+git push -u origin <ブランチ名>
+gh pr create --fill     # .github/pull_request_template.md が展開される
+gh pr checks --watch    # CI が緑になるのを待つ
+```
+
+**クローンごとに1回、フックを有効にすること:**
+
+```sh
+git config core.hooksPath .githooks
+```
+
+`.githooks/pre-push` が `master` への直接 push を拒否する。`core.hooksPath` は
+`.git/config` に入る設定なので、リポジトリに置いてあるだけでは有効にならない。
+
+本来これは GitHub 側の branch protection / ruleset でやりたいところだが、
+**無料プラン + private リポジトリでは該当 API がどちらも 403**
+（`Upgrade to GitHub Pro or make this repository public to enable this feature.`）
+を返すため使えない。フックはあくまで自衛で、`git push --no-verify` や
+`MUGBS_ALLOW_PUSH_MASTER=1` で抜けられる。本当の強制が要るようになったら
+(a) リポジトリを public にする（ruleset が無料で使える）か
+(b) GitHub Pro にする、のどちらか。
+
+ドキュメントだけの変更で CI を回したくないときは、コミットメッセージに
+`[skip ci]` を入れる（private リポジトリの Actions 無料枠は 2000 分/月）。
+
+## CI（GitHub Actions、P13）
+
+`.github/workflows/ci.yml` が PR と `master` への push で2つのジョブを回す。
+
+| ジョブ | 内容 |
+|---|---|
+| ホストビルド + CTest | `scripts/build-host.sh` → `ctest`（16件）。SKIP が1件でもあれば失敗 |
+| ASan/UBSan | サニタイザ付きビルドで `test_package` 以外の15件 |
+
+- ヘッドレスUIスモークは `SDL_VIDEODRIVER=dummy` / `SDL_AUDIODRIVER=dummy` で
+  走るので、ランナーに X も音声デバイスも要らない
+- CI は `MUGBS_REQUIRE_SHELLCHECK=1` を立てる。これは「shellcheck が無いこと」
+  自体を失敗にするフラグで、apt の書き忘れで静的解析が無言で消えるのを防ぐ
+- **実機（aarch64）向けのクロスビルドは CI ではしない。** `sysroot/` が実機から
+  抜いたバイナリで、リポジトリに含めない方針のため。実機検証は人手で行い、
+  結果は `PLAN.md` に記録する
+
+## リリース手順（P13）
+
+`.muxapp` は必ず開発機で作る（上記のとおり CI では作れない）。
+
+1. `CMakeLists.txt` の `project(mugbs VERSION x.y.z ...)` を上げる
+2. `CHANGELOG.md` の `## Unreleased` を `## vx.y.z - YYYY-MM-DD` に書き換える
+   （1 と同じコミットで）
+3. PR 経由で `master` へマージし、ローカルの `master` を最新にする
+4. リハーサル → 本番
+
+```sh
+./scripts/release.sh --dry-run   # 検査とクロスビルドは実行し、変更操作はしない
+./scripts/release.sh             # タグ + .muxapp を添付した下書きリリース
+```
+
+5. Release Guard ワークフロー（タグ・バージョン・CHANGELOG の整合性 +
+   クリーンなチェックアウトでのフル CI）が緑になるのを確認する
+
+```sh
+gh run list --workflow=release-guard.yml --limit 1
+```
+
+6. 下書きを公開し、実機で最終確認する
+
+```sh
+gh release edit vx.y.z --draft=false
+scp muGBS-x.y.z.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+```
+
+`scripts/release.sh` は取り返しのつかない操作（タグ作成・push・リリース作成）を
+最後にまとめてあるので、途中で落ちてもリモートには何も残らない。
+`--no-github` / `--keep-binary` / `--notes FILE` / `--publish` も参照
+（`./scripts/release.sh --help` は無い。スクリプト冒頭のコメントに一覧がある）。
 
 ## ライセンス / 同梱ソースについて
 
