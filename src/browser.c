@@ -183,13 +183,17 @@ int browser_enter(browser_t *b, int show_all) {
     return browser_open_dir(b, path, show_all) == 0 ? 1 : 0;
 }
 
-int browser_selected_path(const browser_t *b, char *out, unsigned long out_size) {
-    if (b->count == 0 || b->selected < 0 || b->selected >= b->count) {
+int browser_path_at(const browser_t *b, int index, char *out, unsigned long out_size) {
+    if (index < 0 || index >= b->count) {
         if (out_size > 0) out[0] = 0;
         return -1;
     }
-    join_path(out, (size_t)out_size, b->cwd, b->items[b->selected].name);
+    join_path(out, (size_t)out_size, b->cwd, b->items[index].name);
     return 0;
+}
+
+int browser_selected_path(const browser_t *b, char *out, unsigned long out_size) {
+    return browser_path_at(b, b->selected, out, out_size);
 }
 
 int browser_select_by_name(browser_t *b, const char *name) {

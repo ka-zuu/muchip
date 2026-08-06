@@ -56,6 +56,12 @@ int browser_up(browser_t *b, int show_all);
  * パスを取り出して開く)。 */
 int browser_enter(browser_t *b, int show_all);
 
+/* items[index] の絶対パスを out に書く(cwdとの結合)。
+ * index が範囲外なら空文字列を書いて-1を返す。
+ * Player画面のファイル一覧(app.c)が、カーソルを動かさずに移動先候補の
+ * パスを取り出すために使う(P9)。 */
+int browser_path_at(const browser_t *b, int index, char *out, unsigned long out_size);
+
 /* items[selected] の絶対パスを out に書く(cwdとの結合)。
  * count==0(空ディレクトリ)なら空文字列を書いて-1を返す。 */
 int browser_selected_path(const browser_t *b, char *out, unsigned long out_size);

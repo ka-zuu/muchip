@@ -30,6 +30,30 @@ typedef struct {
     browser_t browser;
     app_screen_t screen;
 
+    /* Player画面の中央に出す「いま開いているファイルが置かれている
+     * ディレクトリ」の一覧 (P9)。Browser画面の browser とは完全に独立した
+     * 2つ目のインスタンスにしてある。再生中にBrowserで別フォルダを眺めても
+     * Player側の一覧が動いてはならず、逆にPlayer側でファイルを送っても
+     * Browserのカーソル/スクロールを壊してはならないため
+     * (browser_open_dir() は selected/scroll を0に戻す)。
+     *
+     * 添字の空間に注意: player_list.selected と player_list_playing は
+     * items[] の添字(=「アイテム空間」。browser_select_by_name /
+     * browser_path_at がそのまま使える)。一方 player_list.scroll は
+     * ui_draw_list() だけが触る「表示空間」(ファイル領域の先頭が0)。
+     * player_list に対して browser_move()/browser_page()/browser_enter()/
+     * browser_up() を呼んではならない(ディレクトリを飛ばす前提が壊れる)。 */
+    browser_t player_list;
+    int player_list_first_file; /* items[] の最初の非ディレクトリ添字。
+                                    items[] は「ディレクトリ優先 -> 名前順」
+                                    (browser.c の item_cmp)なので、ここ以降が
+                                    まとめてファイル領域になる */
+    int player_list_playing;     /* 再生中ファイルの items[] 添字。一覧に
+                                    無ければ -1(zip内から開いた等) */
+    char player_path[MUGBS_PATH_MAX]; /* app_open_path() に渡されたパス。
+                                          show_all_files 変更時の再構築に使う。
+                                          空文字列=まだ何も開いていない */
+
     mugbs_config_t *cfg; /* 参照のみ。所有権は呼び出し側(main())。
                             プログラム全体で権威あるインスタンスはこれ1つだけ
                             (player_t は const mugbs_config_t* で同じものを見る)。
@@ -173,6 +197,12 @@ static int list_visible_rows(app_t *app) {
  * 波形が横に伸び縮みして読めない)。 */
 #define APP_SCOPE_DRAW_SAMPLES (AUDIO_SCOPE_SAMPLES / 2)
 
+/* Player画面のステータス行より下の帯を、ファイル一覧(P9)とビジュアライザ
+ * (F-14)で行単位に分け合うときの上限/下限。draw_player() を参照。 */
+#define PLAYER_LIST_MAX_ROWS 7
+#define PLAYER_WAVE_MIN_ROWS 2
+#define PLAYER_WAVE_MAX_ROWS 5
+
 /* 1フレームに1回だけ波形を取り込む。
  *
  * トリガについて: 単に直近N点を並べるだけだと、オーディオコールバックと
@@ -218,6 +248,78 @@ static void set_last_path(app_t *app, const char *path) {
     memcpy(app->cfg->last_path, path, n + 1);
 }
 
+/* ---- Player画面のファイル一覧 (P9) --------------------------------------
+ *
+ * opened_path は app_open_path() に渡されたパスそのもの(.gbs/.gb/.m3u/.zip)。
+ * playlist_source_t.fs_path ではなくこれを使う理由:
+ *   - zip内ソースの fs_path は NULL である (playlist.h)
+ *   - .zip を開いたときに見せたいのは「zipを含むディレクトリ」であり、
+ *     ハイライトすべき項目はその .zip 自身である
+ *   - .gbs/.m3u/.zip のどれでも同じ扱いで済む唯一の値である
+ *
+ * force_rescan=0 のとき、既に同じディレクトリを開いていれば readdir を
+ * やり直さない。毎回の再走査はSDカード上で無駄なだけでなく、
+ * browser_open_dir() が scroll を0に戻すため一覧が跳ねてしまう。
+ * show_all_files が変わったときだけ force_rescan=1 で呼ぶ。 */
+static void app_sync_player_list(app_t *app, const char *opened_path, int force_rescan) {
+    if (!opened_path || !opened_path[0]) return;
+
+    /* opened_path が app->player_path 自身であり得る(show_all_files切替時)。
+     * 以降 app->player_path へ書き戻すので、まずローカルへ写しておく。 */
+    char full[MUGBS_PATH_MAX];
+    if (snprintf(full, sizeof(full), "%s", opened_path) >= (int)sizeof(full)) {
+        LOG_WARN("パスが長すぎるためPlayer画面の一覧を作れません: %s", opened_path);
+        browser_free(&app->player_list);
+        app->player_list_first_file = 0;
+        app->player_list_playing = -1;
+        app->player_path[0] = 0;
+        return;
+    }
+
+    /* dir と base に分ける。 */
+    char dir[MUGBS_PATH_MAX];
+    char base[MUGBS_PATH_MAX];
+    const char *slash = strrchr(full, '/');
+    if (!slash) {
+        snprintf(base, sizeof(base), "%s", full);
+        snprintf(dir, sizeof(dir), ".");
+    } else {
+        snprintf(base, sizeof(base), "%s", slash + 1);
+        size_t dn = (size_t)(slash - full);
+        if (dn == 0) dn = 1; /* "/foo.gbs" -> "/" */
+        memcpy(dir, full, dn);
+        dir[dn] = 0;
+    }
+
+    if (force_rescan || !app->player_list.cwd || strcmp(app->player_list.cwd, dir) != 0) {
+        if (browser_open_dir(&app->player_list, dir, app->cfg->show_all_files) != 0) {
+            /* 読めないディレクトリ。一覧は空にしておく(draw_playerがcount==0
+             * として何も描かない)。 */
+            browser_free(&app->player_list);
+            app->player_list_first_file = 0;
+            app->player_list_playing = -1;
+            app->player_path[0] = 0;
+            return;
+        }
+    }
+
+    int first = 0;
+    while (first < app->player_list.count && app->player_list.items[first].is_dir) first++;
+    app->player_list_first_file = first;
+
+    if (browser_select_by_name(&app->player_list, base) &&
+        app->player_list.selected >= first) {
+        app->player_list_playing = app->player_list.selected;
+    } else {
+        /* 一覧に無い(zip内から開いた・拡張子フィルタ外・同名ディレクトリ等)。
+         * 一覧自体は出すが「再生中」の印は付けない。 */
+        app->player_list.selected = first;
+        app->player_list_playing = -1;
+    }
+
+    memcpy(app->player_path, full, strlen(full) + 1);
+}
+
 /* ---- ファイルを開く ---------------------------------------------------- */
 
 /* playlist_open() が失敗しても現在の再生・プレイリストには一切触れない
@@ -240,10 +342,18 @@ static void app_open_path(app_t *app, const char *path) {
         set_status(app, "Failed to play: %s", path);
         playlist_free(app->pl);
         app->pl = NULL;
+        /* 何も鳴っていないので、一覧の「再生中」の印は消す。カーソルは
+         * そのまま残し、ユーザーが続けて別のファイルを選べるようにする。 */
+        app->player_list_playing = -1;
         return;
     }
 
     set_last_path(app, path); /* F-13: 直近に開いたファイルを記憶する */
+    /* Player画面の一覧を、いま開いたファイルへ合わせる (P9)。
+     * app_open_path() はGUI側で playlist_open() を呼ぶ唯一の関数なので、
+     * Browserの決定・argvのinitial_path・Player一覧からの決定という
+     * 3経路すべてがここを通る。 */
+    app_sync_player_list(app, path, 0);
     app->tracklist_sel = 0;
     app->tracklist_scroll = 0;
     app->screen = SCREEN_PLAYER;
@@ -510,6 +620,9 @@ static void adjust_setting(app_t *app, int direction) {
      * 0へリセットされてしまう(browser.cの契約)。 */
     if (s->offset == offsetof(mugbs_config_t, show_all_files) && v != before) {
         browser_open_dir(&app->browser, app->browser.cwd, app->cfg->show_all_files);
+        /* Player画面の一覧も同じフィルタで作り直す (P9)。ディレクトリは
+         * 変わらないので force_rescan=1 が必須。 */
+        if (app->player_path[0]) app_sync_player_list(app, app->player_path, 1);
     }
 }
 
@@ -572,6 +685,16 @@ static const char *browser_item_text(void *ctx, int index) {
     } else {
         snprintf(buf, sizeof(buf), "%s", it->name);
     }
+    return buf;
+}
+
+/* Player画面のファイル一覧 (P9)。index は表示空間(ファイル領域の先頭が0)。
+ * ディレクトリは出さないので browser_item_text() の "[name]" 分岐は要らない。 */
+static const char *player_list_item_text(void *ctx, int index) {
+    app_t *app = (app_t *)ctx;
+    static char buf[300];
+    const browser_item_t *it = &app->player_list.items[app->player_list_first_file + index];
+    snprintf(buf, sizeof(buf), "%s", it->name);
     return buf;
 }
 
@@ -680,21 +803,61 @@ static void draw_player(app_t *app) {
 
     int footer_y = ui->screen_h - ui->metrics.footer_h + (ui->metrics.footer_h - ui->metrics.glyph) / 2;
 
-    /* F-14 簡易ビジュアライザ。ステータス行の下、一時ステータスメッセージ用の
-     * 1行を残した範囲に描く。低解像度で他の要素を押し出さないよう、
-     * 確保できる高さが1行分に満たなければ丸ごと省く。 */
-    int wave_avail = (ui->screen_h - ui->metrics.footer_h) - y - ui->metrics.line_h;
-    int wave_h = ui->metrics.line_h * 5;
-    if (wave_h > wave_avail) wave_h = wave_avail;
-    if (wave_h >= ui->metrics.line_h) {
-        ui_rect_t wave = { x, y, content_w, wave_h };
-        const SDL_Color wave_bg = { 12, 12, 20, 255 };
-        ui_draw_waveform(ui, wave, app->scope, app->scope_len, accent, wave_bg);
-        y += wave_h + ui->metrics.pad;
+    /* ステータス行の下からフッタ帯の上までを
+     *   [同一ディレクトリのファイル一覧(P9)] -> [ビジュアライザ(F-14)]
+     *   -> [一時メッセージ用の1行]
+     * で分け合う。一時メッセージ用の1行と、一覧/波形の間の余白を先に
+     * 差し引き、残りを行単位で割り当てる。低解像度で行が取れない要素は
+     * 丸ごと省く(フッタへはみ出させない。SPEC 6.2)。
+     * 一覧は操作に必要なので優先し、装飾である波形が余りをもらう。 */
+    const int row_h = ui->metrics.line_h;
+    int band_h = (ui->screen_h - ui->metrics.footer_h) - y - row_h - ui->metrics.pad;
+    if (band_h < 0) band_h = 0;
+    int avail_rows = band_h / row_h;
+
+    int list_rows = 0, wave_rows = 0;
+    if (avail_rows >= PLAYER_WAVE_MIN_ROWS + 2) {
+        list_rows = avail_rows - PLAYER_WAVE_MIN_ROWS;
+        if (list_rows > PLAYER_LIST_MAX_ROWS) list_rows = PLAYER_LIST_MAX_ROWS;
+        wave_rows = avail_rows - list_rows;
+        if (wave_rows > PLAYER_WAVE_MAX_ROWS) wave_rows = PLAYER_WAVE_MAX_ROWS;
+    } else {
+        /* 波形と一覧を両立できない極端な解像度。操作に必要な一覧を優先する
+         * (0行なら一覧も出さない)。 */
+        list_rows = avail_rows;
     }
 
+    if (list_rows > 0) {
+        /* ui_draw_list() は r.h==0 でも visible を1へ切り上げて1行描いてしまう
+         * ので、行数0のときは絶対に呼ばないこと。 */
+        ui_rect_t list = { x, y, content_w, list_rows * row_h };
+        const SDL_Color list_bg = { 26, 26, 36, 255 };
+        ui_fill_rect(ui, list, list_bg);
+
+        int first = app->player_list_first_file;
+        int file_count = app->player_list.count - first;
+        if (file_count < 0) file_count = 0;
+        ui_draw_list(ui, list, file_count,
+                     app->player_list.selected - first,
+                     app->player_list_playing >= 0 ? app->player_list_playing - first : -1,
+                     &app->player_list.scroll, player_list_item_text, app);
+        y += list.h + ui->metrics.pad;
+    }
+
+    /* F-14 簡易ビジュアライザ。P9で一覧の下へ移した。 */
+    if (wave_rows > 0) {
+        ui_rect_t wave = { x, y, content_w, wave_rows * row_h };
+        const SDL_Color wave_bg = { 12, 12, 20, 255 };
+        ui_draw_waveform(ui, wave, app->scope, app->scope_len, accent, wave_bg);
+        y += wave.h + ui->metrics.pad;
+    }
+
+    /* 一時ステータスメッセージはフッタ帯の直上に固定する。上の行割り当ての
+     * 端数で位置が動かないよう、ここでは y を使わない。 */
     if (app->status[0] && SDL_GetTicks() < app->status_until) {
-        ui_text_clipped(ui, x, y, content_w, UI_TEXT_SMALL, err, app->status);
+        int msg_y = (ui->screen_h - ui->metrics.footer_h) - row_h +
+                    (row_h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
+        ui_text_clipped(ui, x, msg_y, content_w, UI_TEXT_SMALL, err, app->status);
     }
 
     /* 終了操作(SPEC 6.3「Menu長押し=終了」+ P6で追加したStart+Select代替)を
@@ -840,6 +1003,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     app.config_path = opt->config_path;
     app.running = 1;
     app.screen = SCREEN_BROWSER;
+    app.player_list_playing = -1; /* memsetの0は有効な添字なので明示的に潰す */
 
     int fullscreen = (opt->window_w <= 0 || opt->window_h <= 0);
     if (ui_init(&app.ui, opt->window_w, opt->window_h, fullscreen) != 0) {
@@ -888,6 +1052,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         if (!use_script) {
             player_shutdown(&app.player);
             browser_free(&app.browser);
+            browser_free(&app.player_list);
             input_shutdown(&app.input);
             ui_shutdown(&app.ui);
             return 1;
@@ -955,6 +1120,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     if (use_script) ui_script_free(&script);
     if (app.pl) playlist_free(app.pl);
     browser_free(&app.browser);
+    browser_free(&app.player_list);
     player_shutdown(&app.player);
     input_shutdown(&app.input);
     ui_shutdown(&app.ui);
