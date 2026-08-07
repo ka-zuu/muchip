@@ -42,6 +42,7 @@ static int test_defaults(void) {
     CHECK(c.eq_bass == 0);
     CHECK(c.eq_treble == 0);
     CHECK(c.show_all_files == 0);
+    CHECK(c.title_scroll == 1);
     CHECK(c.last_path[0] == 0);
     CHECK(c.gamecontroller_db[0] == 0);
     CHECK(c.controller_mapping[0] == 0);
@@ -66,6 +67,7 @@ static int test_spec_sample(void) {
         "\n"
         "[ui]\n"
         "show_all_files = false\n"
+        "title_scroll   = true   ; 曲名が見切れるとき横スクロールさせる (Issue #8)\n"
         "last_path      = /mnt/mmc/MUSIC\n";
 
     mugbs_config_t c;
@@ -76,6 +78,7 @@ static int test_spec_sample(void) {
     c.repeat_mode = REPEAT_NONE;
     c.shuffle = 1;
     c.show_all_files = 1;
+    c.title_scroll = 0;
 
     CHECK(load_str(&c, sample) == 0);
 
@@ -87,6 +90,7 @@ static int test_spec_sample(void) {
     CHECK(near(c.stereo_depth, 0.15));
     CHECK(c.eq_bass == 0);
     CHECK(c.show_all_files == 0);
+    CHECK(c.title_scroll == 1);
     CHECK_STREQ(c.last_path, "/mnt/mmc/MUSIC");
     return 0;
 }
@@ -220,6 +224,23 @@ static int test_enum_and_bool_forms(void) {
         CHECK(load_str(&c, buf) == 0);
         CHECK(c.show_all_files == 0);
     }
+
+    /* title_scroll(Issue #8)。既定はonなので、offにできることを見る。 */
+    for (size_t i = 0; i < sizeof(falsy) / sizeof(falsy[0]); i++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[ui]\ntitle_scroll = %s\n", falsy[i]);
+        config_set_defaults(&c);
+        CHECK(load_str(&c, buf) == 0);
+        CHECK(c.title_scroll == 0);
+    }
+    for (size_t i = 0; i < sizeof(truthy) / sizeof(truthy[0]); i++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[ui]\ntitle_scroll = %s\n", truthy[i]);
+        config_set_defaults(&c);
+        c.title_scroll = 0;
+        CHECK(load_str(&c, buf) == 0);
+        CHECK(c.title_scroll == 1);
+    }
     return 0;
 }
 
@@ -313,6 +334,7 @@ static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
     CHECK(a->eq_bass == b->eq_bass);
     CHECK(a->eq_treble == b->eq_treble);
     CHECK(a->show_all_files == b->show_all_files);
+    CHECK(a->title_scroll == b->title_scroll);
     CHECK_STREQ(a->last_path, b->last_path);
     CHECK_STREQ(a->gamecontroller_db, b->gamecontroller_db);
     CHECK_STREQ(a->controller_mapping, b->controller_mapping);
@@ -349,6 +371,7 @@ static int test_roundtrip_mutated(void) {
     c.eq_bass = -20;
     c.eq_treble = 35;
     c.show_all_files = 1;
+    c.title_scroll = 0;
     snprintf(c.last_path, sizeof(c.last_path), "/mnt/mmc/MUSIC/Game.gbs");
     snprintf(c.gamecontroller_db, sizeof(c.gamecontroller_db), "/usr/lib/gamecontrollerdb.txt");
     snprintf(c.controller_mapping, sizeof(c.controller_mapping),

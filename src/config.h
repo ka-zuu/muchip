@@ -40,6 +40,8 @@ typedef struct {
     /* [ui] */
     int show_all_files;
     char last_path[MUGBS_PATH_MAX]; /* F-13: 直近に開いたファイル/ディレクトリ。空=未設定 */
+    int title_scroll; /* Issue #8: Player画面の曲名を横スクロール(マーキー)させるか。
+                        * 既定on。offなら従来どおり ui_text_clipped() で "..." 省略。 */
 
     /* [input]
      * muOS実機の物理ボタンは、SDLのゲームコントローラDBが読み込まれていれば

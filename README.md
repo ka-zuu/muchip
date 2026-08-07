@@ -164,7 +164,7 @@ libgme の公開 C API にはチャンネル別の PCM を取り出す手段が�
 
 ## 設定ファイル (config.ini, P6)
 
-SPEC 7 の全キーに加え、`[ui] show_all_files`/`last_path`（F-13）と
+SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`（Issue #8）/`last_path`（F-13）と
 `[input] gamecontroller_db`/`controller_mapping` を持つ。`src/config.c`
 が読み書きする（外部のINIライブラリは使わない。SPEC 12）。
 

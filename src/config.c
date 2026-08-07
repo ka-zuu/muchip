@@ -59,6 +59,7 @@ static const config_key_t KEYS[] = {
     { "audio", "eq_treble",    CFG_INT,    offsetof(mugbs_config_t, eq_treble),   -100, 100, 0 },
 
     { "ui", "show_all_files", CFG_BOOL, offsetof(mugbs_config_t, show_all_files), 0, 0, 0 },
+    { "ui", "title_scroll",  CFG_BOOL, offsetof(mugbs_config_t, title_scroll),   0, 0, 0 },
     { "ui", "last_path",      CFG_STR,  offsetof(mugbs_config_t, last_path),      0, 0, MUGBS_PATH_MAX },
 
     { "input", "gamecontroller_db",  CFG_STR, offsetof(mugbs_config_t, gamecontroller_db),  0, 0, MUGBS_PATH_MAX },
@@ -171,6 +172,7 @@ void config_set_defaults(mugbs_config_t *c) {
     c->eq_treble = 0;
 
     c->show_all_files = 0;
+    c->title_scroll = 1; /* Issue #8: 既定でスライドさせる */
     c->last_path[0] = 0;
 
     c->gamecontroller_db[0] = 0;
