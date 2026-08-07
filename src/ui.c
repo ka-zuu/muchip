@@ -305,6 +305,66 @@ void ui_text_clipped(ui_t *ui, int x, int y, int max_w, ui_text_size_t size,
     ui_text(ui, x, y, size, color, buf);
 }
 
+/* Issue #8: マーキー1周の内訳は「先頭で hold ms 静止 -> speed px/秒で
+ * period px(文字列幅+折返し間隔)を左へ流す」の繰り返し。速度・間隔を
+ * glyph_px の倍数で決めているのは、他のレイアウト量と同じく解像度非依存に
+ * するため(SPEC 6.2)。速度は毎秒4文字分(px単位でも間隔と同じ glyph_px*4)。 */
+int ui_marquee_offset(int text_w, int max_w, int glyph_px, Uint32 time_ms) {
+    if (text_w <= max_w || glyph_px <= 0) return 0;
+
+    int gap = glyph_px * 4;
+    int period = text_w + gap;
+    int speed = glyph_px * 4; /* px/秒 */
+
+    const Uint32 hold_ms = 1000;
+    Uint32 period_ms = (Uint32)(((long long)period * 1000) / speed);
+    Uint32 cycle_ms = hold_ms + period_ms;
+    if (cycle_ms == 0) return 0;
+
+    /* time_ms(SDL_GetTicks())は約49日でUint32が一周するが、% で割った
+     * 時点でその1フレームだけ表示がわずかに飛ぶ程度なので許容する。 */
+    Uint32 t = time_ms % cycle_ms;
+    if (t < hold_ms) return 0;
+
+    long long off = ((long long)(t - hold_ms) * speed) / 1000;
+    if (off >= period) off = period - 1;
+    if (off < 0) off = 0;
+    return (int)off;
+}
+
+void ui_text_scroll(ui_t *ui, int x, int y, int max_w, ui_text_size_t size,
+                     SDL_Color color, const char *s, Uint32 time_ms) {
+    int px = ui_glyph_size(ui, size);
+    if (max_w < px) return;
+
+    int text_w = ui_text_width(ui, size, s);
+    if (text_w <= max_w) {
+        ui_text(ui, x, y, size, color, s);
+        return;
+    }
+
+    int gap = px * 4;
+    int period = text_w + gap;
+    int off = ui_marquee_offset(text_w, max_w, px, time_ms);
+
+    /* この描画区間だけクリップ矩形を敷く。ui.c は他にクリップを使う箇所が
+     * 無いが、呼び出し側が別の目的で敷いていた場合に備えて退避・復元する。 */
+    SDL_bool had_clip = SDL_RenderIsClipEnabled(ui->ren);
+    SDL_Rect prev_clip;
+    if (had_clip) SDL_RenderGetClipRect(ui->ren, &prev_clip);
+
+    SDL_Rect clip = { x, y, max_w, px };
+    SDL_RenderSetClipRect(ui->ren, &clip);
+
+    /* 1回目が画面外へ流れ出た直後、2回目(period 先)が右から現れる。
+     * 途切れず周回して見えるよう常に2回描く。 */
+    ui_text(ui, x - off, y, size, color, s);
+    ui_text(ui, x - off + period, y, size, color, s);
+
+    if (had_clip) SDL_RenderSetClipRect(ui->ren, &prev_clip);
+    else SDL_RenderSetClipRect(ui->ren, NULL);
+}
+
 void ui_draw_progress(ui_t *ui, ui_rect_t r, float ratio, SDL_Color fg, SDL_Color bg) {
     if (ratio < 0.0f) ratio = 0.0f;
     if (ratio > 1.0f) ratio = 1.0f;

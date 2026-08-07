@@ -639,6 +639,7 @@ static const setting_def_t SETTINGS[] = {
     { "Default length",     SET_INT,    offsetof(mugbs_config_t, default_length_sec), 10,  600,  10, NULL, 0 },
     { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0 },
     { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0 },
+    { "Scroll title",           SET_BOOL,   offsetof(mugbs_config_t, title_scroll),     0,     1,   1, NULL, 0 },
 };
 #define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
 
@@ -879,13 +880,22 @@ static void draw_player(app_t *app) {
     }
 
     /* Issue #3: 情報ブロックの文字サイズ。実機(640x480, scale=1.0)で
-     * UI_TEXT_SMALL は 8x8フォントの等倍=8pxで、再生位置やトラック番号まで
-     * それに載っていて読めなかった。よく目をやる再生位置だけ曲名と同格の
-     * TITLE(3x)へ、その他はリスト行と同じ BODY(2x) へ上げてある
-     * (時間 > トラック番号 の階層を作る)。SMALL のままにしたのはフッタだけ。
-     * 8x8フォントなのでサイズ段階はどれも8の整数倍で、ドットが均一に拡大される。
-     * 送り量は各行が実際に使うサイズ段階から導出する(SPEC 6.2)。 */
-    ui_text_clipped(ui, x, y, content_w, UI_TEXT_TITLE, fg, e ? e->title : "(no track)");
+     * UI_TEXT_SMALL は 8x8フォントの等倍=8pxで、トラック番号まで
+     * それに載っていて読めなかった。曲名は TITLE(3x) のまま、
+     * その他はリスト行と同じ BODY(2x) へ上げてある。SMALL のままにしたのは
+     * フッタだけ。8x8フォントなのでサイズ段階はどれも8の整数倍で、
+     * ドットが均一に拡大される。送り量は各行が実際に使うサイズ段階から
+     * 導出する(SPEC 6.2)。
+     * Issue #8: 再生位置はTITLEから曲名と同格ではなくBODYへ落とし、
+     * シークバーと同じ行に収めた(下記)。曲名は見切れやすいという
+     * フィードバックを受け、[ui] title_scroll(既定on)なら横スクロール、
+     * offなら従来どおり "..." 省略で表示する。 */
+    const char *title = e ? e->title : "(no track)";
+    if (app->cfg->title_scroll) {
+        ui_text_scroll(ui, x, y, content_w, UI_TEXT_TITLE, fg, title, SDL_GetTicks());
+    } else {
+        ui_text_clipped(ui, x, y, content_w, UI_TEXT_TITLE, fg, title);
+    }
     y += ui_glyph_size(ui, UI_TEXT_TITLE) + ui->metrics.pad;
 
     ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim,
@@ -910,17 +920,33 @@ static void draw_player(app_t *app) {
     char timebuf[64];
     snprintf(timebuf, sizeof(timebuf), "%d:%02d / %d:%02d",
              pos_ms / 60000, (pos_ms / 1000) % 60, dur_ms / 60000, (dur_ms / 1000) % 60);
-    /* 長尺のm3u(時間が3桁分)でも画面外へ出ないよう、他の行と同じく
-     * ui_text_clipped() で描く。 */
-    ui_text_clipped(ui, x, y, content_w, UI_TEXT_TITLE, fg, timebuf);
-    y += ui_glyph_size(ui, UI_TEXT_TITLE) + ui->metrics.pad;
 
-    /* バーの高さは pad*2 だと TITLE の時間表示の下で細すぎたので pad*3。 */
-    ui_rect_t bar = { x, y, content_w, ui->metrics.pad * 3 };
+    /* Issue #8: 再生位置とシークバーを同じ行に収める(時間が左、バーが
+     * 残り幅いっぱい)。長尺のm3u(時間が3桁分)で時間の幅が伸びても、
+     * バーはその分だけ縮むので画面外へは出ない。バーの残り幅が
+     * 極端に狭くなる解像度では2行構成へ戻し、フッタへはみ出させない
+     * (SPEC 6.2)。 */
+    int time_glyph = ui_glyph_size(ui, UI_TEXT_BODY);
+    int time_w = ui_text_width(ui, UI_TEXT_BODY, timebuf);
+    int bar_h = ui->metrics.pad * 2;
     float ratio = dur_ms > 0 ? (float)pos_ms / (float)dur_ms : 0.0f;
     const SDL_Color bar_bg = { 50, 50, 60, 255 };
-    ui_draw_progress(ui, bar, ratio, accent, bar_bg);
-    y += bar.h + ui->metrics.pad * 2;
+    int bar_w = content_w - time_w - ui->metrics.pad * 2;
+
+    if (bar_w >= ui->metrics.pad * 4) {
+        int row_h = ui->metrics.line_h;
+        int text_y = y + (row_h - time_glyph) / 2;
+        ui_text(ui, x, text_y, UI_TEXT_BODY, fg, timebuf);
+        ui_rect_t bar = { x + time_w + ui->metrics.pad * 2, y + (row_h - bar_h) / 2, bar_w, bar_h };
+        ui_draw_progress(ui, bar, ratio, accent, bar_bg);
+        y += row_h + ui->metrics.pad;
+    } else {
+        ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, fg, timebuf);
+        y += ui->metrics.line_h;
+        ui_rect_t bar = { x, y, content_w, bar_h };
+        ui_draw_progress(ui, bar, ratio, accent, bar_bg);
+        y += bar.h + ui->metrics.pad;
+    }
 
     const char *repeat_label = app->cfg->repeat_mode == REPEAT_ONE ? "one" :
                                 app->cfg->repeat_mode == REPEAT_ALL ? "all" : "none";

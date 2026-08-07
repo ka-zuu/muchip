@@ -91,6 +91,22 @@ void ui_text(ui_t *ui, int x, int y, ui_text_size_t size, SDL_Color color, const
 void ui_text_clipped(ui_t *ui, int x, int y, int max_w, ui_text_size_t size,
                       SDL_Color color, const char *s);
 
+/* Issue #8: max_w に収まらない文字列を横スクロール(マーキー)させるときの、
+ * 先頭からのずらし量(px)。text_w <= max_w なら常に0(呼び出し側はこれを
+ * 「動いていない」判定に使ってよい)。速度・停止時間・折返し間隔は
+ * すべて glyph_px から導出するため解像度非依存(SPEC 6.2)。
+ * SDL_Init 不要な純関数(ui_glyph_size_for と同じ方針。
+ * tests/test_ui_metrics.c が検証する)。 */
+int ui_marquee_offset(int text_w, int max_w, int glyph_px, Uint32 time_ms);
+
+/* ui_text_clipped() の横スクロール版(Issue #8)。max_w に収まる場合は
+ * ui_text() と同じ(スクロールしない)。収まらない場合は
+ * ui_marquee_offset() が返すずらし量で s を左へ流し、末尾の後に間隔を
+ * 空けて先頭が再び現れる周回表示にする。time_ms には呼び出し側の
+ * SDL_GetTicks() を渡す。 */
+void ui_text_scroll(ui_t *ui, int x, int y, int max_w, ui_text_size_t size,
+                     SDL_Color color, const char *s, Uint32 time_ms);
+
 /* シークバー兼用の進捗バー。ratio は 0.0-1.0 にクランプされる。 */
 void ui_draw_progress(ui_t *ui, ui_rect_t r, float ratio, SDL_Color fg, SDL_Color bg);
 

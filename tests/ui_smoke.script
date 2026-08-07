@@ -39,6 +39,8 @@ RIGHT   # Default length を変える(playlist_apply_default_lengthを通す)
 DOWN    # Default length -> Fade
 DOWN    # Fade -> Show all files
 RIGHT   # show_all_files を切り替える(browser_open_dirの自己呼び出しを通す)
+DOWN    # Show all files -> Scroll title (Issue #8)
+RIGHT   # title_scroll を切り替える
 X       # リセット確認ダイアログを開く(P10)
 B       # キャンセル(変更はそのまま残る)
 X       # 再度開く
