@@ -31,6 +31,7 @@ typedef enum {
     CFG_BOOL,
     CFG_DOUBLE,
     CFG_REPEAT,
+    CFG_BATTERY_SHOW,
     CFG_STR,
 } config_kind_t;
 
@@ -60,6 +61,7 @@ static const config_key_t KEYS[] = {
 
     { "ui", "show_all_files", CFG_BOOL, offsetof(mugbs_config_t, show_all_files), 0, 0, 0 },
     { "ui", "title_scroll",  CFG_BOOL, offsetof(mugbs_config_t, title_scroll),   0, 0, 0 },
+    { "ui", "battery_show",  CFG_BATTERY_SHOW, offsetof(mugbs_config_t, battery_show), 0, 0, 0 },
     { "ui", "last_path",      CFG_STR,  offsetof(mugbs_config_t, last_path),      0, 0, MUGBS_PATH_MAX },
 
     { "input", "gamecontroller_db",  CFG_STR, offsetof(mugbs_config_t, gamecontroller_db),  0, 0, MUGBS_PATH_MAX },
@@ -156,6 +158,22 @@ static const char *repeat_name(repeat_mode_t m) {
     return "all";
 }
 
+static int parse_battery_show_value(const char *s, battery_show_t *out) {
+    if (ieq(s, "off"))    { *out = BATTERY_SHOW_OFF;    return 0; }
+    if (ieq(s, "low"))    { *out = BATTERY_SHOW_LOW;    return 0; }
+    if (ieq(s, "always")) { *out = BATTERY_SHOW_ALWAYS; return 0; }
+    return -1;
+}
+
+static const char *battery_show_name(battery_show_t m) {
+    switch (m) {
+        case BATTERY_SHOW_OFF:    return "off";
+        case BATTERY_SHOW_LOW:    return "low";
+        case BATTERY_SHOW_ALWAYS: return "always";
+    }
+    return "low";
+}
+
 /* ---- 既定値 ------------------------------------------------------------ */
 
 void config_set_defaults(mugbs_config_t *c) {
@@ -173,6 +191,7 @@ void config_set_defaults(mugbs_config_t *c) {
 
     c->show_all_files = 0;
     c->title_scroll = 1; /* Issue #8: 既定でスライドさせる */
+    c->battery_show = BATTERY_SHOW_LOW; /* Issue #7: 既定は減ったときだけ表示 */
     c->last_path[0] = 0;
 
     c->gamecontroller_db[0] = 0;
@@ -249,6 +268,16 @@ static void apply_value(mugbs_config_t *c, const config_key_t *k, const char *va
                 return;
             }
             *(repeat_mode_t *)field = v;
+            return;
+        }
+        case CFG_BATTERY_SHOW: {
+            battery_show_t v;
+            if (parse_battery_show_value(value, &v) != 0) {
+                LOG_WARN("%s:%d: %s の値が不正です: \"%s\" (off|low|always)",
+                         where, lineno, k->key, value);
+                return;
+            }
+            *(battery_show_t *)field = v;
             return;
         }
         case CFG_STR: {
@@ -414,6 +443,9 @@ static int write_config(const mugbs_config_t *c, FILE *f) {
                 break;
             case CFG_REPEAT:
                 fprintf(f, "%s = %s\n", k->key, repeat_name(*(const repeat_mode_t *)field));
+                break;
+            case CFG_BATTERY_SHOW:
+                fprintf(f, "%s = %s\n", k->key, battery_show_name(*(const battery_show_t *)field));
                 break;
             case CFG_STR: {
                 const char *s = (const char *)field;

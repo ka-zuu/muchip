@@ -41,6 +41,11 @@ typedef struct {
 
     const char *config_path;    /* 終了時・Settings画面を抜けるときの自動保存先。
                                     NULLなら保存しない(CLIオーバーライド指定時 等)。 */
+
+    int battery_low_pct; /* Issue #7: [ui] battery_show = low での「低い」しきい値(%)。
+                             main.c が battery_low_threshold_from_env() で決める
+                             (muOS の mux_launch.sh が export する
+                             MUGBS_BATTERY_LOW_PCT があればそれ、無ければ既定10%)。 */
 } app_options_t;
 
 /* cfg は呼び出し側(main())が所有する唯一の権威あるインスタンスへのポインタ。

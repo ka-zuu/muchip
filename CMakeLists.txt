@@ -58,6 +58,7 @@ target_include_directories(miniz PUBLIC vendor/miniz)
 add_executable(mugbs
     src/main.c
     src/config.c
+    src/battery.c
     src/eq.c
     src/audio.c
     src/shuffle.c

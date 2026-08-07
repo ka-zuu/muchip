@@ -73,6 +73,20 @@ else()
 endif()
 add_test(NAME test_ui_metrics COMMAND test_ui_metrics)
 
+# Issue #7 で追加した battery.c (SDL_GetPowerInfoの薄いラッパ) の単体テスト。
+# 判定用の純関数(battery_should_poll/battery_is_low/battery_should_show/
+# battery_low_threshold_from_env)はSDL_Initを一度も呼ばない
+# (test_ui_metricsと同じ方針)。battery.cはconfig.h(battery_show_t)に依存する。
+add_executable(test_battery test_battery.c ../src/battery.c ../src/config.c)
+target_include_directories(test_battery PRIVATE . ../src)
+if(TARGET SDL2::SDL2)
+    target_link_libraries(test_battery PRIVATE SDL2::SDL2)
+else()
+    target_include_directories(test_battery PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_battery PRIVATE ${SDL2_LIBRARIES})
+endif()
+add_test(NAME test_battery COMMAND test_battery)
+
 # --- ヘッドレスUIスモークテスト (P5) ----------------------------------------
 # app.c の画面遷移(Browser/Player/TrackList)がクラッシュしないことを、
 # 実際にmugbs本体をSDL_VIDEODRIVER=dummy/SDL_AUDIODRIVER=dummyの下で
@@ -108,8 +122,13 @@ foreach(res ${UI_SMOKE_RESOLUTIONS})
         COMMAND mugbs --window ${res} --start-dir ${UI_SMOKE_DIR}
                       --config ${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_${res}.ini
                       --ui-script ${CMAKE_CURRENT_SOURCE_DIR}/ui_smoke.script)
+    # MUGBS_BATTERY_FAKE (Issue #7): CIランナーにはバッテリーが無く
+    # SDL_GetPowerInfo() が NO_BATTERY/-1 を返すため、これが無いと
+    # draw_battery() のゲージ描画・縮退分岐が6解像度ぶんASan/UBSan下で
+    # 一度も実行されない。7は既定しきい値(10%)未満なので、既定の
+    # battery_show=low でも赤い(低残量)描画経路まで踏める。
     set_tests_properties(test_ui_smoke_${res} PROPERTIES
-        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;MUGBS_BATTERY_FAKE=7")
 endforeach()
 
 # --- .muxapp パッケージ構造の検証 (P7) ---------------------------------------

@@ -1961,6 +1961,173 @@ Player画面まで進めた。Claude側はSSH越しに`/dev/fb0`を1秒間隔で
 実機でもレイアウトの破綻・文字化け・クラッシュは無く、Issue #8で
 指摘された3点がいずれも解消されたことを確認した。
 
+## Issue #7: バッテリー残量の画面表示
+
+Issue本文（要約）:
+
+1. 画面右上（タイトル行）に表示するのが良さそう
+2. 常時表示・バッテリー減少時のみ表示・非表示の設定ができる
+3. 「減少」の判定は muOS 側の設定を活かせるならそれ、無ければ10%
+
+着手前にユーザーへ確認した4点（見た目・既定値・Player画面への表示・
+しきい値探索の要否）は本文末尾の実機検証チェックリストにも反映してある。
+
+### (a) `battery.c` を独立させた理由
+
+`app.c` は既に1300行超で、`app.h` 冒頭のコメントが「画面状態機械と
+レイアウト」と自称している。バッテリー残量はプラットフォームの事実
+であり、`browser.c`(dirent) や `player.c`(オーディオデバイス) と同じ層に
+置くのが筋が良い。加えて、`ui_marquee_offset()`（Issue #8）や
+`ui_metrics_compute()` と同じく「SDLをリンクするが `SDL_Init` は呼ばない
+純関数」として判定ロジック（`battery_should_poll`/`battery_is_low`/
+`battery_should_show`/`battery_low_threshold_from_env`）を切り出せば、
+`tests/test_battery.c` で `SDL_GetPowerInfo()` の実行環境依存を避けつつ
+境界条件（`Uint32`折り返し・しきい値境界・充電中の扱い）を検証できる。
+
+`SDL_GetPowerInfo()` 自体は Linux バックエンドで `/sys/class/power_supply`
+を毎回読み直すため、毎フレーム(60Hz)呼ぶとI/Oが無視できない。
+`battery_poll()` が内部で `BATTERY_POLL_INTERVAL_MS`(2秒)ごとにしか
+実際には読まないようにし、`app_update_battery()` という1フレーム1回だけの
+呼び出し口を`app_update_scope()`(F-14)と同じ場所に置いて、`draw_*()`側は
+`app->battery_status`/`app->battery_visible` を読むだけにした
+(1フレーム内で4画面が必ず同じ値を見える、という副次効果もある)。
+
+### (b) 充電中でも「低い」を隠さない
+
+`battery_is_low()` は充電中かどうかを見ない(残量そのものだけで判定する)。
+充電中は色を緑にして区別するので、「挿した瞬間に赤ゲージが消えて
+安心してしまう」よりは「挿しても暫くは赤のまま(緑に変わる)」の方が
+実態(まだ空に近い)を隠さない。
+
+### (c) 見た目はゲージのみ(数値は出さない)
+
+8x8埋め込みフォント(`vendor/font8x8`)はASCIIのみで絵文字が無い。
+ユーザーに確認した結果、矩形の枠+塗りのゲージのみを描く方針にした
+(数値`85%`を出す案もあったが、桁数で幅が動くとPlayerのマーキー
+(Issue #8)の可用幅が毎秒揺れてガタつく懸念があった。ゲージのみなら
+幅は常に固定でその心配が無い)。
+
+### (d) 4画面への組み込みは「描画スイッチ後のオーバーレイ」にしなかった
+
+`draw_browser()`のcwd表示も`draw_player()`の曲名マーキーも、タイトル行の
+幅いっぱいを使って描かれる。スイッチ後に上から重ね描きすると本文と
+衝突するため、`draw_battery()`が確保した幅を先に本文側の`max_w`から
+差し引いてから本文を描く、という順序を4画面それぞれのタイトル行で
+踏む形にした(共有ヘルパは`draw_battery(app, right_x, row_y, row_h)`
+1つで、呼び出し側が返り値の幅を引き算する)。Playerだけは曲名の行にのみ
+効かせ、以降の行(トラック番号・時間等)は`content_w`のまま(タイトル行より
+下から始まるため)。
+
+### (e) しきい値を config.ini のキーにしなかった理由
+
+Issueが求めているのは表示条件(off/low/always)の設定だけで、しきい値
+そのものまでconfig.iniに持たせると、SPECのサンプル・Settings画面・
+`packaging/muGBS/config.ini`と同期させる箇所が増える。`mux_launch.sh`が
+`MUGBS_BATTERY_LOW_PCT`を環境変数でexportする経路(`MUGBS_START_DIR`と
+同じ idiom)なら、muOS由来の値もSSHでの実験用上書きも両方まかなえる。
+3件目の類似ニーズが出たらconfig.ini化を再検討する。
+
+### (f) `SET_ENUM` の型パニング修正
+
+`repeat_mode_t`に続く2つ目の`SET_ENUM`(`battery_show_t`)を追加するに
+あたり、`setting_get`/`setting_set`が`repeat_mode_t *`決め打ちで
+読み書きしていたのを`int *`へ直した。両方の enum が `int` と同じ幅・
+表現であることを`_Static_assert`で明示し、前提が崩れたらビルドで
+気づけるようにしてある。
+
+### (g) muOSのしきい値探索は推測であることを明示する
+
+`mux_launch.sh`が試す `GET_VAR` の候補キー
+(`device:battery/low`/`global:settings/general/low_battery`/
+`global:settings/power/low_battery`)は、公開ドキュメントから確証を得た
+ものではなく推測。全候補の結果を`echo`で`log.txt`に残す設計にしたのは、
+初回の実機起動でどれが(あるいはどれも)生きているかを確認し、
+候補リストを絞り込む・別Issueに切り出すための材料にするため。
+見つからなければ何もexportされず、`battery_low_threshold_from_env(NULL)`
+が既定の10%を返す(Issue本文の要求どおりの安全側フォールバック)。
+
+### 検証
+
+ホストビルドの CTest: 新設 `tests/test_battery.c`(`battery_should_poll`の
+`Uint32`折り返し・`battery_is_low`/`battery_should_show`の境界値行列・
+`battery_low_threshold_from_env`のクランプ・`MUGBS_BATTERY_FAKE`パーサ)、
+`tests/test_config.c`の5箇所(`test_defaults`/`test_spec_sample`/
+`test_enum_and_bool_forms`/`check_equal`/`test_roundtrip_mutated`)、
+`tests/ui_smoke.script`に`Show battery`を1周ぶん踏む操作を追加、
+`tests/CMakeLists.txt`の`test_ui_smoke_*`に`MUGBS_BATTERY_FAKE=7`を追加して
+CIでもゲージの描画経路(縮退分岐含む)をASan/UBSan下で実行させるようにした。
+`ctest --test-dir build`・ASan/UBSanビルドとも全緑(SKIP無し)を確認した。
+
+レイアウト目視確認: 長い曲名(`.m3u`で明示的に長いタイトルを合成)と長い
+ディレクトリ名を用意し、`MUGBS_BATTERY_FAKE`で通常(85%)/低下(5%)/充電中
+(`+50`)を切り替えつつ、320x240/640x480/1280x720で`--ui-script`+
+`--screenshot`を確認。4画面ともゲージが右上に収まり本文と衝突しないこと、
+色分岐(グレー/赤/緑)が正しいこと、Playerでは曲名の可用幅がゲージ分だけ
+縮んで先が"..."でも切れずに収まることを確認した。
+
+### 実機検証（完了）
+
+実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、192.168.0.20）へSSH(鍵認証)
+で接続して確認した。`./scripts/build-aarch64.sh`でクロスビルドした
+`mugbs`をscpで転送し、`mux_launch.sh`と同じ環境構築（`func.sh`読み込み→
+`SETUP_APP`→`SDL_GAMECONTROLLERCONFIG_FILE`保証）を再現したうえで
+`--ui-script`/`--screenshot`/`MUGBS_BATTERY_FAKE`を使い、複数の画面・
+残量・状態を自動操作で確認した（P6実機確認と同じ「SSH直接起動」方式。
+`foreground_process`をmuxfrontendへ戻す後始末も実施済み）。
+
+**しきい値キーの実在確認（上記(g)の懸念点）**: `mux_launch.sh`が試す3候補
+`GET_VAR`のうち、**`global settings/power/low_battery` が実在し `15` を
+返した**（他の2候補は空文字）。推測で用意した候補リストが実機で当たって
+いたことを確認できた。`mux_launch.sh`の探索処理をそのまま実機で実行し、
+`MUGBS_BATTERY_LOW_PCT=15`が正しくexportされることも確認済み。
+
+**`SDL_GetPowerInfo()`の実機動作確認（最大のリスクだった項目）**:
+実機の`/sys/class/power_supply/axp2202-battery/`（`type=Battery`,
+`status=Charging`, `capacity=64`, `present=1`）を直接読んだうえで、
+`mugbs`のログに
+
+```
+[INFO] battery: present=1 percent=66 charging=1
+```
+
+が実際に出ることを確認した（複数回実行するとcapacityの上昇に追随して
+`percent=67`等に変化することも確認、充電中のためcapacityが実際に
+増加していた）。危惧していた「実機のSDL2ビルドでは`SDL_GetPowerInfo()`が
+`UNKNOWN`を返す」というR2のリスクは杞憂だった。
+
+**4画面での見た目**: Browser/Player/TrackList/Settingsそれぞれで
+`--screenshot`を取得し、実機の実解像度(640x480, malifbドライバ、
+ソフトウェアレンダラではなく実機の描画パス)でゲージが右上に正しく
+収まり、長い曲名・パスと衝突しないことを確認した。Settings画面の
+`Show battery`行が`always`と表示され、`X:Reset`の対象一覧にも
+（表駆動のため自動的に）含まれていることも画面で確認できた。
+
+**色分岐の3状態**: 実際の充電中バッテリー(67%, 緑)に加え、
+`MUGBS_BATTERY_FAKE=90`（非充電、通常=グレー）・`MUGBS_BATTERY_FAKE=8`
+（既定の`low`モードで自動表示、残量僅少=赤）を実機で切り替えて描画を
+確認した。3色とも実機のフレームバッファ経由のスクリーンショットで
+正しく出ることを確認済み。
+
+**config.iniの永続化**: `battery_show = low`（既定）が実機で保存される
+ことと、`always`を指定した`config.ini`を渡した場合はそれを読み込んで
+起動することを確認した（実機の`config_save`/`config_load`経路そのもの）。
+
+**未確認のまま残った項目**（自動操作の範囲外、または今回は必要性が低いと
+判断したもの）:
+
+- 充電ケーブルの物理的な抜き差しによる色のリアルタイム切り替わり
+  （SSH越しの自動操作では抜き差し自体ができない。ロジック上は
+  `battery_poll()`が2秒ごとに読み直すので反映されるはずだが、目視の
+  実地確認はしていない）
+- `mux_launch.sh`経由（Archive Managerからの起動）でのフル
+  ライフサイクル・物理ボタンでの`Show battery`のLEFT/RIGHT操作
+  （Issue #8で確立した「ユーザーが物理ボタンを操作しClaudeがSSH側で
+  ログ・スクリーンショットを見る」方式を要する。今回はSSH直接起動で
+  `SDL_GetPowerInfo()`とレイアウトという最大の不確定要素を先に潰す
+  ことを優先した。ボタン操作自体は`SETTINGS[]`の他項目と共通の
+  `adjust_setting()`経路であり、Issue #8までに実機で繰り返し確認済みの
+  経路のため、新規リスクは小さいと判断）
+
 ## 検証手順
 
 ```sh
