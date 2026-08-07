@@ -2119,14 +2119,56 @@ CIでもゲージの描画経路(縮退分岐含む)をASan/UBSan下で実行さ
   （SSH越しの自動操作では抜き差し自体ができない。ロジック上は
   `battery_poll()`が2秒ごとに読み直すので反映されるはずだが、目視の
   実地確認はしていない）
-- `mux_launch.sh`経由（Archive Managerからの起動）でのフル
-  ライフサイクル・物理ボタンでの`Show battery`のLEFT/RIGHT操作
-  （Issue #8で確立した「ユーザーが物理ボタンを操作しClaudeがSSH側で
-  ログ・スクリーンショットを見る」方式を要する。今回はSSH直接起動で
-  `SDL_GetPowerInfo()`とレイアウトという最大の不確定要素を先に潰す
-  ことを優先した。ボタン操作自体は`SETTINGS[]`の他項目と共通の
-  `adjust_setting()`経路であり、Issue #8までに実機で繰り返し確認済みの
-  経路のため、新規リスクは小さいと判断）
+- 物理ボタンでの`Show battery`のLEFT/RIGHT操作そのもの（下記
+  「v1.1.0リリース時の実機インストール確認」で`mux_launch.sh`経由の
+  フルライフサイクル自体は確認したが、ボタン操作はSSH越しでは注入できない
+  ため未確認。`SETTINGS[]`の他項目と共通の`adjust_setting()`経路であり、
+  Issue #8までに実機で繰り返し確認済みの経路のため、新規リスクは
+  小さいと判断）
+
+### v1.1.0リリース時の実機インストール確認（完了）
+
+PR #10マージ後、v1.1.0としてリリースする際に実機への正式インストールを
+確認した。`./scripts/release.sh`でクロスビルド・`.muxapp`生成・タグ
+push・下書きReleaseまで行った後、`scp muGBS-1.1.0.muxapp
+root@192.168.0.20:/mnt/mmc/ARCHIVE/`で転送し、`/opt/muos/script/mux/extract.sh`
+（Archive Managerが内部で呼ぶのと同一スクリプト）で展開した。
+
+**確認できたこと:**
+
+- 展開後の`bin/mugbs`が`1.1.0`を報告し、`mux_launch.sh`が更新版
+  （しきい値探索ブロック込み、8715バイト）に置き換わっていることを確認
+- **`mux_launch.sh`を`muxfrontend`と同じ形（`$1`にAPP_DIRを渡す）で
+  直接起動し、本番の起動経路そのものを実行した**。ログに以下が実際に
+  出ることを確認した:
+  ```
+  battery: probe GET_VAR device battery/low -> ''
+  battery: probe GET_VAR global settings/general/low_battery -> ''
+  battery: probe GET_VAR global settings/power/low_battery -> '15'
+  battery: low threshold 15% (muOS)
+  ...
+  [INFO] battery: present=1 percent=88 charging=1
+  ```
+  `SETUP_APP`経由で`foreground_process`が`mugbs`へ正しく切り替わることも
+  確認した（起動前は`muxfrontend`、起動後は`mugbs`）。
+- `/dev/fb0`を直接ダンプしてBrowser画面のスクリーンショットを取得した。
+  `battery_show`既定値`low`・残量88%（>しきい値15%）のため、想定どおり
+  ゲージは非表示だった（8x8フォントの描画そのものは正常）
+- 終了は`kill -TERM $(pidof mugbs)`（muOSの`script/mux/quit.sh`と同じ
+  シグナル）で行い、`config.ini`が正常に保存されたうえで`exit 0`で
+  終了することを確認した。その後`foreground_process`を`muxfrontend`へ
+  手動で戻し（本来は`quit.sh`が行う後処理）、`/tmp`の一時ファイルを
+  削除して実機をテスト前の状態に戻した
+- **既知の注意点（本Issueとは無関係の既存事象）**: `/dev/fb0`の生ダンプには
+  画面左上に小さな緑色のバッジ（`+9`という文字を含む）が写り込む。
+  `mugbs`の`--screenshot`機能（SDLレンダラから直接読む）で撮った同じ
+  画面には現れないため、`mugbs`自身の描画ではなく、フレームバッファに
+  後から重ねて書き込まれる何らかのmuOS側のシステムオーバーレイ
+  （CPUガバナ表示等と推測）だと分かる。今回の変更に起因するものではない
+
+これにより、Issue #7節の「未実施」だった`mux_launch.sh`経由の起動確認
+（物理ボタン操作を除く）と、リリース物である`.muxapp`のインストール
+自体の両方を実機で確認できた。
 
 ## 検証手順
 
