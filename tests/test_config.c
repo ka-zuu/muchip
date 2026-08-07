@@ -34,6 +34,7 @@ static int test_defaults(void) {
     config_set_defaults(&c);
 
     CHECK(c.default_length_sec == 180);
+    CHECK(c.length_override_sec == 0); /* Issue #19: 既定はauto */
     CHECK(c.fade_length_ms == 8000);
     CHECK(c.repeat_mode == REPEAT_ALL);
     CHECK(c.shuffle == 0);
@@ -56,6 +57,7 @@ static int test_spec_sample(void) {
     static const char *sample =
         "[playback]\n"
         "default_length_sec = 180   ; 曲長不明時の再生秒数\n"
+        "length_override_sec = 0    ; ながさチェンジ(Issue #19)。0=auto\n"
         "fade_length_ms     = 8000\n"
         "repeat_mode        = all   ; none | one | all\n"
         "shuffle            = false\n"
@@ -76,6 +78,7 @@ static int test_spec_sample(void) {
     config_set_defaults(&c);
     /* 既定値と区別が付くよう、あえて全部ずらしてから読ませる。 */
     c.default_length_sec = 1;
+    c.length_override_sec = 900;
     c.eq_bass = 1;
     c.repeat_mode = REPEAT_NONE;
     c.shuffle = 1;
@@ -86,6 +89,7 @@ static int test_spec_sample(void) {
     CHECK(load_str(&c, sample) == 0);
 
     CHECK(c.default_length_sec == 180);
+    CHECK(c.length_override_sec == 0);
     CHECK(c.fade_length_ms == 8000);
     CHECK(c.repeat_mode == REPEAT_ALL);
     CHECK(c.shuffle == 0);
@@ -324,6 +328,34 @@ static int test_string_truncation(void) {
     return 0;
 }
 
+/* --- Issue #19: length_override_sec(ながさチェンジ) --------------------- */
+
+static int test_length_override_sec(void) {
+    mugbs_config_t c;
+
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[playback]\nlength_override_sec = 900\n") == 0);
+    CHECK(c.length_override_sec == 900);
+
+    /* 0(auto)も有効な値として読める(既定値と同じだが、明示的にautoへ
+     * 戻す config.ini からも読めることを確認する)。 */
+    config_set_defaults(&c);
+    c.length_override_sec = 900;
+    CHECK(load_str(&c, "[playback]\nlength_override_sec = 0\n") == 0);
+    CHECK(c.length_override_sec == 0);
+
+    /* 範囲外はクランプされる(下限0、上限3600 = default_length_secと同じ)。 */
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[playback]\nlength_override_sec = -5\n") == 0);
+    CHECK(c.length_override_sec == 0);
+
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[playback]\nlength_override_sec = 999999\n") == 0);
+    CHECK(c.length_override_sec == 3600);
+
+    return 0;
+}
+
 /* --- [input] セクション ------------------------------------------------- */
 
 static int test_input_section(void) {
@@ -344,6 +376,7 @@ static int test_input_section(void) {
 static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
     /* padding を含む可能性があるため memcmp ではなくフィールド毎に見る。 */
     CHECK(a->default_length_sec == b->default_length_sec);
+    CHECK(a->length_override_sec == b->length_override_sec);
     CHECK(a->fade_length_ms == b->fade_length_ms);
     CHECK(a->repeat_mode == b->repeat_mode);
     CHECK(a->shuffle == b->shuffle);
@@ -382,6 +415,7 @@ static int test_roundtrip_mutated(void) {
     mugbs_config_t c;
     config_set_defaults(&c);
     c.default_length_sec = 47;
+    c.length_override_sec = 900;
     c.fade_length_ms = 1500;
     c.repeat_mode = REPEAT_ONE;
     c.shuffle = 1;
@@ -422,6 +456,7 @@ int main(void) {
     if (test_crlf()) return 1;
     if (test_overlong_line()) return 1;
     if (test_string_truncation()) return 1;
+    if (test_length_override_sec()) return 1;
     if (test_input_section()) return 1;
     if (test_roundtrip_defaults()) return 1;
     if (test_roundtrip_mutated()) return 1;

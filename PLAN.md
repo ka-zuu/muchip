@@ -2428,6 +2428,157 @@ upstreamのデフォルト=1始まりのまま動くこと。上記(c)節参照�
 削除し、`.muxapp`は他バージョンと同様`/mnt/mmc/ARCHIVE/`に残した
 （インストール済みバイナリ`1.3.0`自体は意図的にそのまま残置）。
 
+## Issue #19: ながさチェンジ機能（v1.4.0）
+
+Issueの本文は条件付きだった: 「Nintendo Musicのながさチェンジ相当を
+実装する。Default lengthがm3uの時間で上書きされるなら必要、Default
+lengthが生きる（＝m3u優先のまま）なら実質ながさチェンジそのものなので
+不要」。着手前にコードを読んで確認したところ、`playlist.c`の
+`playlist_effective_length_ms()`（当時の名前。後述のとおり分割した）は
+`info->length > 0`（拡張m3uの曲長欄や実測値）→ `intro+loop` → 
+`cfg->default_length_sec` の順で判定しており、**Default lengthは
+「曲長が全く分からない曲」専用のフォールバックで、m3uに時間が
+書いてある曲には一切効かない**ことが分かった。つまり前者（機能が必要な
+方）に該当したため、実装した。
+
+ユーザー確認済みの決定事項:
+
+1. 操作はSettings画面の項目のみ（Player画面のYコンボは追加しない。
+   4方向は既にRepeat/Shuffleで埋まっているため）
+2. 選択肢は `auto` / 5 / 10 / 15 / 20 / 25 / 30 分（5分刻み）
+
+### 設計判断
+
+- **技術的な裏付け**: GBS/NSFは自然にループし続け、曲を終わらせているのは
+  `gme_set_fade_msecs()`のフェードだけである（`handle_fade()`が
+  `track_ended_`を立てる。`vendor/game-music-emu/gme/Music_Emu.cpp`）。
+  したがってフェード開始時刻を後ろへ倒せば延長、前へ倒せば短縮になり、
+  Issue #15で作った`playlist_fade_start_ms()`と同じ層（フェード開始時刻の
+  決定ロジック）に素直に乗せられた。
+- **設定の持ち方**: `mugbs_config_t`に`length_override_sec`を追加
+  （0=auto、非0で全トラックへ強制。config.iniのクランプ範囲は
+  `default_length_sec`と同じ0..3600秒にしてあるが、Settings画面が
+  実際に出す値は0..1800の5分刻みだけ）。
+- **実測値を捨てない**: `Length`を`auto`へ戻したときにm3u/実測の曲長へ
+  復帰できる必要があるため、`playlist_entry_t`に`natural_ms`
+  （上書きを無視した実測曲長。`length_known==0`なら0）を新設した。
+  `duration_ms`（従来からある「今使うべき」実効値）とは役割を分けている。
+- **純関数の分割**: 旧`playlist_effective_length_ms()`を2つに割った:
+  - `playlist_natural_length_ms(info, &known)`: 既存の「乖離#1」判定
+    （`length`/`intro+loop`の有無）だけを行う。
+  - `playlist_resolve_length_ms(natural_ms, known, cfg)`:
+    `cfg->length_override_sec > 0`なら問答無用でそれを返し、`auto`なら
+    従来どおり`known ? natural_ms : default_length_sec*1000`。
+  - `playlist_effective_length_ms()`はこの2つを合成する薄いラッパとして
+    残し、`player.c`の`start_track_at()`の呼び出しは変更していない。
+  - `playlist_apply_default_length()`は`playlist_apply_length_config()`へ
+    改名し、`length_known`で絞らず**全エントリ**の`duration_ms`を
+    `playlist_resolve_length_ms()`で計算し直すようにした（Issue #16までは
+    フォールバック中のエントリだけが対象だったが、Issue #19では実測値の
+    ある曲も上書き対象になるため）。
+- **再生中への即時反映**: Issue #15の「repeat変更は今鳴っている曲へ即座に
+  反映する」という決定に合わせた。`app_apply_settings()`の呼び出し順を
+  `playlist_apply_length_config()` → `player_apply_config()`の順に変更し
+  （逆順だと`duration_ms`の更新前にフェードを張り直してしまう）、
+  `player_apply_config()`側は`p->playlist && p->current_entry >= 0`のとき
+  `p->fade_at_ms`を`entries[current_entry].duration_ms`から読み直す1行を
+  追加した。あとはIssue #15で既に入っていた「開始時刻を過ぎていれば
+  `player_tell_ms()`の現在位置へ繰り上げる」ガードがそのまま働くため、
+  曲を短くした場合でもブツ切れにならない。`REPEAT_ONE`は従来どおり
+  `playlist_fade_start_ms()`が`-1`を返して優先する（＝`one`の間は
+  `Length`の値によらずエンドレスのまま）。
+- **UI**: `setting_kind_t`に`SET_LENGTH`を追加した。`SET_MINUTES`
+  （Issue #16）とほぼ同じ（秒で保持し表示だけ分単位）だが、`0`を特別扱いで
+  `auto`と表示する点が異なるため専用の種別にした。目盛りの吸着
+  （`adjust_setting()`）は`SET_MINUTES`と同じ式を共有し、stepが300
+  （5分）になるだけで成立した。`SETTINGS[]`の先頭（`Default length`より
+  前）に置いた——Issue #16で「最も触る項目」として`Default length`を
+  先頭に上げた判断と同じ理由で、`Length`はそれよりもさらに触る頻度が
+  高いと判断した。
+- **Player画面のステータス行**: `auto`のときは今までどおり何も表示せず
+  （`repeat:xxx shuffle:on/off`のまま文字数を食わない）、上書き中だけ
+  末尾へ`  len:15m`のように追記する。8x8等幅フォントで狭い解像度だと
+  他の項目（`repeat`/`shuffle`）と合わせて`ui_text_clipped()`により
+  `...`で省略されることがあるが、これは既存の同じ行の他フィールドも
+  同じ扱いを受けており新規の問題ではない。
+
+### 検証
+
+- 純関数レベル: `tests/test_playlist.c`に`test_resolve_length_ms()`
+  （`test_fade_start_ms()`と同じ位置付けの、SDL/libgme初期化不要な
+  ロジックテスト）を追加。auto/上書き双方、および上書きから`auto`へ
+  戻したときに渡した`natural_ms`がそのまま返ることを確認。
+- プレイリスト単位: `test_length_override_applies_and_reverts()`を追加。
+  `test_sidecar_m3u()`と同じ合成フィクスチャ・拡張M3U構文
+  （`0:32`/`2:34`/`1:45`の曲長欄。`vendor/game-music-emu/gme/
+  M3u_Playlist.cpp`の`parse_time_()`で秒→ms変換されることをソースで確認
+  済み）を使い、(1)スキャン直後から上書き値が使われること、(2)
+  `natural_ms`にm3u由来の実測値が残っていること、(3)
+  `playlist_apply_length_config()`で`auto`に戻すとファイルを開き直さずに
+  実測値へ復元されること、(4)再度上書きへ戻しても正しく効くこと、を
+  1つのplaylistオブジェクトに対して連続で確認した。
+- 設定の永続化: `tests/test_config.c`に既定値(0)・ラウンドトリップ
+  比較・`length_override_sec`単体のパース/クランプ（範囲外の`-5`が`0`へ、
+  `999999`が`3600`へ丸まること）のテストを追加。
+- UIスモーク: `tests/ui_smoke.script`のSettings区間の先頭に、
+  再生中（`SELECT`で再開済み）に`Length`を`auto`から`5 min`へ変える
+  ステップを追加し、`player_apply_config()`の新しい`fade_at_ms`更新経路
+  （`SET_LENGTH`）を6解像度×ASan/UBSanのCIで踏むようにした。
+- ヘッドレスGUI（`--window`+`--ui-script`+`--screenshot`、ホスト上の
+  offscreenドライバ）で、Settings画面の`Length auto`表示と、`15 min`に
+  変えた直後のPlayer画面（`0:00 / 15:08` = 900秒の上書き + 8秒の既定
+  フェード長。ステータス行に`len:15m`が追記されようとしていること）を
+  目視確認した。
+- CLIハーネス（`--cli`）で、合成フィクスチャ（無音・2トラック）に対し
+  `--length 4 --fade-ms 500 --repeat none`を実行し、2トラック分
+  （4.5秒×2＝9秒）でちょうど`トラック終端検出`が2回出て停止することを
+  実測（`real 0m9.5s`）。Issue #15のときと同じ「ログの二値判定」の
+  考え方で、m3u/実測の曲長ではなく上書き値でフェードが張られていることの
+  直接証拠になる。
+### 実機検証（完了）
+
+`./scripts/build-aarch64.sh` → `./scripts/package.sh` →
+`scp muGBS-1.4.0.muxapp root@192.168.0.20:/mnt/mmc/ARCHIVE/` →
+`/opt/muos/script/mux/extract.sh`（Archive Managerが内部で呼ぶのと同一
+スクリプト）で実機へ導入し、`bin/mugbs --version`が`muGBS 1.4.0`を
+報告することを確認した。
+
+**「上書きが効く」ことと「`one`が優先する」ことの両方を、実在の
+ループ曲（Issue #15と同じ`Tetris (World) (Rev 1) [BGM].gbs`。同名m3uは
+無いので全17トラックとも`length_known==0`＝Default lengthフォールバック
+対象）に対する`--cli`のログだけで機械的に確認した**（目視ではなく、
+「フェード完了→次トラックへ」のログが出るか出ないかという二値の確認。
+Issue #15の検証方針を踏襲）:
+
+- `--length 4 --fade-ms 1000 --repeat none --track 1`（曲全体、17トラック
+  を通し再生）: 各トラックとも約4.5秒（=4秒+1秒フェード）で
+  `トラック終端検出 -> 次トラックへ`が出て次へ進み、17トラック目安通り
+  `real 1m18s`（≒17×4.5秒）で全曲を終えて停止した。m3uも実測値も無い
+  曲で、かつ実際には長く鳴り続けるはずのBGMトラックが、狙いどおり
+  `Length`の上書き値だけで一律にフェードしていることの直接証拠になる。
+- `--length 4 --fade-ms 1000 --repeat one --track 1`: 25秒間観察して
+  一度も`トラック終端検出`が出なかった。`playlist_fade_start_ms()`が
+  `REPEAT_ONE`のとき`length_override_sec`の値によらず常に`-1`
+  （フェード無効）を返すというソースレビューの結論と一致する。
+  （余談: 初回試行時にSIGTERM経由の`timeout`で直前のプロセスを止めた
+  直後に実行したところ数秒おきに終端検出が出る不安定な結果が一度だけ
+  観測されたが、SIGKILLで確実に前プロセスを終了させてから撮り直した
+  ところ再現しなかった。前セッションのPipeWire/ALSA状態が残っていた
+  ことによる環境起因のノイズと判断し、コード側の問題ではないと結論した）。
+
+**UIの見た目**は実機のSDLレンダラ経由の`--screenshot`（640x480、
+`--window`指定なのでmuOS本体の全画面表示は奪わない）で目視確認した:
+Settings画面で`Length`を`auto`→`5 min`に変えた直後の表示が`5 min`に
+なっていること、`15 min`まで進めてPlayer画面へ戻ると合計時間が
+`0:00 / 15:08`（900秒の上書き+8秒の既定フェード長）になっていることを
+確認した。ステータス行の`len:15m`はホストでの確認時と同様、狭い表示幅
+では`...`で省略される（`repeat`/`shuffle`と同じ既存の挙動で新規の問題
+ではない）。
+
+検証後、実機の`/tmp`の一時ファイル（ui-script・screenshot・config）を
+削除し、`.muxapp`は他バージョンと同様`/mnt/mmc/ARCHIVE/`に残した
+（インストール済みバイナリ`1.4.0`自体は意図的にそのまま残置）。
+
 ## 検証手順
 
 ```sh

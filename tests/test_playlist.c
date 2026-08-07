@@ -429,6 +429,81 @@ static int test_zip_single_m3u(void) {
     return 0;
 }
 
+/* Issue #19: playlist_resolve_length_ms() は length_override_sec のみを
+ * 見る純関数。SDLもlibgmeの初期化も要らない。 */
+static int test_resolve_length_ms(void) {
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.default_length_sec = 180;
+
+    /* auto(0): 既知ならnatural_msをそのまま、不明ならdefault_length_secへ */
+    cfg.length_override_sec = 0;
+    CHECK(playlist_resolve_length_ms(32000, 1, &cfg) == 32000);
+    CHECK(playlist_resolve_length_ms(0, 0, &cfg) == 180000);
+
+    /* 上書き中(900秒=15分): 既知/不明を問わず強制される (F-28) */
+    cfg.length_override_sec = 900;
+    CHECK(playlist_resolve_length_ms(32000, 1, &cfg) == 900000);
+    CHECK(playlist_resolve_length_ms(0, 0, &cfg) == 900000);
+
+    /* autoへ戻すと、渡したnatural_msがそのまま復元される
+     * (=呼び出し側がnatural_msを保持しておけば情報が失われない) */
+    cfg.length_override_sec = 0;
+    CHECK(playlist_resolve_length_ms(32000, 1, &cfg) == 32000);
+
+    return 0;
+}
+
+/* Issue #19: playlist_open()でスキャンした直後は上書きが効いていること、
+ * playlist_apply_length_config()でauto(0)へ戻すとm3u由来の実測値
+ * (natural_ms)へ復元されること(=情報が失われていないこと)を確認する。
+ * test_sidecar_m3u()と同じ合成フィクスチャ・m3u構文(拡張M3Uの曲長
+ * フィールド)を使う。 */
+static int test_length_override_applies_and_reverts(void) {
+    char *gbs = path_in("length_override.gbs");
+    write_synthetic_gbs(gbs, 3);
+    write_text_file(path_in("length_override.m3u"),
+        "length_override.gbs::GBS,0,Title Screen,0:32\n"
+        "length_override.gbs::GBS,1,Overworld,2:34\n"
+        "length_override.gbs::GBS,2,Battle,1:45\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.length_override_sec = 900; /* 15分 (Settingsが出す選択肢の1つ) */
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 3);
+
+    /* スキャン時点から、m3uの曲長ではなく上書き値が使われていること。 */
+    for (int i = 0; i < pl->entry_count; i++) {
+        CHECK(pl->entries[i].duration_ms == 900000);
+        CHECK(pl->entries[i].length_known); /* 実測できたこと自体は変わらない */
+    }
+    /* 実測値がnatural_msに残っていること(上書きに巻き込まれて消えていない)。 */
+    CHECK(pl->entries[0].natural_ms == 32000);
+    CHECK(pl->entries[1].natural_ms == 154000);
+    CHECK(pl->entries[2].natural_ms == 105000);
+
+    /* autoへ戻す(Settings画面でLengthをautoに操作したときと同じ経路)。
+     * ファイルを開き直さずに m3u 由来の実測値へ復元されること。 */
+    cfg.length_override_sec = 0;
+    playlist_apply_length_config(pl, &cfg);
+    CHECK(pl->entries[0].duration_ms == 32000);
+    CHECK(pl->entries[1].duration_ms == 154000);
+    CHECK(pl->entries[2].duration_ms == 105000);
+
+    /* もう一度上書きへ戻しても正しく効くこと(往復できること)。 */
+    cfg.length_override_sec = 300;
+    playlist_apply_length_config(pl, &cfg);
+    for (int i = 0; i < pl->entry_count; i++) {
+        CHECK(pl->entries[i].duration_ms == 300000);
+    }
+
+    playlist_free(pl);
+    return 0;
+}
+
 /* Issue #15: playlist_fade_start_ms() は REPEAT_ONE のときだけフェードを
  * 無効化(-1)する純関数。SDLもlibgmeの初期化も要らない。 */
 static int test_fade_start_ms(void) {
@@ -462,6 +537,8 @@ int main(void) {
     if (test_zip_single_m3u()) return 1;
     if (test_zip_multiple_m3u()) return 1;
     if (test_fade_start_ms()) return 1;
+    if (test_resolve_length_ms()) return 1;
+    if (test_length_override_applies_and_reverts()) return 1;
 
     printf("test_playlist: すべて成功\n");
     return 0;

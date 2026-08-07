@@ -92,11 +92,10 @@ static int read_file(const char *path, char **out_buf, size_t *out_len) {
 /* gme_info_t.play_length は曲長不明時に -1 ではなく 150000(既定150秒)を
  * 返してしまう(PLAN.md 記載の乖離#1)ため、これだけでは「本当に不明か」を
  * 判定できない。length(総曲長)/intro_length+loop_length(ループ構造)の
- * 有無で判定し、どちらも無ければ config の default_length_sec を使う (F-08)。
- * playlist.c(スキャン時)と player.c(再生開始時)の双方が同じ判定を
- * 必要とするため、ここに一本化する(元は player.c 内の static実装)。 */
-int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *cfg,
-                                  int *out_known) {
+ * 有無で判定する。playlist.c(スキャン時)と player.c(再生開始時)の
+ * 双方が同じ判定を必要とするため、ここに一本化する
+ * (元は player.c 内の static実装)。 */
+int playlist_natural_length_ms(const gme_info_t *info, int *out_known) {
     if (info->length > 0) {
         if (out_known) *out_known = 1;
         return info->length;
@@ -106,15 +105,32 @@ int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *c
         return info->play_length;
     }
     if (out_known) *out_known = 0;
-    return cfg->default_length_sec * 1000;
+    return 0;
 }
 
-void playlist_apply_default_length(playlist_t *pl, const mugbs_config_t *cfg) {
+/* Issue #19: length_override_sec(非0)が設定されていれば、既知/不明を
+ * 問わず全トラックの曲長をそれへ強制する (F-28)。autoならF-08どおり
+ * knownならnatural_ms、そうでなければdefault_length_secへフォールバック
+ * する。 */
+int playlist_resolve_length_ms(int natural_ms, int known, const mugbs_config_t *cfg) {
+    if (cfg->length_override_sec > 0) {
+        return cfg->length_override_sec * 1000;
+    }
+    return known ? natural_ms : cfg->default_length_sec * 1000;
+}
+
+int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *cfg,
+                                  int *out_known) {
+    int known;
+    int natural_ms = playlist_natural_length_ms(info, &known);
+    if (out_known) *out_known = known;
+    return playlist_resolve_length_ms(natural_ms, known, cfg);
+}
+
+void playlist_apply_length_config(playlist_t *pl, const mugbs_config_t *cfg) {
     for (int i = 0; i < pl->entry_count; i++) {
         playlist_entry_t *e = &pl->entries[i];
-        if (!e->length_known) {
-            e->duration_ms = cfg->default_length_sec * 1000;
-        }
+        e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, cfg);
     }
 }
 
@@ -208,11 +224,15 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
         e->source_index = source_index;
         e->track_index = i;
         if (info) {
-            e->duration_ms = playlist_effective_length_ms(info, cfg, &e->length_known);
+            e->natural_ms = playlist_natural_length_ms(info, &e->length_known);
         } else {
-            e->duration_ms = cfg->default_length_sec * 1000;
+            e->natural_ms = 0;
             e->length_known = 0;
         }
+        /* Issue #19: duration_msは「今使うべき」実効値。Length上書き中に
+         * 開いたファイルでも、auto に戻したとき natural_ms から復元できる
+         * よう別途保持しておく(playlist_apply_length_config()参照)。 */
+        e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, cfg);
         pl->entry_count++;
 
         if (info) {

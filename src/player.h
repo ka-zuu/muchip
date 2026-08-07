@@ -63,7 +63,9 @@ typedef struct {
      * フェード開始時刻(ms)。REPEAT_ONE中はこれをそのまま
      * gme_set_fade_msecs() には渡さず playlist_fade_start_ms() 経由で
      * -1(フェード無効)にしているため、one を抜けたときに元の時刻へ
-     * 復元できるようここへ保持しておく(player_apply_config()参照)。 */
+     * 復元できるようここへ保持しておく(player_apply_config()参照)。
+     * Issue #19: length_override_sec の変更時は player_apply_config() が
+     * entries[current_entry].duration_ms から読み直して更新する。 */
     int fade_at_ms;
 } player_t;
 
@@ -122,8 +124,11 @@ int player_current_duration_ms(const player_t *p);
  * stereo_depth / eq_* は現在開いている emu へ即時(audio_lock で
  * 保護。Effects_Buffer::config() は再確保を行わないため再生中に呼んでも
  * 安全 -- vendor/game-music-emu/gme/Effects_Buffer.cpp 参照)。
- * repeat_mode のうち REPEAT_ONE への出入り(Issue #15)はいま鳴っている
- * トラックのフェード有無へ即時反映する(audio_lockで保護。詳細はplayer.c)。
+ * repeat_mode のうち REPEAT_ONE への出入り(Issue #15)と
+ * length_override_sec(Issue #19: ながさチェンジ)はいま鳴っている
+ * トラックのフェード有無/開始時刻へ即時反映する(audio_lockで保護。
+ * 詳細はplayer.c。呼び出し側は先に playlist_apply_length_config() で
+ * entries[].duration_ms を更新してから呼ぶこと)。
  * それ以外(REPEAT_NONE<->ALLの切り替えやシャッフル)は次のトラック送りから、
  * default_length_sec/fade_length_ms は次に start_track_at() を通ったとき
  * (=次トラック)から自然に反映される(config はポインタなので player 側で
