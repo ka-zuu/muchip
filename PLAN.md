@@ -1919,8 +1919,47 @@ offにすると Issue #3 以前と同じ `ui_text_clipped()` の `"..."` 省略�
 曲名が途切れず表示されること（静止画のため動き自体は未確認）、
 `title_scroll=off` で従来どおり `"..."` 省略に戻ることを確認した。
 
-**実機検証は未実施。** マーキーのアニメーション速度・読みやすさは
-実機の画面サイズ・視距離でしか判断できないため、次回実機接続時に確認する。
+### 実機検証（完了）
+
+実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、192.168.0.20）へ
+`./scripts/build-aarch64.sh` → `./scripts/package.sh` で作った
+`.muxapp` を `/opt/muos/script/mux/extract.sh`（Archive Managerが内部で
+呼ぶのと同じスクリプト、P7で確立した手順）経由でインストールした。
+インストール直後の `config.ini` に `title_scroll = true`（既定値）が
+含まれていることを確認済み。
+
+ユーザーが実機の物理ボタンで `Apps > muGBS プレーヤー` を起動し、
+`/mnt/sdcard/ROMS/VGM/GBS/Parodius (EMU).zophar.zip`（P12で使った実データ。
+28個の`.m3u`が連結され、どの曲名も `"<曲名> - Akiko Ito, Shigeru
+Fukutake, Hidehiro Funauchi - Parodius - ©1991-04-05 Konami"` という
+90文字超の長さで実機640x480(TITLE=24px)では確実に画面幅を超える）を開いて
+Player画面まで進めた。Claude側はSSH越しに`/dev/fb0`を1秒間隔で連続ダンプし
+（`dd if=/dev/fb0` → 32bit `BGRA` として `numpy`/`PIL`でPNG化。実機の
+フレームバッファは`fbset -i`で確認した `rgba 8/16,8/8,8/0,8/24`、
+640x480、`stride=2560`）、`foreground_process`の値とログを確認した。
+
+**確認できたこと:**
+
+- **1・2（再生位置の1行化）**: `0:12 / 0:42` のような時間表示とシークバーが
+  同じ行に収まり、時間が左・バーが残り幅いっぱいに描かれることを実機の
+  スクリーンショットで確認した。曲送り（`repeat:all`によるトラック終端の
+  自動遷移）でも崩れなかった
+- **3（曲名の横スクロール）**: 1秒間隔の連続キャプチャで、長い曲名
+  （例:`"Theme of Vic Viper - Akiko Ito, Shigeru Fukutake, Hidehiro
+  Funauchi - Parodius - ©1991-04-05 Konami"`）が実際に左へ滑らかに流れ、
+  数秒〜十数秒で一周して読める速度であることを目視確認した。文字の
+  重なり・ちらつき・クリップ境界からのはみ出しは無かった。ファイル一覧・
+  波形ビジュアライザとも正常に描画され続けた
+- **起動・終了経路**: `mux_launch.sh`経由の起動で`foreground_process`が
+  `mugbs`になり(muxfrontendのオーバーレイなし)、Start+Selectでの終了後は
+  `mugbs exited with 0`とログに残り、`foreground_process`が`muxfrontend`
+  へ戻って`アプリケーション`一覧に`muGBS プレーヤー`が正常に表示される
+  ことを確認した(P7で確立した正式な起動経路の回帰も無いことの確認を兼ねる)
+- Settings画面の`Scroll title`をoffにした場合の見た目もユーザーが実機で
+  確認し、問題ないことを確認済み
+
+実機でもレイアウトの破綻・文字化け・クラッシュは無く、Issue #8で
+指摘された3点がいずれも解消されたことを確認した。
 
 ## 検証手順
 
