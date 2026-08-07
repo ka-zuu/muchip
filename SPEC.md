@@ -66,8 +66,8 @@
 | F-04 | `.zip` 内の `.gbs` / `.m3u` を、展開せずメモリ上で扱える |
 | F-05 | ファイルブラウザでSDカード上のファイルを選択できる |
 | F-06 | 再生／一時停止／次トラック／前トラック／シークができる |
-| F-07 | 曲長が判明している場合、終端でフェードアウトし自動的に次トラックへ進む |
-| F-08 | 曲長が不明な場合、設定した既定時間（デフォルト150秒）で次へ進む |
+| F-07 | 曲長が判明している場合、終端でフェードアウトし自動的に次トラックへ進む。ただしリピートが1曲リピート（`one`）のときはフェードせずエンドレスに再生し続ける（Issue #15） |
+| F-08 | 曲長が不明な場合、設定した既定時間（デフォルト180秒 = 3分。Settings画面では分単位で編集する。Issue #16）で次へ進む（リピートが `one` のときはF-07と同様エンドレス） |
 
 ### 3.2 SHOULD（推奨）
 
@@ -176,6 +176,8 @@ if (play_length > 0)
     gme_set_fade(emu, play_length);   /* 引数はフェード開始時刻(ms) */
 else
     gme_set_fade(emu, default_secs * 1000);
+/* リピートが one のときは開始時刻を負にしてフェード自体を無効化する
+   (エンドレス再生。Issue #15。落とし穴4参照): gme_set_fade(emu, -1); */
 
 /* --- サンプル生成（オーディオコールバック内） --- */
 gme_play(emu, sample_count, buffer);
@@ -228,6 +230,16 @@ void audio_callback(void* userdata, Uint8* stream, int len) {
 
 zip展開したバッファは、`gme_delete()` するまで**解放してはならない**。
 所有権をプレーヤー側で保持すること。
+
+#### ★ 落とし穴 4: フェードを無効化するには開始時刻を負にする（Issue #15）
+
+`gme_set_fade`/`gme_set_fade_msecs` に「フェードを掛けない」ための専用APIは
+無い。`start_msec` に**負値**を渡すとフェードが恒久的に無効化される
+（`Music_Emu::play_()` が `fade_start >= 0` のときだけ `handle_fade()` を
+呼ぶため。実体は `vendor/game-music-emu/gme/Music_Emu.cpp`）。
+リピートが `one` のときはこれを使い、エンドレス再生（F-07/F-08 の
+ただし書き）を実現している（`src/playlist.c` の `playlist_fade_start_ms()`）。
+`0` はフェードが「即座に開始する」設定であり無効化ではないので注意。
 
 ---
 
@@ -345,7 +357,8 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 
 - `next_track()` はリピートモード（F-11）を考慮する
   - `REPEAT_NONE`: 最終トラックで STOPPED
-  - `REPEAT_ONE`: 同一トラックを再開（シャッフルより優先する）
+  - `REPEAT_ONE`: 同一トラックを再開（シャッフルより優先する）。フェードも
+    無効化してエンドレスに再生する（Issue #15。詳細は5.1の落とし穴4）
   - `REPEAT_ALL`: 先頭に戻る
 - 曲送りの際は必ず `SDL_LockAudioDevice()` で保護
 - フェード中（`gme_track_ended()` 直前）にユーザーが next を押した場合、即座に切り替える
@@ -367,9 +380,9 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 | 画面 | 内容 |
 |---|---|
 | **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.gb` `.nsf` `.nsfe` `.m3u` `.zip` のみ表示（設定で全表示可。`.nsf`/`.nsfe`はIssue #2で追加） |
-| **Player** | 曲名（見切れる場合、`[ui] title_scroll` が既定onなら横スクロール表示。Issue #8）・ゲーム名・作者・著作権・トラック `n/N`・経過/全体時間とシークバー（同一行）・**現在のファイルが属するディレクトリのファイル一覧（中央。Browserと同じ拡張子フィルタ。ディレクトリは出さない。カーソルを青、再生中のファイルを黄でハイライト）**・波形ビジュアライザ（下部） |
+| **Player** | 曲名（見切れる場合、`[ui] title_scroll` が既定onなら横スクロール表示。Issue #8）・ゲーム名・作者・著作権・トラック `n/N`・経過/全体時間とシークバー（同一行。リピートが `one` でフェード無効(エンドレス)のときは全体時間を `--:--` にしシークバーを描かない。Issue #15）・**現在のファイルが属するディレクトリのファイル一覧（中央。Browserと同じ拡張子フィルタ。ディレクトリは出さない。カーソルを青、再生中のファイルを黄でハイライト）**・波形ビジュアライザ（下部） |
 | **TrackList** | 現在のファイルの全トラック一覧。直接ジャンプ可能 |
-| **Settings** | リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・デフォルト曲長・Fade・Show all files・Scroll title（Issue #8）・Show battery（F-26, Issue #7）。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10） |
+| **Settings** | デフォルト曲長（先頭。分単位・1分刻み。Issue #16）・リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・Fade・Show all files・Scroll title（Issue #8）・Show battery（F-26, Issue #7）。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10） |
 
 > **バッテリー残量表示（F-26, Issue #7）**: 4画面すべてのタイトル行右端に
 > 残量ゲージ（矩形の枠＋残量ぶんの塗り。8x8フォントはASCIIのみで絵文字が
@@ -452,7 +465,7 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 
 ```ini
 [playback]
-default_length_sec = 150   ; 曲長不明時の再生秒数
+default_length_sec = 180   ; 曲長不明時の再生秒数(Settings画面では分単位で編集する。Issue #16)
 fade_length_ms     = 8000
 repeat_mode        = all   ; none | one | all
 shuffle            = false ; シャッフル再生 (F-25, P10)

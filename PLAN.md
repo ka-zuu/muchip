@@ -2304,6 +2304,130 @@ upstreamのデフォルト=1始まりのまま動くこと。上記(c)節参照�
 （VRC6/VRC7/FDS/Namco163/Sunsoft5B）を使うNSFも手元に無く未検証。
 実在のズレた/拡張チップ入りのNSFが手に入り次第、追記する。
 
+## Issue #15/#16: Repeat=oneのエンドレス化・Default lengthの分単位化
+
+実機で使ってみたフィードバックから出た2件。本文はタイトルのみ
+（Issue自体に詳細説明は無い）だったため、着手前にユーザーへ以下を
+確認した:
+
+1. 分単位の刻みは1分・範囲1〜10分・既定値は150秒→180秒(3分)へ変更
+   （半端な既存値は初回操作で分の目盛りへ吸着させる）
+2. エンドレス時のPlayer画面は合計時間を`--:--`にし、シークバーは描かない
+3. 再生中のRepeat変更（Yコンボ/Settingsどちらも）はいま鳴っている曲へ
+   即時反映する
+4. v1.3.0へ上げる
+
+### Issue #15の設計判断
+
+- **フェード無効化の実現方法**: `gme_set_fade_msecs()`の開始時刻に負値を
+  渡すと、`Music_Emu::play_()`が`fade_start >= 0`のときしか
+  `handle_fade()`を呼ばないため、フェードそのものが恒久的に無効化される
+  （vendor/game-music-emu/gme/Music_Emu.cpp）。SPEC 5.1に「落とし穴4」
+  として明記した。`0`は「即座にフェード開始」であり無効化ではないので
+  混同しないよう注意。
+- **判定を1関数に集約**: `playlist_fade_start_ms(length_ms, cfg)`を
+  playlist.cへ追加（`cfg->repeat_mode==REPEAT_ONE`なら`-1`、それ以外は
+  `length_ms`をそのまま返すだけ）。SDLもlibgmeの初期化も要らない純関数
+  なので、`tests/test_playlist.c`にホストだけで回る単体テストを追加した
+  （`test_fade_start_ms`）。
+- **再生中の即時反映**: `player_apply_config()`に、現在のエントリの
+  「名目のフェード開始時刻」(`player_t.fade_at_ms`、新設)を
+  `playlist_fade_start_ms()`に通し直して`gme_set_fade_msecs()`を
+  張り直す処理を追加した。`one`を抜けたとき、名目の開始時刻を既に
+  過ぎていれば`player_tell_ms()`の現在位置まで繰り上げる
+  （過去の時刻を渡すと`handle_fade()`がゲインを一気に0まで落として
+  ブツ切りになるため。「いまからフェードして次へ」にする）。
+  `app_step_repeat_mode()`（Yコンボ）は元々`player_apply_config()`を
+  呼んでいなかったため、これも呼ぶよう追加した（Settings画面の
+  `adjust_setting()`は元々`app_apply_settings()`経由で呼んでいた）。
+- **UI**: `player_current_duration_ms()`は、REPEAT_ONEでフェードが
+  無効な間は`0`を返すよう変更した（「長さ不定」を表す）。
+  `draw_player()`側は`dur_ms<=0`のとき合計時間を`--:--`にし、
+  シークバー自体を描かない1行構成にする（元々の「バー幅が狭い解像度は
+  2行構成に落とす」分岐とは別に、バーそのものを省く3つ目の分岐を足した）。
+  この分岐は「未再生（曲が無い）」と「エンドレス中」の両方を含むが、
+  どちらも「合計時間が定まらない」という点で表示上の扱いは同じなので
+  区別しなかった。
+- **検証**: `playlist_fade_start_ms()`の単体テストに加え、
+  `tests/ui_smoke.script`のPlayer画面Yコンボ区間を
+  `none→one→all`の3段階へ拡張し、再生中に`one`へ入って抜ける
+  （＝`player_apply_config()`の新分岐の両方）を6解像度×ASan/UBSan込みの
+  CIで踏むようにした。ただし合成フィクスチャ(`Game.gbs`/`Game2.gbs`)は
+  無音（init/playがRET単体）なので、libgmeの無音自動終了
+  （`Music_Emu.cpp`の`silence_max=6`秒。フェードとは独立した仕組み）が
+  先に効いてしまい、「フェードせず鳴り続ける」こと自体はこの合成
+  フィクスチャでは確認できない（実在のGBS/NSFで確認が要る）。
+
+### Issue #16の設計判断
+
+- **表示だけ分単位・保存は秒のまま**: `config.ini`のキー
+  (`default_length_sec`)・レンジ(`config.c`の1..3600)・
+  `--duration SEC`は変更しない。Settings画面の`setting_kind_t`に
+  `SET_MINUTES`を追加し、`SETTINGS[]`のmin/max/stepを秒のまま
+  60/600/60（=1〜10分・1分刻み）にして、表示(`settings_item_text()`)と
+  操作(`adjust_setting()`)だけを分単位に見せる。
+- **目盛りの吸着**: 既定値変更前の`config.ini`(150秒=2.5分)から
+  そのまま`←`/`→`を押しても半端な値のまま動いてしまわないよう、
+  `adjust_setting()`のSET_MINUTES分岐で「まず60で割って整数分へ
+  丸めてから1段動かす」処理を入れた(`iv = before/60 + direction`)。
+  一度でも操作すれば以後は必ず整数分になる。
+- **既定値変更**: 150秒→180秒(3分ちょうど)。`src/config.c`・
+  `packaging/muGBS/config.ini`・`tests/test_config.c`・SPEC.mdの
+  config.iniサンプルを揃えて変更した。
+
+### 実機検証（完了）
+
+`./scripts/build-aarch64.sh`→`./scripts/package.sh`→
+`scp muGBS-1.3.0.muxapp root@192.168.0.20:/mnt/mmc/ARCHIVE/`→
+`/opt/muos/script/mux/extract.sh`（Archive Managerが内部で呼ぶのと
+同一スクリプト）で実機へ導入し、`bin/mugbs --version`が`muGBS 1.3.0`を
+報告することを確認した。
+
+**Issue #15（`repeat:one`のエンドレス化）の核心部分は、実在のループ曲を
+使って`--cli`ハーネスのログだけで機械的に確認できた**（目視ではなく、
+「フェード完了→次トラックへ」のログが出るか出ないかという二値の
+確認なので、これが最も確実）:
+
+- 対象は実機の実在ライブラリにあった `Tetris (World) (Rev 1) [BGM].gbs`
+  トラック1（有名なBGMで、途中で切れず鳴り続ける実物のループ曲）。
+- **対照実験（fixが効いていない場合の基準動作）**: `--repeat none
+  --duration 4 --fade-ms 1000`で実行したところ、再生開始から**約5.0秒
+  後**（=4秒+1秒フェード、狙いどおり）に`トラック終端検出 -> 次トラックへ`
+  のログが出て次トラックへ進んだ。これを2回連続で確認し、この曲・この
+  ハーネスで「fixが無ければ短時間で終端検出される」ことを裏付けた。
+- **本題**: 同じ曲・同じ`--duration 4 --fade-ms 1000`のまま`--repeat
+  one`だけを付けて20秒間観察したところ、**一度も**`トラック終端検出`が
+  出なかった（対照実験の4倍以上の時間が経過している）。これは
+  `playlist_fade_start_ms()`が`REPEAT_ONE`のときフェード開始時刻を
+  `-1`にし、`gme_track_ended()`が真にならなくなっている
+  （=エンドレス）ことの直接証拠になる。
+
+**UIの見た目（`--:--`・シークバー非表示・Default lengthの並び）は、
+実機のSDLレンダラ経由の`--screenshot`で目視確認した**（ソフトウェア
+レンダラのホストではなく、実機の実際の描画パスを通した状態）。
+同じ`Tetris (World) (Rev 1) [BGM].gbs`を`--window 640x480`のGUIモードで
+開き、`--ui-script`でYコンボを注入して`--screenshot`で最終フレームを
+書き出した:
+
+- `Y_RIGHT`を2回（既定の`all`→`none`→`one`）: `repeat:one`・
+  `0:00 / --:--`・シークバー非表示を確認。波形ビジュアライザが実際に
+  波打っており（無音でなく実際に音が鳴っている間接証拠）、上記
+  `--cli`でのログ確認と矛盾しないことも裏付けられた。
+- `Y_RIGHT`をもう1回押して`one`から`all`へ抜けた状態: `repeat:all`・
+  `0:00 / 3:08`（実測曲長）・シークバーが復活していることを確認。
+  「`one`を抜けるとその場からフェードして次へ進む」こと自体
+  （音が実際に切れずに繋がるか）は、スクリプト実行が一瞬で終わるため
+  この方法では確認できていない（フェード開始時刻をまだ過ぎていない
+  タイミングでの遷移だったため、`player_apply_config()`の「既に
+  過ぎていたら現在位置へ繰り上げる」分岐は未踏。ロジックは
+  `player.c`のレビューと上記の基本経路確認で妥当性を確認済み）。
+- `START`のみで開いたSettings画面で`Default length`が先頭にあり
+  `3 min`と表示されることを確認（既定値180秒が正しく分表示される）。
+
+検証後、実機の`/tmp`の一時ファイル（ui-script・screenshot・config）を
+削除し、`.muxapp`は他バージョンと同様`/mnt/mmc/ARCHIVE/`に残した
+（インストール済みバイナリ`1.3.0`自体は意図的にそのまま残置）。
+
 ## 検証手順
 
 ```sh

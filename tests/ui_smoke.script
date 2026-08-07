@@ -9,6 +9,11 @@
 # 踏む。
 # SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy 下で実行され、表示は見えない
 # (画面遷移・ライフサイクルのクラッシュ回帰をCIで拾うためのもの)。
+#
+# Issue #15/#16 (SETTINGS[]の並びをDefault length先頭へ変更、Repeat=one時の
+# エンドレス化)後もこのスクリプトは通ること。Repeat=oneへの出入りは
+# player_apply_config()の新分岐(フェード無効化・復元)を、いま曲が再生中の
+# 状態(SELECT で再開済み)で踏む。
 
 A       # Browser: Game.gbs を開く -> Player
 UP      # Player: 一覧の先頭からUP -> 末尾(Game2.gbs)へ折り返す(カーソルのみ)
@@ -17,15 +22,23 @@ DOWN    # 末尾からDOWN -> 先頭(Game.gbs)へ折り返す
 A       # 決定。Game.gbs へ戻る
 SELECT  # 一時停止 (P9でAから移した)
 SELECT  # 再開
-Y_RIGHT # Player: Y+RIGHTでRepeatを直接進める (P11。none/one/allを循環)
-Y_LEFT  # Y+LEFTで1つ戻す
+Y_RIGHT # Player: Y+RIGHTでRepeatを直接進める (P11。既定all -> none)
+Y_RIGHT # none -> one (Issue #15: エンドレス化。start_track_atで既に組んだ
+        # フェードを即座に無効化するplayer_apply_config()の新分岐を通す。
+        # 再生中(SELECTで再開済み)に踏むのでdraw_player()の"--:--"/バー
+        # 非表示分岐もここから先の描画で通る)
+Y_RIGHT # one -> all (Issue #15: oneを抜けてフェードを復元する分岐を通す)
 Y_UP    # Y+UPでShuffleをon
 Y_DOWN  # Y+DOWNでShuffleをoff
 X       # Player -> TrackList
 DOWN    # カーソルをトラック2へ
 A       # トラック2へジャンプ再生 -> Player
-START   # Player -> Settings (P6)。カーソルは先頭の Repeat にある
-RIGHT   # Repeat の値を変える(none/one/all を循環)
+START   # Player -> Settings (P6)。カーソルは先頭の Default length にある
+        # (Issue #16: 以前はRepeatが先頭だった)
+RIGHT   # Default length を変える(SET_MINUTES。1分刻みへの目盛り吸着を通す)
+DOWN    # Default length -> Repeat
+RIGHT   # Repeat の値を変える(all -> none。Settings画面からの変更でも
+        # いま鳴っている曲へ即時反映されることをplayer_apply_config()経由で通す)
 DOWN    # Repeat -> Shuffle
 RIGHT   # Shuffle を有効にする(P10, F-25)
 DOWN    # Shuffle -> Stereo depth
@@ -34,9 +47,7 @@ DOWN    # Stereo depth -> EQ bass
 RIGHT   # EQ bass を変える(P8, F-20。gme_set_equalizer を再生中に通す)
 DOWN    # EQ bass -> EQ treble
 LEFT    # EQ treble を負方向へ変える
-DOWN    # EQ treble -> Default length
-RIGHT   # Default length を変える(playlist_apply_default_lengthを通す)
-DOWN    # Default length -> Fade
+DOWN    # EQ treble -> Fade (Issue #16: Default lengthが先頭へ移ったのでここに来る)
 DOWN    # Fade -> Show all files
 RIGHT   # show_all_files を切り替える(browser_open_dirの自己呼び出しを通す)
 DOWN    # Show all files -> Scroll title (Issue #8)

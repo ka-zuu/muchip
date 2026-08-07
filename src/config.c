@@ -101,7 +101,7 @@ static int ieq(const char *a, const char *b) {
 
 /* 行末コメントを切り落とす。
  * ';' は「行頭」または「空白の直後」にある場合のみコメント開始とみなす。
- * SPEC 7 のサンプル自体が `default_length_sec = 150   ; 曲長不明時の...` と
+ * SPEC 7 のサンプル自体が `default_length_sec = 180   ; 曲長不明時の...` と
  * 行末コメントを使っているため対応が必要。'#' は行頭のみコメントとする
  * (パス等に '#' が含まれても壊れないようにするため)。
  * 副作用として、last_path 等の文字列値に " ;" を含められない。
@@ -179,7 +179,7 @@ static const char *battery_show_name(battery_show_t m) {
 void config_set_defaults(mugbs_config_t *c) {
     memset(c, 0, sizeof(*c));
 
-    c->default_length_sec = 150;
+    c->default_length_sec = 180; /* Issue #16: Settingsが分単位(1分刻み)になったため3分ちょうどへ */
     c->fade_length_ms = 8000;
     c->repeat_mode = REPEAT_ALL;
     c->shuffle = 0;

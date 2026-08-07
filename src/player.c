@@ -99,8 +99,11 @@ static int start_track_at(player_t *p, int track_index) {
         fade_len = p->config->fade_length_ms;
     }
 
+    /* Issue #15: REPEAT_ONEなら fade_at をそのまま渡さず、
+     * playlist_fade_start_ms() 経由でフェードを無効化する(エンドレス再生)。
+     * fade_at 自体は one を抜けたときの復元用に fade_at_ms へ保持する。 */
     audio_lock(&p->audio);
-    gme_set_fade_msecs(p->emu, fade_at, fade_len);
+    gme_set_fade_msecs(p->emu, playlist_fade_start_ms(fade_at, p->config), fade_len);
     audio_unlock(&p->audio);
 
     /* gme_track_ended() が真になる(=曲が本当に終わる)のは fade_at + fade_len
@@ -108,6 +111,7 @@ static int start_track_at(player_t *p, int track_index) {
      * なく、この実際の終了時刻を見る必要がある(player_current_duration_ms
      * 参照)。そうしないと経過時間がフェード中に表示上の「合計時間」を
      * 追い越して見える(実際にバグとして発見された)。 */
+    p->fade_at_ms = fade_at;
     p->fade_len_ms = fade_len;
 
     p->state = PLAYER_PLAYING;
@@ -324,6 +328,10 @@ int player_tell_ms(player_t *p) {
 
 int player_current_duration_ms(const player_t *p) {
     if (!p->playlist || p->current_entry < 0) return 0;
+    /* Issue #15: REPEAT_ONEでフェードが無効(エンドレス)なら長さ不定として
+     * 0を返す。fade_at_msは名目のフェード開始時刻なので、これが
+     * playlist_fade_start_ms()で-1に変換されるかどうかで判定できる。 */
+    if (playlist_fade_start_ms(p->fade_at_ms, p->config) < 0) return 0;
     /* duration_ms(フェード開始時刻)だけでなく、フェードの分(fade_len_ms)を
      * 足した「実際に無音になる時刻」を返す。フェード中の経過時間が
      * ここで返す合計を追い越して見えるのを防ぐ(start_track_at()参照)。 */
@@ -345,8 +353,31 @@ void player_apply_config(player_t *p) {
         audio_unlock(&p->audio);
     }
 
-    /* repeat_mode / default_length_sec / fade_length_ms は config がポインタに
-     * 変わったため、player側で何もしなくても次にそれぞれを読む箇所
+    /* Issue #15: REPEAT_ONEへの出入りは、いま鳴っているトラックのフェード
+     * 有無へ即時反映する(ユーザー確認済み: Yコンボ/Settingsでoneに入れた
+     * 瞬間に今の曲もエンドレス化してほしい)。他のトラックへ移らないので
+     * fade_at_ms(名目のフェード開始時刻)自体は書き換えない。
+     * player_tell_ms()は自前でaudio_lockを取るため、このロックの外側で
+     * 呼ぶこと(二重ロックを避ける)。 */
+    if (p->emu && p->state != PLAYER_STOPPED) {
+        int start = playlist_fade_start_ms(p->fade_at_ms, p->config);
+        if (start >= 0) {
+            /* oneを抜けた場合: 名目の開始時刻を既に過ぎていれば、過去の
+             * 時刻をgme_set_fade_msecsへ渡すとhandle_fade()がゲインを
+             * 一気に0まで落として音が切れる(vendor/game-music-emu/gme/
+             * Music_Emu.cpp参照)。「いまからフェードして次へ」にするため
+             * 現在位置へ繰り上げる。 */
+            int pos = player_tell_ms(p);
+            if (pos > start) start = pos;
+        }
+        audio_lock(&p->audio);
+        gme_set_fade_msecs(p->emu, start, p->fade_len_ms);
+        audio_unlock(&p->audio);
+    }
+
+    /* repeat_mode(REPEAT_NONE<->ALLの切り替えやシャッフルへの反映)/
+     * default_length_sec/fade_length_ms は config がポインタに変わったため、
+     * player側で何もしなくても次にそれぞれを読む箇所
      * (player_next_track / start_track_at)が自然に新しい値を見る。 */
 }
 

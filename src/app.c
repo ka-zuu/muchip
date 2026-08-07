@@ -504,6 +504,9 @@ static void app_step_repeat_mode(app_t *app, int direction) {
     int v = ((int)app->cfg->repeat_mode + direction) % n;
     if (v < 0) v += n;
     app->cfg->repeat_mode = (repeat_mode_t)v;
+    /* Issue #15: Settings画面のadjust_setting()と同じく、one への出入りを
+     * いま鳴っている曲へ即時反映する(player_apply_config()参照)。 */
+    player_apply_config(&app->player);
 }
 
 /* Y+UP/DOWN (P11): Shuffleを明示的にon/offする(トグルにしない)。
@@ -624,7 +627,7 @@ static void handle_tracklist_input(app_t *app, input_action_t a) {
 /* ---- Settings画面 (P6, SPEC 6.1) --------------------------------------
  *
  * mugbs_config_t のフィールドをoffsetofで指す1枚の表で駆動する。
- * SET_INT/SET_DOUBLE/SET_BOOL/SET_ENUMの4種のみをここで扱う。
+ * SET_INT/SET_DOUBLE/SET_BOOL/SET_ENUM/SET_MINUTESの5種のみをここで扱う。
  * sample_rate はオーディオデバイスの再オープンが必要なため含めていない
  * (P6以降も非対応)。eq_bass/eq_treble は P8 で音へ反映されるようになった
  * ので表に入れてある。 */
@@ -634,6 +637,12 @@ typedef enum {
     SET_DOUBLE,
     SET_BOOL,
     SET_ENUM,
+    /* Issue #16: config上は従来どおり秒(int)で保持しつつ、表示と
+     * 刻み幅(min/max/stepは「秒」のまま。60単位で書く)だけを分単位に
+     * 見せる。setting_get/setting_setはSET_INTと同じintアクセスでよい。
+     * 専用なのはsettings_item_text()の表示とadjust_setting()の目盛り
+     * 吸着(config.iniに残っている端数秒からの初回操作対応)だけ。 */
+    SET_MINUTES,
 } setting_kind_t;
 
 typedef struct {
@@ -653,14 +662,16 @@ static const char *const BATTERY_SHOW_NAMES[] = { "off", "when low", "always" };
 
 /* Default length/Fade が「次のトラックから反映される」ことを示す
  * フッタの "(next track)" 注記はP10で削除した(ユーザー判断。
- * app_apply_settings()のコメントに反映タイミングの説明は残してある)。 */
+ * app_apply_settings()のコメントに反映タイミングの説明は残してある)。
+ * Issue #16: Default length は曲長不明ファイルを扱う際に最も触る項目
+ * なので先頭に置く(以前は6番目)。1..10分・1分刻み(=60..600秒・step 60)。 */
 static const setting_def_t SETTINGS[] = {
+    { "Default length",     SET_MINUTES, offsetof(mugbs_config_t, default_length_sec), 60,  600,  60, NULL, 0 },
     { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3 },
     { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0 },
     { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0 },
     { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0 },
     { "EQ treble",           SET_INT,    offsetof(mugbs_config_t, eq_treble),       -100,   100,   5, NULL, 0 },
-    { "Default length",     SET_INT,    offsetof(mugbs_config_t, default_length_sec), 10,  600,  10, NULL, 0 },
     { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0 },
     { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0 },
     { "Scroll title",           SET_BOOL,   offsetof(mugbs_config_t, title_scroll),     0,     1,   1, NULL, 0 },
@@ -679,10 +690,11 @@ _Static_assert(sizeof(battery_show_t) == sizeof(int), "SET_ENUMはint幅のenum�
 static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
     const void *field = (const char *)cfg + s->offset;
     switch (s->kind) {
-        case SET_INT:    return *(const int *)field;
-        case SET_DOUBLE: return *(const double *)field;
-        case SET_BOOL:   return *(const int *)field;
-        case SET_ENUM:   return *(const int *)field;
+        case SET_INT:     return *(const int *)field;
+        case SET_DOUBLE:  return *(const double *)field;
+        case SET_BOOL:    return *(const int *)field;
+        case SET_ENUM:    return *(const int *)field;
+        case SET_MINUTES: return *(const int *)field; /* 秒のまま保持(表示側で分に換算) */
     }
     return 0;
 }
@@ -690,10 +702,11 @@ static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
 static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
     void *field = (char *)cfg + s->offset;
     switch (s->kind) {
-        case SET_INT:    *(int *)field = (int)v; break;
-        case SET_DOUBLE: *(double *)field = v; break;
-        case SET_BOOL:   *(int *)field = (int)v; break;
-        case SET_ENUM:   *(int *)field = (int)v; break;
+        case SET_INT:     *(int *)field = (int)v; break;
+        case SET_DOUBLE:  *(double *)field = v; break;
+        case SET_BOOL:    *(int *)field = (int)v; break;
+        case SET_ENUM:    *(int *)field = (int)v; break;
+        case SET_MINUTES: *(int *)field = (int)v; break;
     }
 }
 
@@ -711,7 +724,20 @@ static void app_apply_settings(app_t *app) {
 static void adjust_setting(app_t *app, int direction) {
     const setting_def_t *s = &SETTINGS[app->settings_sel];
     double before = setting_get(app->cfg, s);
-    double v = before + (double)direction * s->step;
+    double v;
+
+    if (s->kind == SET_MINUTES) {
+        /* Issue #16: config.iniに残っている端数秒(旧既定の150秒等)から
+         * 操作を始めても、まず分の目盛りへ吸着させてから1段動かす。
+         * 例: 150秒(2.5分)で右へ -> floor(150/60)+1 = 3分(180秒)。
+         * 左へ -> floor(150/60)-1 = 1分(60秒)。既に整数分ならただの
+         * ±1分になる。 */
+        int step = (int)s->step;
+        int iv = (int)before / step + direction;
+        v = (double)(iv * step);
+    } else {
+        v = before + (double)direction * s->step;
+    }
 
     if (s->kind == SET_ENUM || s->kind == SET_BOOL) {
         /* enum/boolは端で折り返す(SPEC 6.3: LEFT/RIGHTでの循環に馴染む)。 */
@@ -996,8 +1022,17 @@ static void draw_player(app_t *app) {
     int pos_ms = player_tell_ms(&app->player);
     int dur_ms = player_current_duration_ms(&app->player);
     char timebuf[64];
-    snprintf(timebuf, sizeof(timebuf), "%d:%02d / %d:%02d",
-             pos_ms / 60000, (pos_ms / 1000) % 60, dur_ms / 60000, (dur_ms / 1000) % 60);
+    /* Issue #15: dur_ms==0 は「未再生」だけでなく「REPEAT_ONEでフェードが
+     * 無効(エンドレス)」も表す(player_current_duration_ms()参照)。
+     * どちらも長さが定まらないので合計側を "--:--" にし、以下でシーク
+     * バー自体を描かない。 */
+    if (dur_ms > 0) {
+        snprintf(timebuf, sizeof(timebuf), "%d:%02d / %d:%02d",
+                 pos_ms / 60000, (pos_ms / 1000) % 60, dur_ms / 60000, (dur_ms / 1000) % 60);
+    } else {
+        snprintf(timebuf, sizeof(timebuf), "%d:%02d / --:--",
+                 pos_ms / 60000, (pos_ms / 1000) % 60);
+    }
 
     /* Issue #8: 再生位置とシークバーを同じ行に収める(時間が左、バーが
      * 残り幅いっぱい)。長尺のm3u(時間が3桁分)で時間の幅が伸びても、
@@ -1005,25 +1040,32 @@ static void draw_player(app_t *app) {
      * 極端に狭くなる解像度では2行構成へ戻し、フッタへはみ出させない
      * (SPEC 6.2)。 */
     int time_glyph = ui_glyph_size(ui, UI_TEXT_BODY);
-    int time_w = ui_text_width(ui, UI_TEXT_BODY, timebuf);
     int bar_h = ui->metrics.pad * 2;
-    float ratio = dur_ms > 0 ? (float)pos_ms / (float)dur_ms : 0.0f;
     const SDL_Color bar_bg = { 50, 50, 60, 255 };
-    int bar_w = content_w - time_w - ui->metrics.pad * 2;
 
-    if (bar_w >= ui->metrics.pad * 4) {
-        int row_h = ui->metrics.line_h;
-        int text_y = y + (row_h - time_glyph) / 2;
-        ui_text(ui, x, text_y, UI_TEXT_BODY, fg, timebuf);
-        ui_rect_t bar = { x + time_w + ui->metrics.pad * 2, y + (row_h - bar_h) / 2, bar_w, bar_h };
-        ui_draw_progress(ui, bar, ratio, accent, bar_bg);
-        y += row_h + ui->metrics.pad;
-    } else {
+    if (dur_ms <= 0) {
+        /* Issue #15: 長さが無いのでバーは描かず、時間表示だけの1行にする。 */
         ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, fg, timebuf);
         y += ui->metrics.line_h;
-        ui_rect_t bar = { x, y, content_w, bar_h };
-        ui_draw_progress(ui, bar, ratio, accent, bar_bg);
-        y += bar.h + ui->metrics.pad;
+    } else {
+        int time_w = ui_text_width(ui, UI_TEXT_BODY, timebuf);
+        float ratio = (float)pos_ms / (float)dur_ms;
+        int bar_w = content_w - time_w - ui->metrics.pad * 2;
+
+        if (bar_w >= ui->metrics.pad * 4) {
+            int row_h = ui->metrics.line_h;
+            int text_y = y + (row_h - time_glyph) / 2;
+            ui_text(ui, x, text_y, UI_TEXT_BODY, fg, timebuf);
+            ui_rect_t bar = { x + time_w + ui->metrics.pad * 2, y + (row_h - bar_h) / 2, bar_w, bar_h };
+            ui_draw_progress(ui, bar, ratio, accent, bar_bg);
+            y += row_h + ui->metrics.pad;
+        } else {
+            ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, fg, timebuf);
+            y += ui->metrics.line_h;
+            ui_rect_t bar = { x, y, content_w, bar_h };
+            ui_draw_progress(ui, bar, ratio, accent, bar_bg);
+            y += bar.h + ui->metrics.pad;
+        }
     }
 
     const char *repeat_label = app->cfg->repeat_mode == REPEAT_ONE ? "one" :
@@ -1166,6 +1208,19 @@ static const char *settings_item_text(void *ctx, int index) {
             int iv = (int)v;
             const char *name = (iv >= 0 && iv < s->enum_count) ? s->enum_names[iv] : "?";
             snprintf(valbuf, sizeof(valbuf), "%s", name);
+            break;
+        }
+        case SET_MINUTES: {
+            /* Issue #16: 秒→分。整数分ならそのまま("3 min")、config.iniに
+             * 残っている端数秒(旧既定の150秒等)は小数第1位まで出す
+             * ("2.5 min")。adjust_setting()を1回でも通せば以後は必ず
+             * 整数分になる。 */
+            int sec = (int)v;
+            if (sec % 60 == 0) {
+                snprintf(valbuf, sizeof(valbuf), "%d min", sec / 60);
+            } else {
+                snprintf(valbuf, sizeof(valbuf), "%.1f min", sec / 60.0);
+            }
             break;
         }
     }

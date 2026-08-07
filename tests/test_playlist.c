@@ -429,6 +429,25 @@ static int test_zip_single_m3u(void) {
     return 0;
 }
 
+/* Issue #15: playlist_fade_start_ms() は REPEAT_ONE のときだけフェードを
+ * 無効化(-1)する純関数。SDLもlibgmeの初期化も要らない。 */
+static int test_fade_start_ms(void) {
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    cfg.repeat_mode = REPEAT_NONE;
+    CHECK(playlist_fade_start_ms(12345, &cfg) == 12345);
+
+    cfg.repeat_mode = REPEAT_ALL;
+    CHECK(playlist_fade_start_ms(12345, &cfg) == 12345);
+
+    cfg.repeat_mode = REPEAT_ONE;
+    CHECK(playlist_fade_start_ms(12345, &cfg) == -1);
+    CHECK(playlist_fade_start_ms(0, &cfg) == -1); /* 0msでもフェードは無効のまま */
+
+    return 0;
+}
+
 int main(void) {
     setup_tmpdir("playlist");
 
@@ -442,6 +461,7 @@ int main(void) {
     if (test_multi_file_and_missing()) return 1;
     if (test_zip_single_m3u()) return 1;
     if (test_zip_multiple_m3u()) return 1;
+    if (test_fade_start_ms()) return 1;
 
     printf("test_playlist: すべて成功\n");
     return 0;

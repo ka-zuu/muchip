@@ -33,7 +33,7 @@ static int test_defaults(void) {
     mugbs_config_t c;
     config_set_defaults(&c);
 
-    CHECK(c.default_length_sec == 150);
+    CHECK(c.default_length_sec == 180);
     CHECK(c.fade_length_ms == 8000);
     CHECK(c.repeat_mode == REPEAT_ALL);
     CHECK(c.shuffle == 0);
@@ -55,7 +55,7 @@ static int test_defaults(void) {
 static int test_spec_sample(void) {
     static const char *sample =
         "[playback]\n"
-        "default_length_sec = 150   ; 曲長不明時の再生秒数\n"
+        "default_length_sec = 180   ; 曲長不明時の再生秒数\n"
         "fade_length_ms     = 8000\n"
         "repeat_mode        = all   ; none | one | all\n"
         "shuffle            = false\n"
@@ -85,7 +85,7 @@ static int test_spec_sample(void) {
 
     CHECK(load_str(&c, sample) == 0);
 
-    CHECK(c.default_length_sec == 150);
+    CHECK(c.default_length_sec == 180);
     CHECK(c.fade_length_ms == 8000);
     CHECK(c.repeat_mode == REPEAT_ALL);
     CHECK(c.shuffle == 0);
@@ -163,7 +163,7 @@ static int test_malformed_lines(void) {
         "default_length_sec =\n"    /* 値が空 -> 数値でないので既定値のまま */
         "sample_rate = 22050\n") == 0);
 
-    CHECK(c.default_length_sec == 150); /* 既定値のまま残っている */
+    CHECK(c.default_length_sec == 180); /* 既定値のまま残っている */
     CHECK(c.sample_rate == 22050);      /* 壊れた行の後も読めている */
     return 0;
 }

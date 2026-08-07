@@ -20,7 +20,7 @@ cmake_minimum_required(VERSION 3.13)
 # 元々リンクされていた(USE_GME_NSF/NSFEがlibgme側の既定でONだったため)
 # ので実質はBrowser側の拡張子フィルタ追加であり、バイナリサイズの増分は
 # 無いが、ユーザー向けの新機能のためminorバンプ。
-project(mugbs VERSION 1.2.0 LANGUAGES C CXX)
+project(mugbs VERSION 1.3.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)

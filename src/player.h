@@ -58,6 +58,13 @@ typedef struct {
      * player_current_duration_ms() が「本当に無音になる時刻」
      * (=entries[].duration_ms + fade_len_ms) を返すために保持する。 */
     int fade_len_ms;
+
+    /* Issue #15: playlist_effective_length_ms() が算出した「名目の」
+     * フェード開始時刻(ms)。REPEAT_ONE中はこれをそのまま
+     * gme_set_fade_msecs() には渡さず playlist_fade_start_ms() 経由で
+     * -1(フェード無効)にしているため、one を抜けたときに元の時刻へ
+     * 復元できるようここへ保持しておく(player_apply_config()参照)。 */
+    int fade_at_ms;
 } player_t;
 
 /* SDLオーディオデバイスを開いて初期化する。0で成功。 */
@@ -106,16 +113,21 @@ int player_tell_ms(player_t *p);
  * に、再生開始時に設定したフェード長を足したもの。duration_msだけを
  * 返すと、フェード中(duration_ms 〜 この値の間)に経過時間が表示上の
  * 「合計時間」を追い越して見えてしまうため注意(実機確認で発見した不具合)。
- * 何も再生していなければ0。 (P5: シークバー・シーク上限表示用) */
+ * 何も再生していない場合に加え、REPEAT_ONEでフェードが無効(Issue #15)の
+ * 場合も0を返す(=長さ不定。呼び出し側はこれを「エンドレス」の表示に使う。
+ * app.cのdraw_player()参照)。 (P5: シークバー・シーク上限表示用) */
 int player_current_duration_ms(const player_t *p);
 
 /* p->config が指す値の変更を、いま反映できる範囲で反映する。
  * stereo_depth / eq_* は現在開いている emu へ即時(audio_lock で
  * 保護。Effects_Buffer::config() は再確保を行わないため再生中に呼んでも
  * 安全 -- vendor/game-music-emu/gme/Effects_Buffer.cpp 参照)。
- * repeat_mode は次のトラック送りから、default_length_sec/fade_length_ms は
- * 次に start_track_at() を通ったとき(=次トラック)から自然に反映される
- * (config はポインタなので player 側で改めて何かをコピーする必要がない)。
+ * repeat_mode のうち REPEAT_ONE への出入り(Issue #15)はいま鳴っている
+ * トラックのフェード有無へ即時反映する(audio_lockで保護。詳細はplayer.c)。
+ * それ以外(REPEAT_NONE<->ALLの切り替えやシャッフル)は次のトラック送りから、
+ * default_length_sec/fade_length_ms は次に start_track_at() を通ったとき
+ * (=次トラック)から自然に反映される(config はポインタなので player 側で
+ * 改めて何かをコピーする必要がない)。
  * sample_rate はオーディオデバイスを開き直さないと反映されない
  * (P6では非対応。config.ini編集+再起動)。呼び出し側(Settings画面)で
  * 値を変更するたびに呼ぶこと。 */
