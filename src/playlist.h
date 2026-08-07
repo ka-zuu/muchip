@@ -91,4 +91,16 @@ int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *c
  * 既に armed 済みのフェードはこれだけでは変わらない(次トラックから反映)。 */
 void playlist_apply_default_length(playlist_t *pl, const mugbs_config_t *cfg);
 
+/* Issue #15: repeat_mode が REPEAT_ONE のときはフェードせずエンドレスに
+ * 再生する(「この曲をずっと鳴らしっぱなしにしたい」という one の意図に
+ * 合わせる)。length_ms(playlist_effective_length_ms()が返した名目の
+ * フェード開始時刻)をそのまま gme_set_fade_msecs() の start に渡すか、
+ * 負値にしてフェードそのものを無効化するかをここで一本化する。
+ * 負の開始時刻を渡すとフェードが無効になることは、
+ * vendor/game-music-emu/gme/Music_Emu.cpp の Music_Emu::play_() が
+ * `fade_start >= 0` のときだけ handle_fade() を呼ぶことで保証されている
+ * (set_fade()はmsec_to_samples()を通すだけで符号は保たれる)。
+ * player.c の start_track_at() と player_apply_config() の双方が使う。 */
+int playlist_fade_start_ms(int length_ms, const mugbs_config_t *cfg);
+
 #endif /* MUGBS_PLAYLIST_H */

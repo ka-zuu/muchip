@@ -126,18 +126,26 @@ Settingsへ入らずにRepeat/Shuffleを変えられる。`S`+`←`/`→` でRep
 
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
-意図的に広げてある。`PLAN.md` 参照）。Repeat・**Shuffle**・Stereo depth・
-**EQ bass**・**EQ treble**・Default length・Fade・Show all files・
+意図的に広げてある。`PLAN.md` 参照）。**Default length**（Issue #16で
+最も触る項目として先頭へ）・Repeat・**Shuffle**・Stereo depth・
+**EQ bass**・**EQ treble**・Fade・Show all files・
 Scroll title（Issue #8）・Show battery（Issue #7）の10項目を編集でき、
 抜けるときとアプリ終了時に `config.ini` へ自動保存する（`sample_rate` は
 デバイス再オープンが必要なため対象外）。`X`（キーボードは
 `A`）でこれら10項目を一括で既定値に戻す確認ダイアログを開ける
 （`last_path`やコントローラ設定など、Settings画面に出てこない値は対象外）。
+Default length は `config.ini` 上は秒のまま（既定180秒）だが、Settings画面
+では `3 min` のように分単位・1分刻みで編集する（Issue #16。`config.ini` に
+端数秒が残っていても、最初に一度動かせば分の目盛りへ吸着する）。
 
 Shuffle を有効にすると、次/前トラック（自動送りも含む）がランダムな順で
 進む。1周（全エントリを1回ずつ）したら Repeat が `all` なら次の周のために
 並びを作り直し、`none`なら停止する（順送りのときと同じ考え方）。
-`Repeat: one` はシャッフルより優先し、常に同じトラックを繰り返す。
+`Repeat: one` はシャッフルより優先し、常に同じトラックを繰り返す。曲の終端
+（またはループの折り返し）でのフェードアウトも行わず、そのままエンドレスに
+再生し続ける（Issue #15）。切り替えは再生中の曲へ即座に反映され、Player画面
+の再生位置表示も合計時間が `--:--` になりシークバーが消える（長さが定まらな
+いため）。
 
 ### バッテリー残量表示 (F-26, Issue #7)
 

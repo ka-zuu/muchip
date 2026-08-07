@@ -118,6 +118,10 @@ void playlist_apply_default_length(playlist_t *pl, const mugbs_config_t *cfg) {
     }
 }
 
+int playlist_fade_start_ms(int length_ms, const mugbs_config_t *cfg) {
+    return cfg->repeat_mode == REPEAT_ONE ? -1 : length_ms;
+}
+
 /* ---- playlist_t 構築 --------------------------------------------------- */
 
 /* fs_path と zip_entry のどちらか一方だけを指定する(排他)。
