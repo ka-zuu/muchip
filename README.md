@@ -126,17 +126,28 @@ Settingsへ入らずにRepeat/Shuffleを変えられる。`S`+`←`/`→` でRep
 
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
-意図的に広げてある。`PLAN.md` 参照）。**Default length**（Issue #16で
-最も触る項目として先頭へ）・Repeat・**Shuffle**・Stereo depth・
-**EQ bass**・**EQ treble**・Fade・Show all files・
-Scroll title（Issue #8）・Show battery（Issue #7）の10項目を編集でき、
+意図的に広げてある。`PLAN.md` 参照）。**Length**（Issue #19で最も触る
+項目として先頭へ）・**Default length**（Issue #16）・Repeat・**Shuffle**・
+Stereo depth・**EQ bass**・**EQ treble**・Fade・Show all files・
+Scroll title（Issue #8）・Show battery（Issue #7）の11項目を編集でき、
 抜けるときとアプリ終了時に `config.ini` へ自動保存する（`sample_rate` は
 デバイス再オープンが必要なため対象外）。`X`（キーボードは
-`A`）でこれら10項目を一括で既定値に戻す確認ダイアログを開ける
+`A`）でこれら11項目を一括で既定値に戻す確認ダイアログを開ける
 （`last_path`やコントローラ設定など、Settings画面に出てこない値は対象外）。
 Default length は `config.ini` 上は秒のまま（既定180秒）だが、Settings画面
 では `3 min` のように分単位・1分刻みで編集する（Issue #16。`config.ini` に
 端数秒が残っていても、最初に一度動かせば分の目盛りへ吸着する）。
+
+**Length（ながさチェンジ、Issue #19）**: 既定は `auto`（今までどおり、
+m3uの曲長や実測値があればそれを使い、無い曲だけ Default length へ
+フォールバックする）。`auto` 以外（5分刻みで5〜30分）を選ぶと、m3uの
+曲長や実測値の有無を問わず**全トラック**の曲長をその値へ強制する
+（Default length はあくまで「曲長不明時だけ」のフォールバックなので、
+既知の曲も含めて一律に長さを変えたいときはこちらを使う）。
+`Repeat: one` のエンドレス再生はこれより優先する。値は `config.ini` 上は
+秒（`length_override_sec`。`0`が`auto`）で、Default lengthと同じ吸着ルール
+で分単位に見せる。変更はいま鳴っている曲へ即座に反映され、有効な間は
+Player画面のステータス行に `len:15m` のように追記される。
 
 Shuffle を有効にすると、次/前トラック（自動送りも含む）がランダムな順で
 進む。1周（全エントリを1回ずつ）したら Repeat が `all` なら次の周のために
@@ -200,9 +211,9 @@ SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`（Issue #8�
   例示する絶対パスはSPEC 12/13のハードコード禁止に反するため採らない）
 - 保存は正規形で書き直す（手書きしたコメントや並び順は保存されない。
   値そのものは保持される）
-- `--duration`/`--fade-ms`/`--repeat` のいずれかをCLIで指定した場合、
-  一回きりのテスト用オーバーライドを永続化しないよう終了時の自動保存を
-  無効化する
+- `--duration`/`--length`/`--fade-ms`/`--repeat` のいずれかをCLIで指定した
+  場合、一回きりのテスト用オーバーライドを永続化しないよう終了時の
+  自動保存を無効化する
 
 ## 入力 (P6): gamecontrollerdb 連携
 

@@ -34,6 +34,9 @@ typedef enum {
 typedef struct {
     /* [playback] */
     int default_length_sec; /* 曲長不明時の再生秒数 (F-08) */
+    int length_override_sec; /* Issue #19: ながさチェンジ。0=auto(m3u/実測優先、
+                               * 不明時はdefault_length_secへフォールバック)、
+                               * 非0なら全トラックの曲長をこの秒数へ強制上書きする (F-28) */
     int fade_length_ms;
     repeat_mode_t repeat_mode;
     int shuffle;    /* 0/1。エントリの再生順をランダム化する (F-25, P10) */

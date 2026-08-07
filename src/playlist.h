@@ -39,9 +39,14 @@ typedef struct {
 
     /* P5: シークバー・残り時間表示用。player.c の fade_start_ms() 相当を
      * playlist_effective_length_ms() に括り出し、スキャン時点で確定させる。 */
-    int duration_ms;    /* フェード開始までの実効曲長(ms)。既定長フォールバック込み */
+    int duration_ms;    /* フェード開始までの実効曲長(ms)。既定長フォールバック・
+                            Issue #19のLength上書き込みの「今使うべき」値 */
     int length_known;   /* 非0: info->length か loop構造から得た実測値。
                             0: default_length_sec によるフォールバック */
+    int natural_ms;      /* Issue #19: length_known!=0のときのみ意味を持つ、
+                            上書き(length_override_sec)を無視した実測曲長(ms)。
+                            Lengthをautoへ戻したときにこの値へ復帰するために
+                            duration_msとは別に保持しておく。length_known==0なら0 */
 } playlist_entry_t;
 
 typedef struct {
@@ -71,25 +76,42 @@ int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **o
 
 void playlist_free(playlist_t *pl);
 
-/* info(gme_track_info の結果) と config から、フェード開始時刻=実効曲長(ms)を
+/* info(gme_track_info の結果)から、上書き設定を無視した「素の」曲長(ms)を
  * 判定する。player.c と playlist.c の双方が同じ判定を必要とするため
  * ここに集約する(元は player.c 内の static fade_start_ms())。
  *
  * gme_info_t.play_length は曲長不明時に -1 ではなく 150000(既定150秒)を
  * 返してしまう(PLAN.md 記載のSPECとの既知の乖離#1)。そのため
  * length(総曲長)とintro_length+loop_length(ループ構造)の有無で
- * 「本当に既知か」を判定し、どちらも無ければ config->default_length_sec
- * にフォールバックする (F-08)。
- * out_known に非NULLを渡すと、既知(非0)/フォールバック(0)の別を返す。 */
+ * 「本当に既知か」を判定する。
+ * out_known に非NULLを渡すと、既知(非0)/不明(0)の別を返す。不明な場合の
+ * 戻り値は0(呼び出し側がdefault_length_secへフォールバックする)。 */
+int playlist_natural_length_ms(const gme_info_t *info, int *out_known);
+
+/* natural_ms/known(playlist_natural_length_ms()の結果)とconfigから、
+ * フェード開始時刻=実効曲長(ms)を決定する。
+ * cfg->length_override_sec が非0なら(Issue #19: ながさチェンジ)、known/
+ * unknownを問わず全トラックをその秒数へ強制する (F-28)。0(auto)なら
+ * 従来どおりknownならnatural_ms、そうでなければcfg->default_length_sec
+ * にフォールバックする (F-08)。 */
+int playlist_resolve_length_ms(int natural_ms, int known, const mugbs_config_t *cfg);
+
+/* playlist_natural_length_ms() + playlist_resolve_length_ms() をまとめて
+ * 呼ぶ薄いラッパ。player.c の start_track_at() 等、素の曲長を経由せず
+ * 実効曲長だけを1回で得たい呼び出し元向けに残している。
+ * out_known は playlist_natural_length_ms() と同じ意味(実測かどうか)を
+ * 返す。上書き(length_override_sec)の有無とは独立。 */
 int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *cfg,
                                   int *out_known);
 
-/* cfg->default_length_sec が変わったとき、フォールバックで曲長を決めていた
- * エントリ(length_known==0)だけ duration_ms を付け替える。実測値
- * (length_known!=0)には触らない。libgmeを呼び直さないので安価で、
+/* cfg->default_length_sec / cfg->length_override_sec が変わったとき、
+ * 全エントリの duration_ms を playlist_resolve_length_ms() で計算し直す。
+ * natural_ms(実測値)自体は書き換えない(Lengthをautoへ戻したときに
+ * 復元できるようにするため)。libgmeを呼び直さないので安価で、
  * ファイルを開き直す必要がない (P6 Settings画面用)。既に再生中のトラックの
- * 既に armed 済みのフェードはこれだけでは変わらない(次トラックから反映)。 */
-void playlist_apply_default_length(playlist_t *pl, const mugbs_config_t *cfg);
+ * 既に armed 済みのフェードはこれだけでは変わらない
+ * (player_apply_config()が別途 fade_at_ms を追随させる。Issue #19)。 */
+void playlist_apply_length_config(playlist_t *pl, const mugbs_config_t *cfg);
 
 /* Issue #15: repeat_mode が REPEAT_ONE のときはフェードせずエンドレスに
  * 再生する(「この曲をずっと鳴らしっぱなしにしたい」という one の意図に

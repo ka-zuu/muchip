@@ -14,6 +14,9 @@
 # エンドレス化)後もこのスクリプトは通ること。Repeat=oneへの出入りは
 # player_apply_config()の新分岐(フェード無効化・復元)を、いま曲が再生中の
 # 状態(SELECT で再開済み)で踏む。
+# Issue #19 (ながさチェンジ。SETTINGS[]の先頭にLengthを追加)後もこの
+# スクリプトは通ること。Lengthの変更は再生中(SELECTで再開済み)に踏むので、
+# player_apply_config()の新しいfade_at_ms更新経路(SET_LENGTH)を通る。
 
 A       # Browser: Game.gbs を開く -> Player
 UP      # Player: 一覧の先頭からUP -> 末尾(Game2.gbs)へ折り返す(カーソルのみ)
@@ -33,8 +36,11 @@ Y_DOWN  # Y+DOWNでShuffleをoff
 X       # Player -> TrackList
 DOWN    # カーソルをトラック2へ
 A       # トラック2へジャンプ再生 -> Player
-START   # Player -> Settings (P6)。カーソルは先頭の Default length にある
-        # (Issue #16: 以前はRepeatが先頭だった)
+START   # Player -> Settings (P6)。カーソルは先頭の Length にある
+        # (Issue #19: 以前はDefault lengthが先頭だった)
+RIGHT   # Length を auto -> 5 min へ変える(SET_LENGTH。0からの目盛り吸着と
+        # 再生中への即時反映=player_apply_config()の新しいfade_at_ms更新を通す)
+DOWN    # Length -> Default length
 RIGHT   # Default length を変える(SET_MINUTES。1分刻みへの目盛り吸着を通す)
 DOWN    # Default length -> Repeat
 RIGHT   # Repeat の値を変える(all -> none。Settings画面からの変更でも

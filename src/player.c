@@ -353,10 +353,20 @@ void player_apply_config(player_t *p) {
         audio_unlock(&p->audio);
     }
 
+    /* Issue #19: length_override_sec(ながさチェンジ)が変わったときも、
+     * いま鳴っているトラックのフェード開始時刻へ即時反映する。呼び出し元
+     * (app_apply_settings())が先に playlist_apply_length_config() で
+     * entries[].duration_ms を更新済みなので、ここではそれを
+     * fade_at_ms(名目のフェード開始時刻)へ読み直すだけでよい。
+     * REPEAT_ONE中でなければこの新しいfade_at_msがそのままgme_set_fade_msecs
+     * の開始時刻になる(下のplaylist_fade_start_ms()参照)。 */
+    if (p->playlist && p->current_entry >= 0) {
+        p->fade_at_ms = p->playlist->entries[p->current_entry].duration_ms;
+    }
+
     /* Issue #15: REPEAT_ONEへの出入りは、いま鳴っているトラックのフェード
      * 有無へ即時反映する(ユーザー確認済み: Yコンボ/Settingsでoneに入れた
-     * 瞬間に今の曲もエンドレス化してほしい)。他のトラックへ移らないので
-     * fade_at_ms(名目のフェード開始時刻)自体は書き換えない。
+     * 瞬間に今の曲もエンドレス化してほしい)。
      * player_tell_ms()は自前でaudio_lockを取るため、このロックの外側で
      * 呼ぶこと(二重ロックを避ける)。 */
     if (p->emu && p->state != PLAYER_STOPPED) {
@@ -378,7 +388,10 @@ void player_apply_config(player_t *p) {
     /* repeat_mode(REPEAT_NONE<->ALLの切り替えやシャッフルへの反映)/
      * default_length_sec/fade_length_ms は config がポインタに変わったため、
      * player側で何もしなくても次にそれぞれを読む箇所
-     * (player_next_track / start_track_at)が自然に新しい値を見る。 */
+     * (player_next_track / start_track_at)が自然に新しい値を見る。
+     * length_override_sec(Issue #19)だけは上で明示的に fade_at_ms を
+     * 読み直している(次のトラックへ進むときも start_track_at() が
+     * duration_ms経由で自然に新しい値を見るので、そちらは同様に何もしない)。 */
 }
 
 void player_stop(player_t *p) {

@@ -643,6 +643,10 @@ typedef enum {
      * 専用なのはsettings_item_text()の表示とadjust_setting()の目盛り
      * 吸着(config.iniに残っている端数秒からの初回操作対応)だけ。 */
     SET_MINUTES,
+    /* Issue #19: ながさチェンジ。SET_MINUTESと同じく秒(int)で保持し、
+     * 表示・目盛り吸着(60単位ではなく300=5分単位)だけ専用にする。
+     * 0は特別扱いで"auto"と表示する(SET_MINUTESには無い分岐)。 */
+    SET_LENGTH,
 } setting_kind_t;
 
 typedef struct {
@@ -664,8 +668,11 @@ static const char *const BATTERY_SHOW_NAMES[] = { "off", "when low", "always" };
  * フッタの "(next track)" 注記はP10で削除した(ユーザー判断。
  * app_apply_settings()のコメントに反映タイミングの説明は残してある)。
  * Issue #16: Default length は曲長不明ファイルを扱う際に最も触る項目
- * なので先頭に置く(以前は6番目)。1..10分・1分刻み(=60..600秒・step 60)。 */
+ * なので先頭に置く(以前は6番目)。1..10分・1分刻み(=60..600秒・step 60)。
+ * Issue #19: Length(ながさチェンジ)はそれより優先して触る項目なので
+ * さらに先頭へ置く。auto(0)..30分・5分刻み(=0..1800秒・step 300)。 */
 static const setting_def_t SETTINGS[] = {
+    { "Length",              SET_LENGTH,  offsetof(mugbs_config_t, length_override_sec), 0,   1800, 300, NULL, 0 },
     { "Default length",     SET_MINUTES, offsetof(mugbs_config_t, default_length_sec), 60,  600,  60, NULL, 0 },
     { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3 },
     { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0 },
@@ -695,6 +702,7 @@ static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
         case SET_BOOL:    return *(const int *)field;
         case SET_ENUM:    return *(const int *)field;
         case SET_MINUTES: return *(const int *)field; /* 秒のまま保持(表示側で分に換算) */
+        case SET_LENGTH:  return *(const int *)field; /* 同上。0=auto */
     }
     return 0;
 }
@@ -707,18 +715,24 @@ static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
         case SET_BOOL:    *(int *)field = (int)v; break;
         case SET_ENUM:    *(int *)field = (int)v; break;
         case SET_MINUTES: *(int *)field = (int)v; break;
+        case SET_LENGTH:  *(int *)field = (int)v; break;
     }
 }
 
 /* Settingsで変更した値を、いま反映できる範囲で反映する。呼び出し側
  * (adjust_setting)が値変更のたびに呼ぶ。stereo_depth/eq_*は
- * player_apply_config()経由で即時、default_length_secはlength_known==0の
- * エントリのduration_msだけをplaylist_apply_default_length()で
+ * player_apply_config()経由で即時、default_length_sec/length_override_sec
+ * は全エントリのduration_msをplaylist_apply_length_config()で
  * 再計算する(次トラックからフェード自体が新しい値になるのは
- * player.cのstart_track_at()が毎回p->configを読むため。詳細はplayer.h)。 */
+ * player.cのstart_track_at()が毎回p->configを読むため。詳細はplayer.h)。
+ * Issue #19: length_override_secが変わったときも同じ経路でduration_msを
+ * 更新する必要があるため、playlist_apply_length_config()を先に呼んで
+ * playlist_entry_t.duration_msを確定させてから player_apply_config() を
+ * 呼ぶ(順序が逆だと、いま再生中の曲のフェードが古いduration_msの
+ * ままになる。player_apply_config()参照)。 */
 static void app_apply_settings(app_t *app) {
+    if (app->pl) playlist_apply_length_config(app->pl, app->cfg);
     player_apply_config(&app->player);
-    if (app->pl) playlist_apply_default_length(app->pl, app->cfg);
 }
 
 static void adjust_setting(app_t *app, int direction) {
@@ -726,12 +740,13 @@ static void adjust_setting(app_t *app, int direction) {
     double before = setting_get(app->cfg, s);
     double v;
 
-    if (s->kind == SET_MINUTES) {
+    if (s->kind == SET_MINUTES || s->kind == SET_LENGTH) {
         /* Issue #16: config.iniに残っている端数秒(旧既定の150秒等)から
          * 操作を始めても、まず分の目盛りへ吸着させてから1段動かす。
          * 例: 150秒(2.5分)で右へ -> floor(150/60)+1 = 3分(180秒)。
          * 左へ -> floor(150/60)-1 = 1分(60秒)。既に整数分ならただの
-         * ±1分になる。 */
+         * ±1分になる。Issue #19: SET_LENGTHはstepが300(5分)なので同じ
+         * 式のまま5分刻みに吸着する(0=autoもこの刻みの1つとして扱う)。 */
         int step = (int)s->step;
         int iv = (int)before / step + direction;
         v = (double)(iv * step);
@@ -1073,8 +1088,19 @@ static void draw_player(app_t *app) {
     const char *state_label = app->player.state == PLAYER_PAUSED ? "PAUSED" :
                                app->player.state == PLAYER_PLAYING ? "PLAYING" : "STOPPED";
     char status_line[128];
-    snprintf(status_line, sizeof(status_line), "%s  repeat:%s  shuffle:%s",
+    int len_written = snprintf(status_line, sizeof(status_line), "%s  repeat:%s  shuffle:%s",
              state_label, repeat_label, app->cfg->shuffle ? "on" : "off");
+    /* Issue #19: Lengthがauto(0)のときは今までどおり何も足さない
+     * (この行の文字数を常時食わないため)。上書き中だけ末尾へ足す。
+     * len_written は snprintf が「切り詰めなければ書いていたはずの長さ」を
+     * 返す(truncateされていれば sizeof(status_line) 以上になり得る)ため、
+     * バッファ内に収まっている場合だけ追記する(収まらなければ何もしない
+     * -- サイズ引き算のアンダーフローを避ける安全側の判断)。 */
+    if (len_written > 0 && (size_t)len_written < sizeof(status_line) &&
+        app->cfg->length_override_sec > 0) {
+        snprintf(status_line + len_written, sizeof(status_line) - (size_t)len_written,
+                 "  len:%dm", app->cfg->length_override_sec / 60);
+    }
     ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, status_line);
     y += ui->metrics.line_h;
 
@@ -1217,6 +1243,20 @@ static const char *settings_item_text(void *ctx, int index) {
              * 整数分になる。 */
             int sec = (int)v;
             if (sec % 60 == 0) {
+                snprintf(valbuf, sizeof(valbuf), "%d min", sec / 60);
+            } else {
+                snprintf(valbuf, sizeof(valbuf), "%.1f min", sec / 60.0);
+            }
+            break;
+        }
+        case SET_LENGTH: {
+            /* Issue #19: 0は「上書きしない」= auto。それ以外はSET_MINUTES
+             * と同じ表示ルール(常に5分刻みなので端数は理論上出ないが、
+             * config.iniを手で書き換えた場合の保険として同じ分岐にしておく)。 */
+            int sec = (int)v;
+            if (sec == 0) {
+                snprintf(valbuf, sizeof(valbuf), "auto");
+            } else if (sec % 60 == 0) {
                 snprintf(valbuf, sizeof(valbuf), "%d min", sec / 60);
             } else {
                 snprintf(valbuf, sizeof(valbuf), "%.1f min", sec / 60.0);
