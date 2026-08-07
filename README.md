@@ -1,7 +1,8 @@
 # muGBS
 
 muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック構造と拡張M3U
-（曲名・曲長・ループ指定）を正しく扱う。詳細仕様は [`SPEC.md`](./SPEC.md)、
+（曲名・曲長・ループ指定）を正しく扱う。`.nsf`/`.nsfe`（NSF, Nintendo Sound
+Format）も `.gbs` と同格に扱える（Issue #2）。詳細仕様は [`SPEC.md`](./SPEC.md)、
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
 **P0〜P10 完了（v1.0.0 + 実機フィードバック対応）**。SPEC の MUST 要件
@@ -160,8 +161,8 @@ Settings の `Show battery`（`config.ini` の `[ui] battery_show`）で
 文字描画は外部フォントライブラリを使わず、内蔵のビットマップフォント
 (`vendor/font8x8`) を使う。実機の `sysroot/` には SDL2 の `.so` しか
 含まれておらず、SDL2_ttf が実機に存在するか未確認のため、新規の実行時
-依存を増やさない選択をしている。UI文言は英語のみ対応（GBSのメタデータは
-basic latin 以外は `?` にフォールバックする）。
+依存を増やさない選択をしている。UI文言は英語のみ対応（GBS/NSF等の
+メタデータは basic latin 以外は `?` にフォールバックする）。
 
 ### ビジュアライザ (F-14)
 

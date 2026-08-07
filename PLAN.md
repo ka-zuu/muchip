@@ -2170,6 +2170,140 @@ root@192.168.0.20:/mnt/mmc/ARCHIVE/`で転送し、`/opt/muos/script/mux/extract
 （物理ボタン操作を除く）と、リリース物である`.muxapp`のインストール
 自体の両方を実機で確認できた。
 
+## Issue #2: NSF再生対応
+
+Issue本文（要約）: 「NSFの再生に対応」。
+
+### (a) 調査で分かったこと: 実質「大きな機能追加」ではなかった
+
+着手前に「バイナリサイズ・CPU負荷・実装コストへのインパクトを知りたい」
+という要望があったため、実装より先に調査した。結論は3点:
+
+1. **NSF/NSFEのデコーダは1.0.0の頃から出荷バイナリにリンク済みだった。**
+   `CMakeLists.txt`は`USE_GME_GBS=ON`しか明示していなかったが、libgme
+   (`vendor/game-music-emu/gme/CMakeLists.txt`)側の`USE_GME_NSF`/
+   `USE_GME_NSFE`は既定でONであり、明示的にOFFにしていなかったので
+   暗黙にビルドに含まれていた。実際 `nm build-release/mugbs` に
+   `gme_nsf_type_`・`Nsf_Emu::*`のシンボルが、`build-aarch64/mugbs`にも
+   `strings`で`Nintendo NES`/`NSFE`の文字列が見つかった。つまり
+   **今回の変更によるバイナリサイズの増分は無い**（CHANGELOG参照）。
+2. **`playlist.c`/`m3u.c`/`player.c`/`archive.c`は元から形式非依存**
+   だった。`playlist_open()`は`.zip`/`.m3u`以外の全てを単体ファイル
+   （＋任意の同名サイドカーm3u）として扱う経路に流すだけで、
+   `gme_open_file()`が拡張子から実際の形式を判別する。`archive.c`の
+   `k_music_exts[]`には元から`.nsf`/`.nsfe`が入っていた
+   （P4時点で「GBSが主目的だが対応拡張子は広めに持つ」方針で足して
+   あったが、Browser側のフィルタだけが追従していなかった）。
+3. **P12のGBS用パッチ(`vendor/game-music-emu/gme/Gbs_Emu.cpp`の`flags_
+   |= 0x02`)はNSFには適用しない・してはいけない。** P12はzophar.net配布
+   GBSパックの10進m3uトラック番号が0始まりだった実例に合わせた特例で、
+   GBSヘッダの`first_track`はlibgme内で参照されない。一方NSFはヘッダ
+   自体が`first_song`（1始まり）を持ち、実在のNSF用m3uも1始まりで
+   書かれる。これはupstreamのデフォルト動作（10進を1始まりとみなし
+   -1する）とそのまま一致するため、`gme_nsf_type_`
+   (`vendor/game-music-emu/gme/Nsf_Emu.cpp`)には手を入れていない。
+   合成NSFヘッダを使った実験(下記(c))で、GBS用パッチの効果
+   （`flags_ & 0x02`）が`gme_gbs_type_`側にしか刺さっておらず
+   `gme_nsf_type_`は素のupstream動作のままであることを確認した。
+   SPEC.md 5.2にこの非対称性を明記した。
+
+したがって実装は「Browserの拡張子フィルタ追加」「`playlist.c`の関数名
+整理（`playlist_open_gbs()`→`playlist_open_music_file()`。振る舞いは
+不変）」「テスト・ドキュメントの追従」に限定された。対応範囲は
+`.nsf`/`.nsfe`のみとし、`.spc`/`.vgm`等は従来どおり
+「Show all filesでたまたま動く」扱いのまま据え置いた（ユーザーへの
+確認結果）。
+
+### (b) アプリ名は変更しない
+
+「muGBSという名前がNSF等にはそぐわないのでは」という論点をユーザーに
+確認したところ、`muGBS`のままで進める判断になった。理由: 実機の
+インストール先`/run/muos/storage/application/muGBS/`と`config.ini`の
+場所が変わると、既存ユーザーの再インストール・設定移行が必要になる
+ため。改名は別Issueとして起票し、影響範囲（`packaging/muGBS/`の
+ディレクトリ名・`glyph`/`grid`のPNG・`mux_launch.sh`の`GRID:`/`HELP:`
+行・`scripts/package.sh`の`PKG_NAME`・SPEC.md 9章・実機の`config.ini`の
+移行手順）を書いておくことにした。
+
+### (c) 合成NSFフィクスチャの作り方（`tests/test_playlist.c`）
+
+`build_synthetic_gbs()`に倣い、ヘッダのみ有効な最小NSFを組み立てる
+`build_synthetic_nsf()`を追加した。NSFヘッダ構造
+（`vendor/game-music-emu/gme/Nsf_Emu.h`の`header_t`、`header_size = 0x80`）
+はGBSより長い(0x80 vs 0x70)。load/init/playアドレスは`rom_begin`
+(`enum { rom_begin = 0x8000 }`)に置く必要があり、GBSの`0x400`とは異なる
+（`load_addr < rom_begin`だと`Nsf_Emu::load_()`が
+"Corrupt file (invalid load/init/play address)"で失敗する）。本体コードは
+GBSの`RET`(`0xC9`)2バイトに相当する`RTS`(`0x60`)2バイトで足りる。
+
+この構造は`vendor/game-music-emu/gme/libgme.a`をリンクした最小限のC
+プログラムで実際に`gme_open_data()`→`gme_track_info()`→
+`gme_start_track()`→`gme_play()`まで通して事前確認してから
+`tests/test_playlist.c`へ組み込んだ（合成ヘッダの各フィールドの
+意味を誤解したまま`ctest`だけで確認すると、たまたま通っているだけの
+可能性を排除しづらいため）。
+
+UIスモークテスト(`tests/gen_fixture_gbs.c`)は**GBSのままにした**。
+実際に音が鳴るNSFフィクスチャを作るには6502のAPU初期化コードを
+新たに書く必要があり、ビジュアライザの目視確認という目的に対して
+コストが見合わないと判断した。
+
+### (d) 実機検証（完了）
+
+実機（muOS 2601.0 JACARANDA、192.168.0.20）で確認した。テスト素材は
+著作権上リポジトリには含めないが、開発機のローカルに手持ちであった
+実在のNSF3本（`Downtown Special...`(17トラック)・`Super Mario Bros. 3`
+(25トラック)・`Tenkaichi Bushi...`(4トラック)。いずれも拡張チップ無し
+[`chip_flags`(オフセット0x7B)がいずれも`0x00`]）と、libgme本体が
+リポジトリに同梱しているテスト素材`vendor/game-music-emu/test.nsf`+
+`test.m3u`（1トラック、m3u付き）を使った。
+
+1. **クロスビルド**: `./scripts/build-aarch64.sh`成功。
+2. **`--list`**: 4ファイルすべて期待通りのトラック数
+   （17/25/4/1）で列挙された。`test.nsf`は同梱の`test.m3u`
+   （`test.nsf,$00,BGM C,...`。16進トラック番号のみでdecimalの
+   0始まり/1始まり問題は検証できない）を自動検出し、曲名が
+   `Track 01`ではなく`BGM C`に正しく置き換わることを確認した。
+3. **`--cli`実再生**: 上記4ファイルそれぞれを実機上で15秒前後
+   再生し、クラッシュ・ALSAアンダーラン("underrun occurred")とも
+   **無し**。単一プロセスでの計測が前提で、複数の`mugbs`プロセスを
+   同時に立てて音声デバイスを取り合わせると（検証作業中の事故で
+   一度発生させた）アンダーランと1秒未満での「トラック終端検出」の
+   誤検出が多発する。これは無音の合成フィクスチャ(`Game.gbs`)でも
+   同じ条件で再現したため、**NSF固有の問題ではなく、複数プロセスが
+   同一オーディオデバイスを取り合う既知の状態**だと判断した(通常の
+   単一起動運用では起きない)。
+4. **CPU負荷**: `/proc/<pid>/stat`のutime+stimeを実再生5秒間サンプル
+   したところ`delta_ticks=0`(`CLK_TCK=100`)、つまり**単一コアの
+   0.2%未満**。「NSFは6502エミュレーション+最大8ボイスでGBSより重い
+   かもしれない」という着手前の懸念は杞憂だった（対象デバイスの
+   CPUに対しては両者ともほぼ計測不能なレベルの負荷）。
+5. **パッケージング・GUI**: `./scripts/package.sh`で`.muxapp`を作成
+   （290,826バイト。v1.1.0比+104バイトで、ほぼ横ばい。CHANGELOG記載の
+   「サイズ増分は無い」を裏付ける）。`/opt/muos/script/mux/extract.sh`
+   経由でインストールし、`--version`で`muGBS 1.2.0`を確認。
+   `--ui-script`+`--screenshot`でBrowser/Player/TrackList画面を実機上で
+   撮影し、目視確認した:
+   - Browser: `.nsf`が`.gbs`/`.m3u`と同じ一覧に混在し、大小文字無視の
+     名前順で正しくソートされていた
+   - Player: `.nsf`を開いて`PLAYING`状態になり、波形ビジュアライザが
+     静止画ではなく実際の波形を表示していた（＝無音でなく実際に音声が
+     生成されている間接証拠）。ゲーム名フィールドはShift-JISの日本語
+     文字列だったため`?`にフォールバックした（SPEC/READMEに記載済みの
+     既知の仕様どおりで、今回の不具合ではない）
+   - TrackList: 25トラックのNSFで`Tracks (25)`〜`25. Track 25`まで
+     過不足なく列挙された
+
+**未検証で残った項目**: 実在のNSF用拡張M3U（decimal番号が1始まりである
+こと）は、手元に該当する実配布パックが無かったため実機では確認できて
+いない。この点はホスト側の`vendor/game-music-emu/libgme.a`を直接リンクした
+実験的な検証プログラムで、`Gme_File::remap_track_()`の挙動を直接確認済み
+（`gme_nsf_type_`にはGBS用の`flags_ |= 0x02`パッチが入っておらず、
+upstreamのデフォルト=1始まりのまま動くこと。上記(c)節参照）であり、
+`tests/test_playlist.c`の回帰テストにも反映してある。拡張チップ
+（VRC6/VRC7/FDS/Namco163/Sunsoft5B）を使うNSFも手元に無く未検証。
+実在のズレた/拡張チップ入りのNSFが手に入り次第、追記する。
+
 ## 検証手順
 
 ```sh

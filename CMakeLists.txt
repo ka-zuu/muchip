@@ -15,7 +15,12 @@ cmake_minimum_required(VERSION 3.13)
 # ユーザー向けの新機能は無いためpatchバンプ。
 # 1.1.0 = Player画面の文字バランス調整(Issue #8)に加え、バッテリー残量
 # 表示(F-26, Issue #7)というユーザー向けの新機能が入るためminorバンプ。
-project(mugbs VERSION 1.1.0 LANGUAGES C CXX)
+# 1.2.0 = .nsf/.nsfe (NSF, Nintendo Sound Format) をBrowserで一級市民として
+# 扱えるようにした(F-27, Issue #2)。libgmeのNSF/NSFEエミュレータ自体は
+# 元々リンクされていた(USE_GME_NSF/NSFEがlibgme側の既定でONだったため)
+# ので実質はBrowser側の拡張子フィルタ追加であり、バイナリサイズの増分は
+# 無いが、ユーザー向けの新機能のためminorバンプ。
+project(mugbs VERSION 1.2.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -44,6 +49,11 @@ set(GME_ENABLE_ASAN OFF CACHE BOOL "" FORCE)
 # zlib 依存を持ち込まない。VGZ 等の圧縮系フォーマットが読めなくなるだけで GBS には影響しない。
 set(GME_ZLIB OFF CACHE BOOL "" FORCE)
 set(USE_GME_GBS ON CACHE BOOL "" FORCE)
+# NSF/NSFE (Nintendo Sound Format) デコード。GBSと同格の一級市民として扱う
+# (F-27, Issue #2)。libgme側の既定でも元々ONだが、暗黙の既定値に頼ると
+# upstreamが既定を変えたときに黙って壊れるため明示する。
+set(USE_GME_NSF ON CACHE BOOL "" FORCE)
+set(USE_GME_NSFE ON CACHE BOOL "" FORCE)
 
 add_subdirectory(vendor/game-music-emu EXCLUDE_FROM_ALL)
 

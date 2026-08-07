@@ -27,8 +27,13 @@
 ### 1.2 スコープ外（やらないこと）
 
 - GB APU の自前エミュレーション実装（libgme に委譲する）
-- GBS 以外の形式の**積極的な**サポート（ただし libgme が対応する NSF/SPC/VGM 等は
-  「たまたま動く」状態で構わない。UI上で排除しない）
+- GBS/NSF 以外の形式の**積極的な**サポート（ただし libgme が対応する
+  SPC/VGM 等は「たまたま動く」状態で構わない。UI上で排除しない）。
+  `.nsf`/`.nsfe`（NSF, Nintendo Sound Format）は GBS と同格の一級市民として
+  正式サポートする（F-27, Issue #2）。GBS 用に組んだ「単体ファイル＋同名
+  サイドカーm3u／m3u直接／zip」の枠組みがそのまま形式非依存で動くこと、
+  および libgme の NSF/NSFE デコーダが元々静的リンクされていたことから、
+  対応コストが低い（詳細は PLAN.md「Issue #2」参照）
 - ネットワーク機能、オンラインDB連携
 - 楽曲のエンコード／エクスポート
 
@@ -85,6 +90,7 @@
 | F-24 | 画面消灯状態でのバックグラウンド再生 |
 | F-25 | シャッフル再生（エントリの再生順をランダム化する。P10で実装） |
 | F-26 | バッテリー残量の画面表示（常時 / 残量低下時のみ / 非表示。Issue #7で実装）。しきい値は muOS 側の設定があればそれ、無ければ10% |
+| F-27 | `.nsf` / `.nsfe`（NSF, Nintendo Sound Format）を `.gbs` と同格に扱える。単体ファイル＋同名サイドカーm3u・m3u直接・zip同梱のいずれの経路も共通（Issue #2で実装）。10進の拡張M3Uトラック番号はNSFでは1始まり（GBSは0始まり。5.2節参照）で、これはlibgme本家の既定動作そのものであり追加パッチは不要 |
 
 ---
 
@@ -244,22 +250,33 @@ Game.gbs::GBS,2,Battle,1:45
 <file>::<TYPE>,<track>,<title>,<time>,<loop>,<fade>,<artist>,<amp>
 ```
 
-- `<track>` は10進または `$` 始まりの16進。**どちらも0始まり**
-  （GBSの生のsubtrack索引と同じ。P12でこの前提に修正した。
-  `vendor/game-music-emu/gme/Gbs_Emu.cpp` の `flags_` パッチ参照）
+- `<track>` は10進または `$` 始まりの16進。**16進は常に0始まり**
+  （生のsubtrack索引そのもの）。**10進の始まりは形式(TYPE)ごとに違う**
+  （下記参照）
 - `<time>` は `m:ss.mmm` 形式。`-` はループ扱い
 - 空欄は省略可
 
-> **10進トラック番号は0始まり（P12）**: 同梱の libgme (`game-music-emu`) は
-> 元々、10進で書かれたm3uトラック番号を「1始まり」とみなし内部で-1する
-> 仕様だった(`$`始まりの16進はこの対象外)。ところが実機で実際に使う
-> zophar.net配布パックのm3uは10進トラック番号が0始まり
-> (`GBS,0,...`が1曲目)であり、この前提と食い違って全曲が1つズレて
-> 再生される不具合があった。KSS形式が既に持っていた
-> `flags_ |= 0x02`(「10進もそのまま使う」)を`vendor/game-music-emu/gme/Gbs_Emu.cpp`
-> のGBS形式にも適用して修正した(GBSヘッダの`first_track`フィールドは
-> libgme内で一切参照されておらず、native表現が0始まりであることとも
-> 整合する)。詳細はPLAN.mdの「P12」を参照。
+> **GBSの10進トラック番号は0始まり（P12）、NSFは1始まり（Issue #2）**:
+> `<track>` フィールドの形式(`::GBS,...` / `::NSF,...`)ごとに、10進表記の
+> 意味が異なる。同梱の libgme (`game-music-emu`) はデフォルトで、10進の
+> m3uトラック番号を「1始まり」とみなし内部で-1する仕様(`Gme_File::remap_track_()`。
+> `$`始まりの16進はこの対象外)。実機で実際に使う zophar.net配布パックの
+> **GBS用**m3uは10進トラック番号が0始まり(`GBS,0,...`が1曲目)であり、
+> このデフォルトの前提と食い違って全曲が1つズレて再生される不具合が
+> あった。KSS形式が既に持っていた `flags_ |= 0x02`(「10進もそのまま使う」)を
+> `vendor/game-music-emu/gme/Gbs_Emu.cpp` の **GBS形式(`gme_gbs_type_`)にのみ**
+> 適用して修正した(GBSヘッダの`first_track`フィールドはlibgme内で一切
+> 参照されておらず、native表現が0始まりであることとも整合する)。詳細は
+> PLAN.mdの「P12」を参照。
+>
+> 一方、実機で使う **NSF用**m3u・NSFファイル自体のヘッダ(`first_song`)は
+> いずれも10進のsong番号が1始まり(`NSF,1,...`が1曲目)であり、これは
+> upstreamのデフォルト動作(1始まりとみなして-1する)とそのまま一致する。
+> そのため `gme_nsf_type_`(`vendor/game-music-emu/gme/Nsf_Emu.cpp`)には
+> GBSのような `flags_` パッチを**当てていない**。GBS用の0始まりパッチを
+> 誤ってNSFにも適用すると、逆に全曲が1つズレる新たな不具合になるので
+> 注意（Issue #2で確認済み。`tests/test_playlist.c` の
+> `test_nsf_sidecar_m3u_is_one_based()` 参照）。
 
 #### 実装方針
 
@@ -279,8 +296,10 @@ Game.gbs::GBS,2,Battle,1:45
 3. m3u が存在しない場合は、`gme_track_count()` で全トラックを列挙し、
    `Track 01`, `Track 02` ... と自動命名する。
 
-4. `.gbs` を直接開いた場合、**同ディレクトリに同名の `.m3u` があれば自動で読み込む**。
-   （例: `Game.gbs` → `Game.m3u`）
+4. `.gbs`/`.nsf`/`.nsfe` 等の単体音楽ファイルを直接開いた場合、**同ディレクトリに
+   同名の `.m3u` があれば自動で読み込む**。（例: `Game.gbs` → `Game.m3u`、
+   `Game.nsf` → `Game.m3u`）この経路は形式によらず共通
+   (`playlist.c` の `playlist_open_music_file()` 参照)。
 
 ---
 
@@ -347,7 +366,7 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 
 | 画面 | 内容 |
 |---|---|
-| **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.m3u` `.zip` のみ表示（設定で全表示可） |
+| **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.gb` `.nsf` `.nsfe` `.m3u` `.zip` のみ表示（設定で全表示可。`.nsf`/`.nsfe`はIssue #2で追加） |
 | **Player** | 曲名（見切れる場合、`[ui] title_scroll` が既定onなら横スクロール表示。Issue #8）・ゲーム名・作者・著作権・トラック `n/N`・経過/全体時間とシークバー（同一行）・**現在のファイルが属するディレクトリのファイル一覧（中央。Browserと同じ拡張子フィルタ。ディレクトリは出さない。カーソルを青、再生中のファイルを黄でハイライト）**・波形ビジュアライザ（下部） |
 | **TrackList** | 現在のファイルの全トラック一覧。直接ジャンプ可能 |
 | **Settings** | リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・デフォルト曲長・Fade・Show all files・Scroll title（Issue #8）・Show battery（F-26, Issue #7）。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10） |
@@ -521,7 +540,8 @@ target_link_libraries(mugbs PRIVATE gme_static SDL2 m)
 ```
 
 libgme は `BUILD_SHARED_LIBS=OFF`, `ENABLE_UBSAN=OFF` でビルドし、
-不要なエミュレータを削って軽量化してもよい（`USE_GME_GBS=ON` は必須）。
+不要なエミュレータを削って軽量化してもよい（`USE_GME_GBS=ON` /
+`USE_GME_NSF=ON` / `USE_GME_NSFE=ON` は必須。F-27, Issue #2）。
 
 ---
 
