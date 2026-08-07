@@ -11,6 +11,7 @@
 #include <time.h>
 
 #include "app.h"
+#include "battery.h"
 #include "config.h"
 #include "log.h"
 #include "player.h"
@@ -278,6 +279,10 @@ int main(int argc, char **argv) {
         .ui_script_path = args.ui_script,
         .screenshot_path = args.screenshot,
         .config_path = cli_override ? NULL : config_path,
+        /* Issue #7: muOS実機は mux_launch.sh が GET_VAR でしきい値を探し、
+         * 見つかれば MUGBS_BATTERY_LOW_PCT を export する。無ければ
+         * battery_low_threshold_from_env(NULL) が既定の10%を返す。 */
+        .battery_low_pct = battery_low_threshold_from_env(getenv("MUGBS_BATTERY_LOW_PCT")),
     };
     int rc = app_run(&cfg, &opt);
     SDL_Quit();

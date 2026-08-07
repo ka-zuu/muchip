@@ -1961,6 +1961,125 @@ Player画面まで進めた。Claude側はSSH越しに`/dev/fb0`を1秒間隔で
 実機でもレイアウトの破綻・文字化け・クラッシュは無く、Issue #8で
 指摘された3点がいずれも解消されたことを確認した。
 
+## Issue #7: バッテリー残量の画面表示
+
+Issue本文（要約）:
+
+1. 画面右上（タイトル行）に表示するのが良さそう
+2. 常時表示・バッテリー減少時のみ表示・非表示の設定ができる
+3. 「減少」の判定は muOS 側の設定を活かせるならそれ、無ければ10%
+
+着手前にユーザーへ確認した4点（見た目・既定値・Player画面への表示・
+しきい値探索の要否）は本文末尾の実機検証チェックリストにも反映してある。
+
+### (a) `battery.c` を独立させた理由
+
+`app.c` は既に1300行超で、`app.h` 冒頭のコメントが「画面状態機械と
+レイアウト」と自称している。バッテリー残量はプラットフォームの事実
+であり、`browser.c`(dirent) や `player.c`(オーディオデバイス) と同じ層に
+置くのが筋が良い。加えて、`ui_marquee_offset()`（Issue #8）や
+`ui_metrics_compute()` と同じく「SDLをリンクするが `SDL_Init` は呼ばない
+純関数」として判定ロジック（`battery_should_poll`/`battery_is_low`/
+`battery_should_show`/`battery_low_threshold_from_env`）を切り出せば、
+`tests/test_battery.c` で `SDL_GetPowerInfo()` の実行環境依存を避けつつ
+境界条件（`Uint32`折り返し・しきい値境界・充電中の扱い）を検証できる。
+
+`SDL_GetPowerInfo()` 自体は Linux バックエンドで `/sys/class/power_supply`
+を毎回読み直すため、毎フレーム(60Hz)呼ぶとI/Oが無視できない。
+`battery_poll()` が内部で `BATTERY_POLL_INTERVAL_MS`(2秒)ごとにしか
+実際には読まないようにし、`app_update_battery()` という1フレーム1回だけの
+呼び出し口を`app_update_scope()`(F-14)と同じ場所に置いて、`draw_*()`側は
+`app->battery_status`/`app->battery_visible` を読むだけにした
+(1フレーム内で4画面が必ず同じ値を見える、という副次効果もある)。
+
+### (b) 充電中でも「低い」を隠さない
+
+`battery_is_low()` は充電中かどうかを見ない(残量そのものだけで判定する)。
+充電中は色を緑にして区別するので、「挿した瞬間に赤ゲージが消えて
+安心してしまう」よりは「挿しても暫くは赤のまま(緑に変わる)」の方が
+実態(まだ空に近い)を隠さない。
+
+### (c) 見た目はゲージのみ(数値は出さない)
+
+8x8埋め込みフォント(`vendor/font8x8`)はASCIIのみで絵文字が無い。
+ユーザーに確認した結果、矩形の枠+塗りのゲージのみを描く方針にした
+(数値`85%`を出す案もあったが、桁数で幅が動くとPlayerのマーキー
+(Issue #8)の可用幅が毎秒揺れてガタつく懸念があった。ゲージのみなら
+幅は常に固定でその心配が無い)。
+
+### (d) 4画面への組み込みは「描画スイッチ後のオーバーレイ」にしなかった
+
+`draw_browser()`のcwd表示も`draw_player()`の曲名マーキーも、タイトル行の
+幅いっぱいを使って描かれる。スイッチ後に上から重ね描きすると本文と
+衝突するため、`draw_battery()`が確保した幅を先に本文側の`max_w`から
+差し引いてから本文を描く、という順序を4画面それぞれのタイトル行で
+踏む形にした(共有ヘルパは`draw_battery(app, right_x, row_y, row_h)`
+1つで、呼び出し側が返り値の幅を引き算する)。Playerだけは曲名の行にのみ
+効かせ、以降の行(トラック番号・時間等)は`content_w`のまま(タイトル行より
+下から始まるため)。
+
+### (e) しきい値を config.ini のキーにしなかった理由
+
+Issueが求めているのは表示条件(off/low/always)の設定だけで、しきい値
+そのものまでconfig.iniに持たせると、SPECのサンプル・Settings画面・
+`packaging/muGBS/config.ini`と同期させる箇所が増える。`mux_launch.sh`が
+`MUGBS_BATTERY_LOW_PCT`を環境変数でexportする経路(`MUGBS_START_DIR`と
+同じ idiom)なら、muOS由来の値もSSHでの実験用上書きも両方まかなえる。
+3件目の類似ニーズが出たらconfig.ini化を再検討する。
+
+### (f) `SET_ENUM` の型パニング修正
+
+`repeat_mode_t`に続く2つ目の`SET_ENUM`(`battery_show_t`)を追加するに
+あたり、`setting_get`/`setting_set`が`repeat_mode_t *`決め打ちで
+読み書きしていたのを`int *`へ直した。両方の enum が `int` と同じ幅・
+表現であることを`_Static_assert`で明示し、前提が崩れたらビルドで
+気づけるようにしてある。
+
+### (g) muOSのしきい値探索は推測であることを明示する
+
+`mux_launch.sh`が試す `GET_VAR` の候補キー
+(`device:battery/low`/`global:settings/general/low_battery`/
+`global:settings/power/low_battery`)は、公開ドキュメントから確証を得た
+ものではなく推測。全候補の結果を`echo`で`log.txt`に残す設計にしたのは、
+初回の実機起動でどれが(あるいはどれも)生きているかを確認し、
+候補リストを絞り込む・別Issueに切り出すための材料にするため。
+見つからなければ何もexportされず、`battery_low_threshold_from_env(NULL)`
+が既定の10%を返す(Issue本文の要求どおりの安全側フォールバック)。
+
+### 検証
+
+ホストビルドの CTest: 新設 `tests/test_battery.c`(`battery_should_poll`の
+`Uint32`折り返し・`battery_is_low`/`battery_should_show`の境界値行列・
+`battery_low_threshold_from_env`のクランプ・`MUGBS_BATTERY_FAKE`パーサ)、
+`tests/test_config.c`の5箇所(`test_defaults`/`test_spec_sample`/
+`test_enum_and_bool_forms`/`check_equal`/`test_roundtrip_mutated`)、
+`tests/ui_smoke.script`に`Show battery`を1周ぶん踏む操作を追加、
+`tests/CMakeLists.txt`の`test_ui_smoke_*`に`MUGBS_BATTERY_FAKE=7`を追加して
+CIでもゲージの描画経路(縮退分岐含む)をASan/UBSan下で実行させるようにした。
+`ctest --test-dir build`・ASan/UBSanビルドとも全緑(SKIP無し)を確認した。
+
+レイアウト目視確認: 長い曲名(`.m3u`で明示的に長いタイトルを合成)と長い
+ディレクトリ名を用意し、`MUGBS_BATTERY_FAKE`で通常(85%)/低下(5%)/充電中
+(`+50`)を切り替えつつ、320x240/640x480/1280x720で`--ui-script`+
+`--screenshot`を確認。4画面ともゲージが右上に収まり本文と衝突しないこと、
+色分岐(グレー/赤/緑)が正しいこと、Playerでは曲名の可用幅がゲージ分だけ
+縮んで先が"..."でも切れずに収まることを確認した。
+
+### 実機検証（未実施。マージ後に実施してここへ追記する）
+
+muOSのしきい値キーが実在するかは実機を見ないと分からない
+(上記(g)参照)。マージ後の実機検証で確認すべき項目:
+
+- `log.txt`の`battery: probe GET_VAR ...`行で候補キーの生死を確認
+- `battery: present=… percent=… charging=…`行で`SDL_GetPowerInfo()`が
+  実機で実際に値を返すか(**最大のリスク**。返らない場合は
+  `/sys/class/power_supply/*/capacity`を`mux_launch.sh`側で探して
+  `MUGBS_BATTERY_CAPACITY_PATH`として渡す追補を別途行う)
+- 4画面での見た目・長い曲名/パスとの衝突有無
+- 充電ケーブルの抜き差しでの色切り替わり(2秒以内)
+- `Show battery`のLEFT/RIGHT循環・`config.ini`への保存・再起動での復元・
+  `X`でのリセット(既定`low`に戻る)
+
 ## 検証手順
 
 ```sh

@@ -63,6 +63,41 @@ SETUP_APP "$APP_BIN" ""
 [ -n "${SDL_GAMECONTROLLERCONFIG_FILE:-}" ] ||
 	export SDL_GAMECONTROLLERCONFIG_FILE="/usr/lib/gamecontrollerdb.txt"
 
+# --- 低バッテリー判定のしきい値 (Issue #7) -----------------------------------
+# 画面右上のバッテリーゲージを「残量が少ないときだけ」表示する設定
+# ([ui] battery_show = low)向けのしきい値。muOS 側に設定があればそれを
+# 尊重し、無ければ mugbs の既定(10%)に任せる(battery_low_threshold_from_env,
+# src/battery.c)。
+#
+# muOS のどのキーがこれに当たるかはバージョン・機種で変わりうるので、候補を
+# 順に試し、"1..99 の整数" が返ったものだけを採用する。GET_VAR は未知の
+# キーに対して空文字・エラー・非0終了のいずれを返してもよい($( ) の中なので
+# 途中で exit してもこのスクリプトは死なない)。全候補の結果を必ず log.txt に
+# 残す -- 実機で「どのキーが生きているか」を知る唯一の手段であり、初回の
+# 実機起動でここを見て候補リストを1行に絞り込む想定。
+BATT_LOW=""
+for PROBE in device:battery/low \
+             global:settings/general/low_battery \
+             global:settings/power/low_battery; do
+	G=${PROBE%%:*}
+	K=${PROBE#*:}
+	V=$(GET_VAR "$G" "$K" 2>/dev/null)
+	echo "battery: probe GET_VAR $G $K -> '$V'"
+	case "$V" in
+	'' | *[!0-9]*) continue ;;
+	esac
+	if [ "$V" -ge 1 ] && [ "$V" -le 99 ]; then
+		BATT_LOW="$V"
+		break
+	fi
+done
+if [ -n "$BATT_LOW" ]; then
+	echo "battery: low threshold ${BATT_LOW}% (muOS)"
+	export MUGBS_BATTERY_LOW_PCT="$BATT_LOW"
+else
+	echo "battery: muOS 側にしきい値の設定が無いため、mugbs の既定(10%)に任せる"
+fi
+
 # SD が exFAT なら mount オプション由来で常に 0755 に見えるため実質 no-op だが、
 # ext4 の SD へ手で展開されたケースのために実行権限を保証しておく。
 chmod +x "$APP_DIR/bin/mugbs" 2>/dev/null

@@ -126,16 +126,32 @@ Settingsへ入らずにRepeat/Shuffleを変えられる。`S`+`←`/`→` でRep
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
 意図的に広げてある。`PLAN.md` 参照）。Repeat・**Shuffle**・Stereo depth・
-**EQ bass**・**EQ treble**・Default length・Fade・Show all files の8項目を
-編集でき、抜けるときとアプリ終了時に `config.ini` へ自動保存する
-（`sample_rate` はデバイス再オープンが必要なため対象外）。`X`（キーボードは
-`A`）でこれら8項目を一括で既定値に戻す確認ダイアログを開ける
+**EQ bass**・**EQ treble**・Default length・Fade・Show all files・
+Scroll title（Issue #8）・Show battery（Issue #7）の10項目を編集でき、
+抜けるときとアプリ終了時に `config.ini` へ自動保存する（`sample_rate` は
+デバイス再オープンが必要なため対象外）。`X`（キーボードは
+`A`）でこれら10項目を一括で既定値に戻す確認ダイアログを開ける
 （`last_path`やコントローラ設定など、Settings画面に出てこない値は対象外）。
 
 Shuffle を有効にすると、次/前トラック（自動送りも含む）がランダムな順で
 進む。1周（全エントリを1回ずつ）したら Repeat が `all` なら次の周のために
 並びを作り直し、`none`なら停止する（順送りのときと同じ考え方）。
 `Repeat: one` はシャッフルより優先し、常に同じトラックを繰り返す。
+
+### バッテリー残量表示 (F-26, Issue #7)
+
+4画面すべてのタイトル行右端に残量ゲージ（矩形の枠＋残量ぶんの塗り。
+8x8フォントはASCIIのみで絵文字が無いため数値は出さない）を表示できる。
+Settings の `Show battery`（`config.ini` の `[ui] battery_show`）で
+`off`/`low`/`always` を選ぶ（既定は `low`＝残量が少ないときだけ）。色は
+通常グレー、残量が少ないと赤、充電中は緑。「少ない」のしきい値は、
+実機では `mux_launch.sh` が muOS 側の設定を `GET_VAR` で探し、見つかれば
+それを使う。見つからなければ既定の10%（Issue #7の要求どおり）。
+バッテリーの無いホスト機では常に非表示になる。開発中に見え方を確認したい
+場合は `MUGBS_BATTERY_FAKE=85`（非充電・残量85%）や `MUGBS_BATTERY_FAKE=+5`
+（先頭`+`で充電中扱い・残量5%）を付けて起動すると、実際の
+`SDL_GetPowerInfo()` の代わりにその値を使う（`--screenshot`と同格の
+非公開の開発用オプション）。
 
 実機の物理ボタンでの終了は **GUIDEボタン単体、または Start+Select 同時押し**
 （SPEC 6.3「Menu長押し=終了」の代替。GUIDEがmuOS側のオーバーレイに
@@ -164,7 +180,8 @@ libgme の公開 C API にはチャンネル別の PCM を取り出す手段が�
 
 ## 設定ファイル (config.ini, P6)
 
-SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`（Issue #8）/`last_path`（F-13）と
+SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`（Issue #8）/
+`battery_show`（Issue #7）/`last_path`（F-13）と
 `[input] gamecontroller_db`/`controller_mapping` を持つ。`src/config.c`
 が読み書きする（外部のINIライブラリは使わない。SPEC 12）。
 

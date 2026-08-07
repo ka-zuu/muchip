@@ -23,6 +23,14 @@ typedef enum {
     REPEAT_ALL,
 } repeat_mode_t;
 
+/* Issue #7: 画面右上のバッテリー残量表示の条件。順序は Settings 画面の
+ * LEFT/RIGHT循環の順でもある(非表示 -> 減ったときだけ -> 常に)。 */
+typedef enum {
+    BATTERY_SHOW_OFF = 0,
+    BATTERY_SHOW_LOW,
+    BATTERY_SHOW_ALWAYS,
+} battery_show_t;
+
 typedef struct {
     /* [playback] */
     int default_length_sec; /* 曲長不明時の再生秒数 (F-08) */
@@ -42,6 +50,7 @@ typedef struct {
     char last_path[MUGBS_PATH_MAX]; /* F-13: 直近に開いたファイル/ディレクトリ。空=未設定 */
     int title_scroll; /* Issue #8: Player画面の曲名を横スクロール(マーキー)させるか。
                         * 既定on。offなら従来どおり ui_text_clipped() で "..." 省略。 */
+    battery_show_t battery_show; /* Issue #7: 画面右上のバッテリー残量ゲージの表示条件。既定low */
 
     /* [input]
      * muOS実機の物理ボタンは、SDLのゲームコントローラDBが読み込まれていれば

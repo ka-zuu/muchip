@@ -8,6 +8,7 @@
 
 #include <SDL.h>
 
+#include "battery.h"
 #include "browser.h"
 #include "input.h"
 #include "log.h"
@@ -73,6 +74,15 @@ typedef struct {
      * draw_player() は描くだけ。 */
     short scope[AUDIO_SCOPE_SAMPLES];
     int scope_len;
+
+    /* Issue #7: バッテリー残量。app_update_battery() が1フレームに1回だけ
+     * battery_poll()(内部で throttle 済み)から取り込み、draw_*() は
+     * battery_status/battery_visible を見るだけ(SDL_GetPowerInfoを
+     * draw_*から呼ばないことで、1フレーム内の4画面が同じ値を見る)。 */
+    battery_t battery;
+    battery_status_t battery_status;
+    int battery_visible;
+    int battery_low_pct; /* app_options_tから受け取る (main.c) */
 
     char status[256];   /* Browserのフッタ/Playerに一時表示するエラー等 */
     Uint32 status_until; /* SDL_GetTicks()がこれを超えたら消える */
@@ -227,6 +237,16 @@ static void app_update_scope(app_t *app) {
     /* 見つからなければ trigger=0 のまま(無音や直流成分だけのとき)。 */
     memcpy(app->scope, raw + trigger, sizeof(short) * APP_SCOPE_DRAW_SAMPLES);
     app->scope_len = APP_SCOPE_DRAW_SAMPLES;
+}
+
+/* Issue #7: 1フレームに1回だけ呼ぶ。battery_poll() 自体は内部で
+ * throttle されている(BATTERY_POLL_INTERVAL_MS)ので、ここは軽い。
+ * draw_*() からは SDL_GetPowerInfo を直接呼ばせないことで、1フレーム内の
+ * 4画面が必ず同じ値を見るようにしている(app_update_scope()と同じ方針)。 */
+static void app_update_battery(app_t *app) {
+    const battery_status_t *st = battery_poll(&app->battery, SDL_GetTicks());
+    app->battery_status = *st;
+    app->battery_visible = battery_should_show(app->cfg->battery_show, st, app->battery_low_pct);
 }
 
 static void set_status(app_t *app, const char *fmt, ...) {
@@ -626,6 +646,10 @@ typedef struct {
 } setting_def_t;
 
 static const char *const REPEAT_MODE_NAMES[] = { "none", "one", "all" };
+/* Issue #7。表示名はconfig.iniのトークン("off"/"low"/"always")と字面が
+ * 一致しなくてよい。setting_get/setting_set が扱うのは添字だけで、
+ * 順序さえ config.h の battery_show_t と一致していればよい。 */
+static const char *const BATTERY_SHOW_NAMES[] = { "off", "when low", "always" };
 
 /* Default length/Fade が「次のトラックから反映される」ことを示す
  * フッタの "(next track)" 注記はP10で削除した(ユーザー判断。
@@ -640,8 +664,17 @@ static const setting_def_t SETTINGS[] = {
     { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0 },
     { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0 },
     { "Scroll title",           SET_BOOL,   offsetof(mugbs_config_t, title_scroll),     0,     1,   1, NULL, 0 },
+    { "Show battery",           SET_ENUM,   offsetof(mugbs_config_t, battery_show),     0,     2,   1, BATTERY_SHOW_NAMES, 3 },
 };
 #define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
+
+/* SET_ENUMは repeat_mode_t と battery_show_t(Issue #7) の2つの enum 型を
+ * 跨いで扱うため、特定の enum 型のポインタでは読み書きできない。
+ * GCC/Clangはどちらの enum も int と同じ大きさ・表現になる(値域 0..2 の
+ * 符号なし enum は unsigned int)ので int としてアクセスするが、その前提が
+ * 崩れたらビルドを止める。 */
+_Static_assert(sizeof(repeat_mode_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
+_Static_assert(sizeof(battery_show_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
 
 static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
     const void *field = (const char *)cfg + s->offset;
@@ -649,7 +682,7 @@ static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
         case SET_INT:    return *(const int *)field;
         case SET_DOUBLE: return *(const double *)field;
         case SET_BOOL:   return *(const int *)field;
-        case SET_ENUM:   return *(const repeat_mode_t *)field;
+        case SET_ENUM:   return *(const int *)field;
     }
     return 0;
 }
@@ -660,7 +693,7 @@ static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
         case SET_INT:    *(int *)field = (int)v; break;
         case SET_DOUBLE: *(double *)field = v; break;
         case SET_BOOL:   *(int *)field = (int)v; break;
-        case SET_ENUM:   *(repeat_mode_t *)field = (repeat_mode_t)(int)v; break;
+        case SET_ENUM:   *(int *)field = (int)v; break;
     }
 }
 
@@ -827,6 +860,45 @@ static const char *tracklist_item_text(void *ctx, int index) {
     return buf;
 }
 
+/* Issue #7: タイトル行の右端に残量ゲージを描き、確保した幅(px)を返す。
+ * 0なら何も描いていない(呼び出し側は幅を削らなくてよい)。
+ * right_x は行の右端(exclusive。4画面とも ui->screen_w - pad で揃える)、
+ * row_y/row_h はその行の矩形(縦センタリングに使う)。
+ * ユーザー確認済み: ゲージのみを描き、数値("85%"等)は出さない
+ * (8x8フォントはASCIIのみで絵文字が無く、数値を出すなら桁数で幅が
+ * 揺れないよう固定幅確保が要るが、ゲージのみならその心配が無い)。
+ * 幅は screen_w/4 を超える極端に狭い解像度では0を返し、
+ * バッテリーよりパス/曲名等の本文を優先する。 */
+static int draw_battery(app_t *app, int right_x, int row_y, int row_h) {
+    if (!app->battery_visible) return 0;
+
+    ui_t *ui = &app->ui;
+    const int g = ui_glyph_size(ui, UI_TEXT_BODY);
+    const int pad = ui->metrics.pad;
+    int gauge_w = g * 2;
+    if (gauge_w > ui->screen_w / 4) return 0;
+
+    const SDL_Color c_ok  = { 150, 150, 160, 255 }; /* 通常。他画面のdimと同色 */
+    const SDL_Color c_low = { 255, 120, 90, 255 };  /* 低下。他画面のerrと同色 */
+    const SDL_Color c_chg = { 120, 220, 140, 255 }; /* 充電中 */
+    SDL_Color c = app->battery_status.charging ? c_chg
+                 : battery_is_low(&app->battery_status, app->battery_low_pct) ? c_low
+                 : c_ok;
+
+    ui_rect_t box = { right_x - gauge_w, row_y + (row_h - g) / 2, gauge_w, g };
+    ui_draw_rect(ui, box, c);
+
+    int inset = pad / 2;
+    if (inset < 1) inset = 1;
+    int fill_w = (box.w - inset * 2) * app->battery_status.percent / 100;
+    if (fill_w > 0) {
+        ui_rect_t f = { box.x + inset, box.y + inset, fill_w, box.h - inset * 2 };
+        ui_fill_rect(ui, f, c);
+    }
+
+    return gauge_w;
+}
+
 static void draw_browser(app_t *app) {
     ui_t *ui = &app->ui;
     const SDL_Color bg = { 18, 18, 26, 255 };
@@ -839,8 +911,10 @@ static void draw_browser(app_t *app) {
 
     ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
     ui_fill_rect(ui, header, bar_bg);
+    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, header.y, header.h);
     int hy = (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2;
-    ui_text_clipped(ui, ui->metrics.pad, hy, ui->screen_w - ui->metrics.pad * 2,
+    int cwd_max_w = ui->screen_w - ui->metrics.pad * 2 - (bat_w ? bat_w + ui->metrics.pad : 0);
+    ui_text_clipped(ui, ui->metrics.pad, hy, cwd_max_w,
                      UI_TEXT_BODY, fg, app->browser.cwd ? app->browser.cwd : "");
 
     ui_rect_t list = list_rect(app);
@@ -891,10 +965,14 @@ static void draw_player(app_t *app) {
      * フィードバックを受け、[ui] title_scroll(既定on)なら横スクロール、
      * offなら従来どおり "..." 省略で表示する。 */
     const char *title = e ? e->title : "(no track)";
+    /* Issue #7: バッテリーは曲名の行にだけ食い込ませる(以降の行は
+     * タイトル行より下から始まるので content_w のまま)。 */
+    int bat_w = draw_battery(app, x + content_w, y, ui_glyph_size(ui, UI_TEXT_TITLE));
+    int title_w = content_w - (bat_w ? bat_w + ui->metrics.pad : 0);
     if (app->cfg->title_scroll) {
-        ui_text_scroll(ui, x, y, content_w, UI_TEXT_TITLE, fg, title, SDL_GetTicks());
+        ui_text_scroll(ui, x, y, title_w, UI_TEXT_TITLE, fg, title, SDL_GetTicks());
     } else {
-        ui_text_clipped(ui, x, y, content_w, UI_TEXT_TITLE, fg, title);
+        ui_text_clipped(ui, x, y, title_w, UI_TEXT_TITLE, fg, title);
     }
     y += ui_glyph_size(ui, UI_TEXT_TITLE) + ui->metrics.pad;
 
@@ -1047,10 +1125,12 @@ static void draw_tracklist(app_t *app) {
 
     ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
     ui_fill_rect(ui, header, bar_bg);
+    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, header.y, header.h);
     char hdr[64];
     snprintf(hdr, sizeof(hdr), "Tracks (%d)", app->pl ? app->pl->entry_count : 0);
-    ui_text(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
-            UI_TEXT_BODY, fg, hdr);
+    int hdr_max_w = ui->screen_w - ui->metrics.pad * 2 - (bat_w ? bat_w + ui->metrics.pad : 0);
+    ui_text_clipped(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
+                     hdr_max_w, UI_TEXT_BODY, fg, hdr);
 
     if (app->pl) {
         ui_rect_t list = list_rect(app);
@@ -1134,8 +1214,10 @@ static void draw_settings(app_t *app) {
 
     ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
     ui_fill_rect(ui, header, bar_bg);
-    ui_text(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
-            UI_TEXT_BODY, fg, "Settings");
+    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, header.y, header.h);
+    int hdr_max_w = ui->screen_w - ui->metrics.pad * 2 - (bat_w ? bat_w + ui->metrics.pad : 0);
+    ui_text_clipped(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
+                     hdr_max_w, UI_TEXT_BODY, fg, "Settings");
 
     ui_rect_t list = list_rect(app);
     ui_draw_list(ui, list, SETTINGS_COUNT, app->settings_sel, -1,
@@ -1203,6 +1285,8 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     app.running = 1;
     app.screen = SCREEN_BROWSER;
     app.player_list_playing = -1; /* memsetの0は有効な添字なので明示的に潰す */
+    app.battery_low_pct = opt->battery_low_pct;
+    battery_init(&app.battery);
 
     int fullscreen = (opt->window_w <= 0 || opt->window_h <= 0);
     if (ui_init(&app.ui, opt->window_w, opt->window_h, fullscreen) != 0) {
@@ -1288,6 +1372,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         }
 
         app_update_scope(&app); /* F-14: 1フレーム1回だけ取り込む */
+        app_update_battery(&app); /* Issue #7: 同上。実際のsysfs読みは内部で2秒に1回 */
 
         switch (app.screen) {
             case SCREEN_BROWSER:   draw_browser(&app); break;
