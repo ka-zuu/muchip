@@ -32,12 +32,15 @@ static void make_file(const char *path) {
 }
 
 /* ディレクトリ優先 -> 大小文字無視の名前順(browser.hの契約)。
- * 拡張子フィルタ(.gbs/.gb/.m3u/.zip)と隠しファイル除外も確認する。 */
+ * 拡張子フィルタ(.gbs/.gb/.nsf/.nsfe/.m3u/.zip)と隠しファイル除外も
+ * 確認する(Issue #2: .nsf/.nsfeをGBSと同格の一級市民として扱う)。 */
 static int test_sort_and_filter(void) {
     make_dir(path_in("sub"));
     make_file(path_in("Zoo.gbs"));
     make_file(path_in("apple.m3u"));
     make_file(path_in("Archive.zip"));
+    make_file(path_in("Song.nsf"));
+    make_file(path_in("Song.nsfe"));
     make_file(path_in("readme.txt"));
     make_file(path_in(".hidden.gbs"));
 
@@ -45,21 +48,25 @@ static int test_sort_and_filter(void) {
     memset(&b, 0, sizeof(b));
     CHECK(browser_open_dir(&b, g_tmpdir, 0) == 0);
     /* .hidden.gbs は常に除外。readme.txt は拡張子フィルタで除外(show_all=0)。
-     * 残り: sub(dir), apple.m3u, Archive.zip, Zoo.gbs
-     * ("apple" < "archive" < "zoo" の大小文字無視の辞書順) */
-    CHECK(b.count == 4);
+     * 残り: sub(dir), apple.m3u, Archive.zip, Song.nsf, Song.nsfe, Zoo.gbs
+     * ("apple" < "archive" < "song.nsf" < "song.nsfe" < "zoo" の
+     * 大小文字無視の辞書順。"song.nsf"は"song.nsfe"の前方一致なので短い
+     * 方が先に来る) */
+    CHECK(b.count == 6);
     CHECK(b.items[0].is_dir);
     CHECK_STREQ(b.items[0].name, "sub");
     CHECK(!b.items[1].is_dir);
     CHECK_STREQ(b.items[1].name, "apple.m3u");
     CHECK_STREQ(b.items[2].name, "Archive.zip");
-    CHECK_STREQ(b.items[3].name, "Zoo.gbs");
+    CHECK_STREQ(b.items[3].name, "Song.nsf");
+    CHECK_STREQ(b.items[4].name, "Song.nsfe");
+    CHECK_STREQ(b.items[5].name, "Zoo.gbs");
     browser_free(&b);
 
     memset(&b, 0, sizeof(b));
     CHECK(browser_open_dir(&b, g_tmpdir, 1) == 0);
     /* show_all=1: readme.txtも含まれる。隠しファイルは変わらず除外される。 */
-    CHECK(b.count == 5);
+    CHECK(b.count == 7);
     browser_free(&b);
 
     return 0;
@@ -69,7 +76,7 @@ static int test_move_and_page(void) {
     browser_t b;
     memset(&b, 0, sizeof(b));
     CHECK(browser_open_dir(&b, g_tmpdir, 1) == 0);
-    CHECK(b.count == 5);
+    CHECK(b.count == 7);
 
     browser_move(&b, -10);
     CHECK(b.selected == 0);
@@ -90,7 +97,7 @@ static int test_move_wrap(void) {
     browser_t b;
     memset(&b, 0, sizeof(b));
     CHECK(browser_open_dir(&b, g_tmpdir, 1) == 0);
-    CHECK(b.count == 5);
+    CHECK(b.count == 7);
 
     b.selected = 0;
     browser_move_wrap(&b, -1);
@@ -104,8 +111,8 @@ static int test_move_wrap(void) {
 
     /* ±1以外の値でも素直に回ること(剰余実装の確認)。 */
     b.selected = 0;
-    browser_move_wrap(&b, -7);
-    CHECK(b.selected == 3);           /* (0-7) mod 5 == 3 */
+    browser_move_wrap(&b, -9);
+    CHECK(b.selected == 5);           /* (0-9) mod 7 == 5 */
 
     browser_free(&b);
 
@@ -123,7 +130,7 @@ static int test_enter_and_up(void) {
     browser_t b;
     memset(&b, 0, sizeof(b));
     CHECK(browser_open_dir(&b, g_tmpdir, 0) == 0);
-    CHECK(b.count == 4);
+    CHECK(b.count == 6);
     CHECK(b.items[0].is_dir); /* "sub" */
 
     b.selected = 0;
@@ -133,7 +140,7 @@ static int test_enter_and_up(void) {
 
     CHECK(browser_up(&b, 0) == 1);
     CHECK_STREQ(b.cwd, g_tmpdir);
-    CHECK(b.count == 4); /* 戻ってきたら一覧が再構築されている */
+    CHECK(b.count == 6); /* 戻ってきたら一覧が再構築されている */
 
     /* ファイル(apple.m3u)へのenterは何もせず0を返す */
     b.selected = 1;
@@ -171,11 +178,11 @@ static int test_self_refresh_same_cwd_pointer(void) {
     browser_t b;
     memset(&b, 0, sizeof(b));
     CHECK(browser_open_dir(&b, g_tmpdir, 0) == 0);
-    CHECK(b.count == 4);
+    CHECK(b.count == 6);
 
     /* path として b.cwd 自身のポインタを渡す。 */
     CHECK(browser_open_dir(&b, b.cwd, 1) == 0);
-    CHECK(b.count == 5); /* show_all=1 で readme.txt が増える */
+    CHECK(b.count == 7); /* show_all=1 で readme.txt が増える */
     CHECK_STREQ(b.cwd, g_tmpdir);
 
     browser_free(&b);
@@ -189,7 +196,7 @@ static int test_select_by_name(void) {
     browser_t b;
     memset(&b, 0, sizeof(b));
     CHECK(browser_open_dir(&b, g_tmpdir, 0) == 0);
-    CHECK(b.count == 4); /* sub, apple.m3u, Archive.zip, Zoo.gbs */
+    CHECK(b.count == 6); /* sub, apple.m3u, Archive.zip, Song.nsf, Song.nsfe, Zoo.gbs */
 
     CHECK(browser_select_by_name(&b, "Archive.zip") == 1);
     CHECK(b.selected == 2);

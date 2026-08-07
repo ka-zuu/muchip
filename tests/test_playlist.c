@@ -1,9 +1,9 @@
 /* test_playlist.c - playlist.c の統合テスト。
  *
- * 合成した最小GBSファイル(ヘッダのみ有効な擬似ファイル。SPEC 10.3)と
+ * 合成した最小GBS/NSFファイル(ヘッダのみ有効な擬似ファイル。SPEC 10.3)と
  * 各種パターンのm3uテキストを実行時に一時ディレクトリへ書き出し、
  * playlist_open() が正しいエントリ表を構築することを確認する。
- * 著作権上の理由から本物の .gbs は使わない。
+ * 著作権上の理由から本物の .gbs / .nsf は使わない。
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +44,42 @@ static void build_synthetic_gbs(unsigned char *out, int track_count) {
 static void write_synthetic_gbs(const char *path, int track_count) {
     unsigned char buf[SYNTHETIC_GBS_SIZE];
     build_synthetic_gbs(buf, track_count);
+    FILE *f = fopen(path, "wb");
+    fwrite(buf, 1, sizeof(buf), f);
+    fclose(f);
+}
+
+/* 合成NSFのバイト列 (ヘッダ0x80 + コード2バイト)。 */
+#define SYNTHETIC_NSF_SIZE (0x80 + 2)
+
+/* build_synthetic_gbs() のNSF版 (Issue #2)。ヘッダ構造は
+ * vendor/game-music-emu/gme/Nsf_Emu.h の header_t 参照。GBSと同様
+ * ヘッダのみ有効で、init/playはRTS(0x60)単体で足りる最小ファイルを組み立てる。
+ * load/init を rom_begin(=Nsf_Emu.h の enum rom_begin = 0x8000)に置くこと。 */
+static void build_synthetic_nsf(unsigned char *out, int track_count) {
+    unsigned char hdr[0x80];
+    memset(hdr, 0, sizeof(hdr));
+    memcpy(hdr, "NESM\x1A", 5);
+    hdr[5] = 1; /* version */
+    hdr[6] = (unsigned char)track_count;
+    hdr[7] = 1; /* first_track。NSFは1始まり(GBSと違いheader上も1始まり) */
+    unsigned load = 0x8000, init = 0x8000;
+    hdr[8] = load & 0xFF; hdr[9] = (load >> 8) & 0xFF;
+    hdr[10] = init & 0xFF; hdr[11] = (init >> 8) & 0xFF;
+    /* play address は init直後(下記コードの1バイト目、RTS単体)を指す */
+    unsigned play = init + 1;
+    hdr[12] = play & 0xFF; hdr[13] = (play >> 8) & 0xFF;
+    memcpy(hdr + 14, "Synthetic NES Game", 18); /* game[32] (offset 0x0E) */
+
+    unsigned char code[2] = {0x60, 0x60}; /* init: RTS / play: RTS */
+
+    memcpy(out, hdr, sizeof(hdr));
+    memcpy(out + sizeof(hdr), code, sizeof(code));
+}
+
+static void write_synthetic_nsf(const char *path, int track_count) {
+    unsigned char buf[SYNTHETIC_NSF_SIZE];
+    build_synthetic_nsf(buf, track_count);
     FILE *f = fopen(path, "wb");
     fwrite(buf, 1, sizeof(buf), f);
     fclose(f);
@@ -93,6 +129,64 @@ static int test_sidecar_m3u(void) {
 
     playlist_t *pl = NULL;
     CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 3);
+    CHECK_STREQ(pl->entries[0].title, "Title Screen");
+    CHECK_STREQ(pl->entries[1].title, "Overworld");
+    CHECK_STREQ(pl->entries[2].title, "Battle");
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #2 T-01相当: m3uなしの単体.nsfを開く -> browser.cの拡張子フィルタとは
+ * 独立に、playlist_open()が.nsfを.gbsと同じ「単体音楽ファイル」経路
+ * (playlist_open_music_file())で扱えることを確認する。 */
+static int test_nsf_no_m3u_auto_naming(void) {
+    char *nsf = path_in("plain.nsf");
+    write_synthetic_nsf(nsf, 3);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(nsf, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 3);
+    CHECK_STREQ(pl->entries[0].title, "Track 01");
+    CHECK_STREQ(pl->entries[1].title, "Track 02");
+    CHECK_STREQ(pl->entries[2].title, "Track 03");
+    CHECK(pl->source_count == 1);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #2: NSFの拡張M3Uは10進トラック番号が1始まり(GBSの0始まりとは逆)。
+ * これはgame-music-emu本家(upstream)の既定動作そのものであり、GBS用に
+ * 当てたフォークパッチ(vendor/game-music-emu/gme/Gbs_Emu.cpp の
+ * flags_ |= 0x02。Gme_File::remap_track_()参照)は gme_gbs_type_ にしか
+ * 適用されていないため、gme_nsf_type_ には影響しない。
+ * m3u上で "NSF,1,...".."NSF,3,..." (1始まり)と書き、3トラックとも
+ * エラーなく列挙できることを確認する。
+ *
+ * test_decimal_track_number_is_zero_based() と同じ限界がある: titleは
+ * remap後ではなくm3uファイル上の位置からそのまま採用されるため、この
+ * テストだけでは「実際に鳴る物理トラックが正しい」ことまでは証明できない
+ * (物理トラックの検証は実機で実際のNSFリップを再生して確認する。
+ * PLAN.md参照)。ここでは「1始まりの宣言がエラーにならず期待通りの
+ * entry_count/titleになる」ことのスモークテストとして残す。 */
+static int test_nsf_sidecar_m3u_is_one_based(void) {
+    char *nsf = path_in("nsf_sidecar.nsf");
+    write_synthetic_nsf(nsf, 3);
+    write_text_file(path_in("nsf_sidecar.m3u"),
+        "nsf_sidecar.nsf::NSF,1,Title Screen,0:32\n"
+        "nsf_sidecar.nsf::NSF,2,Overworld,2:34\n"
+        "nsf_sidecar.nsf::NSF,3,Battle,1:45\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(nsf, &cfg, &pl) == 0);
     CHECK(pl->entry_count == 3);
     CHECK_STREQ(pl->entries[0].title, "Title Screen");
     CHECK_STREQ(pl->entries[1].title, "Overworld");
@@ -340,6 +434,8 @@ int main(void) {
 
     if (test_no_m3u_auto_naming()) return 1;
     if (test_sidecar_m3u()) return 1;
+    if (test_nsf_no_m3u_auto_naming()) return 1;
+    if (test_nsf_sidecar_m3u_is_one_based()) return 1;
     if (test_decimal_track_number_is_zero_based()) return 1;
     if (test_open_m3u_directly()) return 1;
     if (test_hex_track_number()) return 1;

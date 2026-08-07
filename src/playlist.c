@@ -332,7 +332,11 @@ static int playlist_open_m3u(playlist_t *pl, const char *path, const mugbs_confi
     return rc;
 }
 
-static int playlist_open_gbs(playlist_t *pl, const char *path, const mugbs_config_t *cfg) {
+/* .gbs/.gb/.nsf/.nsfe いずれもここへ来る(playlist_open()参照)。同名の
+ * サイドカーm3uがあればそれで曲名を確定させ、無ければ単体ファイルとして
+ * 開き gme_track_count() 分を自動命名で列挙する。形式ごとの分岐は無い
+ * (libgmeがgme_open_file()で拡張子から自動判別する)。 */
+static int playlist_open_music_file(playlist_t *pl, const char *path, const mugbs_config_t *cfg) {
     if (!file_exists(path)) {
         LOG_ERR("ファイルが見つかりません: %s", path);
         return -1;
@@ -486,7 +490,9 @@ int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **o
     } else if (ends_with_ci(path, ".m3u")) {
         rc = playlist_open_m3u(pl, path, config);
     } else {
-        rc = playlist_open_gbs(pl, path, config);
+        /* .gbs/.gb/.nsf/.nsfe いずれもここに来る。単体ファイル + 任意の
+         * 同名サイドカーm3u、という扱いは形式によらず共通 (SPEC 5.2-3/4)。 */
+        rc = playlist_open_music_file(pl, path, config);
     }
 
     if (rc != 0 || pl->entry_count == 0) {
