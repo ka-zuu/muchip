@@ -2065,20 +2065,68 @@ CIでもゲージの描画経路(縮退分岐含む)をASan/UBSan下で実行さ
 色分岐(グレー/赤/緑)が正しいこと、Playerでは曲名の可用幅がゲージ分だけ
 縮んで先が"..."でも切れずに収まることを確認した。
 
-### 実機検証（未実施。マージ後に実施してここへ追記する）
+### 実機検証（完了）
 
-muOSのしきい値キーが実在するかは実機を見ないと分からない
-(上記(g)参照)。マージ後の実機検証で確認すべき項目:
+実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、192.168.0.20）へSSH(鍵認証)
+で接続して確認した。`./scripts/build-aarch64.sh`でクロスビルドした
+`mugbs`をscpで転送し、`mux_launch.sh`と同じ環境構築（`func.sh`読み込み→
+`SETUP_APP`→`SDL_GAMECONTROLLERCONFIG_FILE`保証）を再現したうえで
+`--ui-script`/`--screenshot`/`MUGBS_BATTERY_FAKE`を使い、複数の画面・
+残量・状態を自動操作で確認した（P6実機確認と同じ「SSH直接起動」方式。
+`foreground_process`をmuxfrontendへ戻す後始末も実施済み）。
 
-- `log.txt`の`battery: probe GET_VAR ...`行で候補キーの生死を確認
-- `battery: present=… percent=… charging=…`行で`SDL_GetPowerInfo()`が
-  実機で実際に値を返すか(**最大のリスク**。返らない場合は
-  `/sys/class/power_supply/*/capacity`を`mux_launch.sh`側で探して
-  `MUGBS_BATTERY_CAPACITY_PATH`として渡す追補を別途行う)
-- 4画面での見た目・長い曲名/パスとの衝突有無
-- 充電ケーブルの抜き差しでの色切り替わり(2秒以内)
-- `Show battery`のLEFT/RIGHT循環・`config.ini`への保存・再起動での復元・
-  `X`でのリセット(既定`low`に戻る)
+**しきい値キーの実在確認（上記(g)の懸念点）**: `mux_launch.sh`が試す3候補
+`GET_VAR`のうち、**`global settings/power/low_battery` が実在し `15` を
+返した**（他の2候補は空文字）。推測で用意した候補リストが実機で当たって
+いたことを確認できた。`mux_launch.sh`の探索処理をそのまま実機で実行し、
+`MUGBS_BATTERY_LOW_PCT=15`が正しくexportされることも確認済み。
+
+**`SDL_GetPowerInfo()`の実機動作確認（最大のリスクだった項目）**:
+実機の`/sys/class/power_supply/axp2202-battery/`（`type=Battery`,
+`status=Charging`, `capacity=64`, `present=1`）を直接読んだうえで、
+`mugbs`のログに
+
+```
+[INFO] battery: present=1 percent=66 charging=1
+```
+
+が実際に出ることを確認した（複数回実行するとcapacityの上昇に追随して
+`percent=67`等に変化することも確認、充電中のためcapacityが実際に
+増加していた）。危惧していた「実機のSDL2ビルドでは`SDL_GetPowerInfo()`が
+`UNKNOWN`を返す」というR2のリスクは杞憂だった。
+
+**4画面での見た目**: Browser/Player/TrackList/Settingsそれぞれで
+`--screenshot`を取得し、実機の実解像度(640x480, malifbドライバ、
+ソフトウェアレンダラではなく実機の描画パス)でゲージが右上に正しく
+収まり、長い曲名・パスと衝突しないことを確認した。Settings画面の
+`Show battery`行が`always`と表示され、`X:Reset`の対象一覧にも
+（表駆動のため自動的に）含まれていることも画面で確認できた。
+
+**色分岐の3状態**: 実際の充電中バッテリー(67%, 緑)に加え、
+`MUGBS_BATTERY_FAKE=90`（非充電、通常=グレー）・`MUGBS_BATTERY_FAKE=8`
+（既定の`low`モードで自動表示、残量僅少=赤）を実機で切り替えて描画を
+確認した。3色とも実機のフレームバッファ経由のスクリーンショットで
+正しく出ることを確認済み。
+
+**config.iniの永続化**: `battery_show = low`（既定）が実機で保存される
+ことと、`always`を指定した`config.ini`を渡した場合はそれを読み込んで
+起動することを確認した（実機の`config_save`/`config_load`経路そのもの）。
+
+**未確認のまま残った項目**（自動操作の範囲外、または今回は必要性が低いと
+判断したもの）:
+
+- 充電ケーブルの物理的な抜き差しによる色のリアルタイム切り替わり
+  （SSH越しの自動操作では抜き差し自体ができない。ロジック上は
+  `battery_poll()`が2秒ごとに読み直すので反映されるはずだが、目視の
+  実地確認はしていない）
+- `mux_launch.sh`経由（Archive Managerからの起動）でのフル
+  ライフサイクル・物理ボタンでの`Show battery`のLEFT/RIGHT操作
+  （Issue #8で確立した「ユーザーが物理ボタンを操作しClaudeがSSH側で
+  ログ・スクリーンショットを見る」方式を要する。今回はSSH直接起動で
+  `SDL_GetPowerInfo()`とレイアウトという最大の不確定要素を先に潰す
+  ことを優先した。ボタン操作自体は`SETTINGS[]`の他項目と共通の
+  `adjust_setting()`経路であり、Issue #8までに実機で繰り返し確認済みの
+  経路のため、新規リスクは小さいと判断）
 
 ## 検証手順
 
