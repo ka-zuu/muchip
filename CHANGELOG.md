@@ -17,7 +17,7 @@ muGBS のユーザー向け変更履歴。実装の設計判断・実機検証�
 `## vX.Y.Z - YYYY-MM-DD` へ書き換える。`CMakeLists.txt` の
 `project(mugbs VERSION ...)` の更新と同じコミットで行うこと。
 
-## Unreleased
+## v1.1.0 - 2026-08-07
 
 ### 画面
 

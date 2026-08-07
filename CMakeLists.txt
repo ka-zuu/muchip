@@ -13,7 +13,9 @@ cmake_minimum_required(VERSION 3.13)
 # 実機で動作を確認した状態。
 # 1.0.1 = Player画面の文字サイズ修正(Issue #3)とCI/リリース自動化。
 # ユーザー向けの新機能は無いためpatchバンプ。
-project(mugbs VERSION 1.0.1 LANGUAGES C CXX)
+# 1.1.0 = Player画面の文字バランス調整(Issue #8)に加え、バッテリー残量
+# 表示(F-26, Issue #7)というユーザー向けの新機能が入るためminorバンプ。
+project(mugbs VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
