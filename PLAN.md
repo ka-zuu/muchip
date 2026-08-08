@@ -2579,6 +2579,49 @@ Settings画面で`Length`を`auto`→`5 min`に変えた直後の表示が`5 min
 削除し、`.muxapp`は他バージョンと同様`/mnt/mmc/ARCHIVE/`に残した
 （インストール済みバイナリ`1.4.0`自体は意図的にそのまま残置）。
 
+## Issue #22: 既定ブランチを master から main へ
+
+Issue本文は `git branch -m master main` の一行のみ。着手前に調べた前提:
+
+- オープンな PR は0件（GitHub側の改名でリターゲットが必要なものは無い）
+- branch protection / ruleset は存在しない（P13の設計判断のとおり無料
+  プラン + private リポジトリでは該当APIが403を返すため、そもそも
+  サーバ側で強制できていなかった。移行すべき設定も無い）
+- `src/`・`tests/` に `master` 参照は無し。C言語側は無変更
+
+`master` を前提にしていた箇所は3系統: `.github/workflows/ci.yml`
+（push/pull_requestのブランチフィルタ）、`.githooks/pre-push`
+（保護対象ブランチ名の既定値と、抜け道の環境変数
+`MUGBS_ALLOW_PUSH_MASTER`）、`scripts/release.sh`
+（リリース元ブランチの既定値）。加えてREADME/SPEC/PLAN/CHANGELOGの
+運用手順の記述。
+
+**GitHub側を先にリネームした。** `ci.yml` の `pull_request: branches:`
+を先に `main` へ変更した状態で `master` 宛にPRを出すと、`pull_request`
+イベントはPRのベースブランチ側のワークフロー定義で評価されるため、
+その PR では CI が一切走らなくなる（ci.ymlを直す変更を検証するはずの
+PR自体が検証できないというデッドロック）。これを避けるため
+
+```sh
+gh api -X POST repos/ka-zuu/gbs-player/branches/master/rename -f new_name=main
+```
+
+でGitHub側のブランチ実体・既定ブランチ・オープンPRのリターゲットを
+まとめて行ってから、ローカルを追随させ (`git branch -m master main` /
+`git branch -u origin/main main` / `git remote set-head origin -a`)、
+ファイル修正のPRを `main` 宛に出した。
+
+`MUGBS_ALLOW_PUSH_MASTER` は `MUGBS_ALLOW_PUSH_MAIN` へ改名した
+（名前が実態とずれるのを避けるため）。上の「CI とリリース（P13）」節や
+「P13の設計判断」節に出てくる `master`・`MUGBS_ALLOW_PUSH_MASTER` は
+当時の作業ログとして正確さを優先し、あえて書き換えていない
+（`## 検証手順`直下の実行コマンド行だけは今の手順を表すので `main` に
+更新した）。
+
+既知の穴: GitHub側の改名からこのPRのマージまでの間、`.githooks/pre-push`
+は存在しない `master` を保護対象として探すため、その間だけ `main` への
+直push が素通しになる（作業はfeatureブランチ経由だったため実害は無い）。
+
 ## 検証手順
 
 ```sh
@@ -2648,7 +2691,7 @@ ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 \
 ```sh
 # フックを有効にする(クローンごとに1回)
 git config core.hooksPath .githooks
-git push --dry-run origin HEAD:master   # 拒否されること
+git push --dry-run origin HEAD:main   # 拒否されること
 
 # CIと同じ条件でローカルにテストを回す(SKIPが出ないこと)
 MUGBS_REQUIRE_SHELLCHECK=1 ctest --test-dir build --output-on-failure

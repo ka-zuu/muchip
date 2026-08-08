@@ -18,7 +18,7 @@
 # 事前にやっておくこと:
 #   1. CMakeLists.txt の project(mugbs VERSION x.y.z ...) を上げる
 #   2. CHANGELOG.md の「## Unreleased」を「## vx.y.z - YYYY-MM-DD」にする
-#   3. 上の2つを PR 経由で master へマージし、ローカルの master を最新にする
+#   3. 上の2つを PR 経由で main へマージし、ローカルの main を最新にする
 #   4. 実機から sysroot/ を取得済みであること (scripts/fetch-sysroot.sh)
 #
 # 使い方:
@@ -32,7 +32,7 @@
 #   --print-notes   CHANGELOG.md から現バージョンの節を切り出して表示し終了する
 #                   (.github/workflows/release-guard.yml がこれを呼ぶ)
 #   --remote NAME   push 先リモート (既定: origin)
-#   --branch NAME   リリース元ブランチ (既定: master)
+#   --branch NAME   リリース元ブランチ (既定: main)
 #   --notes FILE    リリース本文を CHANGELOG.md ではなくこのファイルから取る
 #   --keep-binary   クロスビルドをやり直さず既存の build-aarch64/mugbs を使う
 #   --no-github     タグの push までで止め、gh release を作らない
@@ -45,7 +45,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 REMOTE="origin"
-BRANCH="master"
+BRANCH="main"
 SUBMODULE="vendor/game-music-emu"
 BUILD_DIR="build-release"
 DRY_RUN=0

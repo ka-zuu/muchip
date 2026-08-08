@@ -17,6 +17,14 @@ muGBS のユーザー向け変更履歴。実装の設計判断・実機検証�
 `## vX.Y.Z - YYYY-MM-DD` へ書き換える。`CMakeLists.txt` の
 `project(mugbs VERSION ...)` の更新と同じコミットで行うこと。
 
+## Unreleased
+
+### 開発フロー
+
+- 既定ブランチを `master` から `main` へ改めた（Issue #22）。
+  `.githooks/pre-push` の抜け道用環境変数も `MUGBS_ALLOW_PUSH_MASTER` から
+  `MUGBS_ALLOW_PUSH_MAIN` へ改名した
+
 ## v1.4.0 - 2026-08-07
 
 ### 設定

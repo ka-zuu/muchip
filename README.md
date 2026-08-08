@@ -354,7 +354,7 @@ strip無し生成も指定できる（`ctest -R test_package` が構造検証に
 
 ## 開発フロー（PR ベース、P13）
 
-`master` へは直接コミット・push しない。ブランチを切って PR を出す。
+`main` へは直接コミット・push しない。ブランチを切って PR を出す。
 
 ```sh
 git switch -c <ブランチ名>
@@ -370,14 +370,14 @@ gh pr checks --watch    # CI が緑になるのを待つ
 git config core.hooksPath .githooks
 ```
 
-`.githooks/pre-push` が `master` への直接 push を拒否する。`core.hooksPath` は
+`.githooks/pre-push` が `main` への直接 push を拒否する。`core.hooksPath` は
 `.git/config` に入る設定なので、リポジトリに置いてあるだけでは有効にならない。
 
 本来これは GitHub 側の branch protection / ruleset でやりたいところだが、
 **無料プラン + private リポジトリでは該当 API がどちらも 403**
 （`Upgrade to GitHub Pro or make this repository public to enable this feature.`）
 を返すため使えない。フックはあくまで自衛で、`git push --no-verify` や
-`MUGBS_ALLOW_PUSH_MASTER=1` で抜けられる。本当の強制が要るようになったら
+`MUGBS_ALLOW_PUSH_MAIN=1` で抜けられる。本当の強制が要るようになったら
 (a) リポジトリを public にする（ruleset が無料で使える）か
 (b) GitHub Pro にする、のどちらか。
 
@@ -407,7 +407,7 @@ Issue コメントで `@claude` とタグ付けするだけで自動着手させ
 
 ## CI（GitHub Actions、P13）
 
-`.github/workflows/ci.yml` が PR と `master` への push で2つのジョブを回す。
+`.github/workflows/ci.yml` が PR と `main` への push で2つのジョブを回す。
 
 | ジョブ | 内容 |
 |---|---|
@@ -432,7 +432,7 @@ Issue コメントで `@claude` とタグ付けするだけで自動着手させ
 1. `CMakeLists.txt` の `project(mugbs VERSION x.y.z ...)` を上げる
 2. `CHANGELOG.md` の `## Unreleased` を `## vx.y.z - YYYY-MM-DD` に書き換える
    （1 と同じコミットで）
-3. PR 経由で `master` へマージし、ローカルの `master` を最新にする
+3. PR 経由で `main` へマージし、ローカルの `main` を最新にする
 4. リハーサル → 本番
 
 ```sh

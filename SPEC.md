@@ -708,7 +708,7 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 
 ### 10.4 CI（GitHub Actions、P13）
 
-`.github/workflows/ci.yml` が PR と master への push で次を回す。
+`.github/workflows/ci.yml` が PR と main への push で次を回す。
 
 | ジョブ | 内容 |
 |---|---|
@@ -765,7 +765,7 @@ Claude Code は以下の順で実装し、各フェーズ末尾でビルドが�
   （`mux_launch.sh` は実機の busybox ash で動くので bashism = SC3xxx は致命的）
 - シェルスクリプトを追加したら `tests/test_package.sh` の `SHELL_SCRIPTS` に
   必ず加える（`sh -n` と shellcheck の対象がそこで一元管理されている）
-- **master へは直接コミット・push しない。** ブランチを切って PR を出す
+- **main へは直接コミット・push しない。** ブランチを切って PR を出す
   （P13。`git config core.hooksPath .githooks` で `.githooks/pre-push` を
   有効にしておくこと）
 

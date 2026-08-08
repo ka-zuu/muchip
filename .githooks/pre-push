@@ -1,7 +1,7 @@
 #!/bin/sh
 # .githooks/pre-push
 #
-# master への直接 push を拒否する。 (P13)
+# main への直接 push を拒否する。 (P13)
 #
 # 本来は GitHub 側の branch protection / ruleset で強制したいが、無料プラン
 # かつ private リポジトリでは該当 API がどちらも 403 を返す
@@ -16,7 +16,7 @@
 # だけでは自動で有効にならない。README の「開発フロー」に手順を書いてある。
 #
 # 制約: これは自衛であって強制ではない。git push --no-verify や
-# 環境変数 MUGBS_ALLOW_PUSH_MASTER=1 で意図的に抜けられる。本当の強制が
+# 環境変数 MUGBS_ALLOW_PUSH_MAIN=1 で意図的に抜けられる。本当の強制が
 # 要るようになったら次のどちらかを行うこと:
 #   a) リポジトリを public にする (ruleset が無料で使える)
 #   b) GitHub Pro にする
@@ -26,7 +26,7 @@
 #
 set -e
 
-PROTECTED="${MUGBS_PROTECTED_BRANCH:-master}"
+PROTECTED="${MUGBS_PROTECTED_BRANCH:-main}"
 
 die() {
 	echo "エラー: $1" >&2
@@ -35,7 +35,7 @@ die() {
 	exit 1
 }
 
-[ "${MUGBS_ALLOW_PUSH_MASTER:-0}" = "1" ] && exit 0
+[ "${MUGBS_ALLOW_PUSH_MAIN:-0}" = "1" ] && exit 0
 
 # git は "<local ref> <local sha> <remote ref> <remote sha>" の並びを
 # 標準入力で1行ずつ渡してくる。remote_ref だけ見ればよい。
@@ -48,7 +48,7 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
 		"  git push -u origin <ブランチ名>" \
 		"  gh pr create --fill" \
 		"どうしても直接 push が必要なときだけ:" \
-		"  MUGBS_ALLOW_PUSH_MASTER=1 git push origin $PROTECTED"
+		"  MUGBS_ALLOW_PUSH_MAIN=1 git push origin $PROTECTED"
 done
 
 exit 0
