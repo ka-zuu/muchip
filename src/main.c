@@ -17,11 +17,11 @@
 #include "player.h"
 #include "playlist.h"
 
-/* CMakeLists.txt の project(mugbs VERSION ...) から
+/* CMakeLists.txt の project(muchip VERSION ...) から
  * target_compile_definitions() で渡される。tests/ から main.c を単体ビルドする
  * ことは無いが、保険として既定値を持たせておく。 */
-#ifndef MUGBS_VERSION
-#define MUGBS_VERSION "0.0.0-dev"
+#ifndef MUCHIP_VERSION
+#define MUCHIP_VERSION "0.0.0-dev"
 #endif
 
 typedef struct {
@@ -62,10 +62,10 @@ static void print_usage(const char *prog) {
         "  --fade-ms MS        フェード長を上書きする (config.fade_length_ms)\n"
         "  --repeat MODE      none|one|all でリピートモードを上書きする\n"
         "  --config PATH      設定ファイルの場所を指定する\n"
-        "                     (既定: 環境変数 MUGBS_CONFIG、無ければ ./config.ini)\n"
+        "                     (既定: 環境変数 MUCHIP_CONFIG、無ければ ./config.ini)\n"
         "  --cli              SDL ウィンドウを開かずコンソールのみで動作する\n"
         "  --start-dir DIR    GUI起動時、Browserの開始ディレクトリを指定する\n"
-        "                     (環境変数 MUGBS_START_DIR でも指定できるが、そちらは\n"
+        "                     (環境変数 MUCHIP_START_DIR でも指定できるが、そちらは\n"
         "                      config.ini の last_path が無いときだけ使われる)\n"
         "  --window WxH       GUIをこのウィンドウサイズで起動する(未指定なら検出した解像度でフルスクリーン)\n"
         "  -h, --help         このヘルプを表示する\n"
@@ -136,7 +136,7 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
             else if (strcmp(m, "all") == 0) out->repeat_mode = REPEAT_ALL;
             else { LOG_ERR("--repeat の値が不正です: %s (none|one|all)", m); return -1; }
         } else if (strcmp(a, "--version") == 0) {
-            printf("muGBS %s\n", MUGBS_VERSION);
+            printf("muChip %s\n", MUCHIP_VERSION);
             exit(0);
         } else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
             print_usage(argv[0]);
@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
 
     /* 実機では mux_launch.sh が出力を log.txt へリダイレクトするため、
      * この1行がユーザーから送られてきたログのビルド特定に使える。 */
-    LOG_INFO("muGBS %s", MUGBS_VERSION);
+    LOG_INFO("muChip %s", MUCHIP_VERSION);
 
     if (args.list_only || args.cli_mode) {
         /* CLIハーネス(CI・自動検証用)。P1〜P4から変わらず、必ずファイル指定が要る。 */
@@ -285,22 +285,22 @@ int main(int argc, char **argv) {
         LOG_ERR("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
-    /* 実機の mux_launch.sh は音楽フォルダを自動検出して MUGBS_START_DIR で渡してくる
+    /* 実機の mux_launch.sh は音楽フォルダを自動検出して MUCHIP_START_DIR で渡してくる
      * (P7)。--start-dir と違い last_path より優先度が低いので、F-13(前回の続きから
      * 開く)を毎回潰さずに「初回起動時だけ音楽フォルダから始める」を実現できる。 */
     app_options_t opt = {
         .initial_path = args.path,
         .start_dir = args.start_dir,
-        .fallback_start_dir = getenv("MUGBS_START_DIR"),
+        .fallback_start_dir = getenv("MUCHIP_START_DIR"),
         .window_w = args.window_w,
         .window_h = args.window_h,
         .ui_script_path = args.ui_script,
         .screenshot_path = args.screenshot,
         .config_path = cli_override ? NULL : config_path,
         /* Issue #7: muOS実機は mux_launch.sh が GET_VAR でしきい値を探し、
-         * 見つかれば MUGBS_BATTERY_LOW_PCT を export する。無ければ
+         * 見つかれば MUCHIP_BATTERY_LOW_PCT を export する。無ければ
          * battery_low_threshold_from_env(NULL) が既定の10%を返す。 */
-        .battery_low_pct = battery_low_threshold_from_env(getenv("MUGBS_BATTERY_LOW_PCT")),
+        .battery_low_pct = battery_low_threshold_from_env(getenv("MUCHIP_BATTERY_LOW_PCT")),
     };
     int rc = app_run(&cfg, &opt);
     SDL_Quit();

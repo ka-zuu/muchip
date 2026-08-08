@@ -1,4 +1,4 @@
-# SPEC.md — muGBS: muOS向け GBS (Game Boy Sound System) プレーヤー
+# SPEC.md — muChip: muOS向け chiptune (GBS/NSF) プレーヤー
 
 > このドキュメントは Claude Code に実装を依頼するための仕様書です。
 > 実装者（Claude Code）は、まず本仕様を読んだ上で `PLAN.md` を作成し、
@@ -463,7 +463,7 @@ STOPPED ──open──► LOADED ──play──► PLAYING ⇄ PAUSED
 
 ## 7. 設定ファイル
 
-`/run/muos/storage/application/muGBS/config.ini`
+`/run/muos/storage/application/muChip/config.ini`
 
 ```ini
 [playback]
@@ -549,11 +549,11 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 ### 8.5 リンクフラグ
 
 ```cmake
-target_link_options(mugbs PRIVATE
+target_link_options(muchip PRIVATE
     -static-libstdc++
     -static-libgcc
 )
-target_link_libraries(mugbs PRIVATE gme_static SDL2 m)
+target_link_libraries(muchip PRIVATE gme_static SDL2 m)
 ```
 
 libgme は `BUILD_SHARED_LIBS=OFF`, `ENABLE_UBSAN=OFF` でビルドし、
@@ -569,16 +569,16 @@ libgme は `BUILD_SHARED_LIBS=OFF`, `ENABLE_UBSAN=OFF` でビルドし、
 `.muxapp` は拡張子を変えた **zip** であり、SDカードのルートを基準とした構造を持つ。
 
 ```
-mnt/mmc/MUOS/application/muGBS/
+mnt/mmc/MUOS/application/muChip/
 ├── mux_launch.sh
 ├── mux_lang.ini
 ├── bin/
-│   └── mugbs              (実行ファイル / chmod +x)
+│   └── muchip              (実行ファイル / chmod +x)
 ├── lib/                   (静的リンクできなかった依存があれば)
 ├── assets/
 │   └── font.ttf
 ├── glyph/
-│   └── mugbs.png
+│   └── muchip.png
 └── config.ini
 ```
 
@@ -589,24 +589,24 @@ mnt/mmc/MUOS/application/muGBS/
 ```sh
 #!/bin/sh
 
-# HELP: A proper GBS (Game Boy Sound System) music player with full sub-track and M3U support.
-# ICON: mugbs
-# GRID: muGBS
+# HELP: A chiptune (GBS/NSF) music player with full sub-track and M3U support.
+# ICON: muchip
+# GRID: muChip
 
 . /opt/muos/script/var/func.sh
 
-APP_BIN="mugbs"
+APP_BIN="muchip"
 SETUP_APP "$APP_BIN" "retro"
 
 # -----------------------------------------------------------------------------
 
-APP_DIR="/run/muos/storage/application/muGBS"
+APP_DIR="/run/muos/storage/application/muChip"
 
 cd "$APP_DIR" || exit 1
 
 export LD_LIBRARY_PATH="$APP_DIR/lib:$LD_LIBRARY_PATH"
 
-./bin/mugbs > "$APP_DIR/log.txt" 2>&1
+./bin/muchip > "$APP_DIR/log.txt" 2>&1
 ```
 
 **厳守事項:**
@@ -616,14 +616,14 @@ export LD_LIBRARY_PATH="$APP_DIR/lib:$LD_LIBRARY_PATH"
 - `SETUP_APP "$APP_BIN" ""` を呼ぶ。第2引数は `"modern"` / `"retro"` /
   空文字（ボタンレイアウトの強制指定）
 - **`/mnt/mmc` や `/mnt/sdcard` をハードコードしない。**
-  必ず bind mount された `/run/muos/storage/application/muGBS` を使う。
+  必ず bind mount された `/run/muos/storage/application/muChip` を使う。
   ハードコードすると SD2 搭載機やストレージ構成の異なる機種で壊れる
 - 標準出力を `log.txt` に落としておくとデバッグが劇的に楽になる
 
 > **バッテリー低下しきい値の探索（F-26, Issue #7）**: `mux_launch.sh` は
 > `GET_VAR` でしきい値の候補キーを順に試し、`1..99` の整数が返った
-> 最初のものを `MUGBS_BATTERY_LOW_PCT` として export する
-> （`packaging/muGBS/mux_launch.sh` 参照。絶対パスは書かず `GET_VAR` 経由
+> 最初のものを `MUCHIP_BATTERY_LOW_PCT` として export する
+> （`packaging/muChip/mux_launch.sh` 参照。絶対パスは書かず `GET_VAR` 経由
 > なのでSPEC 12/13に反しない）。候補キーはどれが実際に生きているか
 > 実機でしか分からないため推測で、全候補の結果を `log.txt` に残す。
 > 何も見つからなければ export されず、`src/battery.c` の
@@ -633,25 +633,25 @@ export LD_LIBRARY_PATH="$APP_DIR/lib:$LD_LIBRARY_PATH"
 
 ```ini
 [full]
-English=muGBS Player
-Japanese=muGBS プレーヤー
+English=muChip Player
+Japanese=muChip プレーヤー
 
 [grid]
-English=muGBS
-Japanese=muGBS
+English=muChip
+Japanese=muChip
 
 [help]
-English=A proper GBS player with full sub-track and extended M3U support.
-Japanese=サブトラックと拡張M3Uに正しく対応したGBSプレーヤーです。
+English=A chiptune (GBS/NSF) player with full sub-track and extended M3U support.
+Japanese=GBS/NSF対応、サブトラックと拡張M3Uに正しく対応したchiptuneプレーヤーです。
 ```
 
 ### 9.4 パッケージ生成スクリプト
 
 `scripts/package.sh` を用意し、`build/` の成果物から
-`muGBS-<version>.muxapp` を生成する。
+`muChip-<version>.muxapp` を生成する。
 
 ```sh
-cd package_root && zip -r ../muGBS-1.0.0.muxapp . -x '.*' -x '__MACOSX/*'
+cd package_root && zip -r ../muChip-1.0.0.muxapp . -x '.*' -x '__MACOSX/*'
 ```
 
 インストールは実機の `Applications > Archive Manager` から行う。
@@ -659,7 +659,7 @@ cd package_root && zip -r ../muGBS-1.0.0.muxapp . -x '.*' -x '__MACOSX/*'
 ### 9.5 リリース（P13）
 
 - タグは `vX.Y.Z`。版番号の唯一の情報源は `CMakeLists.txt` の
-  `project(mugbs VERSION ...)`
+  `project(muchip VERSION ...)`
 - ユーザー向けの変更履歴は `CHANGELOG.md`。見出しは
   `## vX.Y.Z - YYYY-MM-DD` の1行固定で、これが GitHub Release 本文の生成元
 - リリース作業は `scripts/release.sh` に集約する。検査 → ホストビルド +
@@ -715,7 +715,7 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 
 | ジョブ | 内容 |
 |---|---|
-| ホストビルド + CTest | `scripts/build-host.sh` → `ctest`。`MUGBS_REQUIRE_SHELLCHECK=1` を立て、SKIP が1件でもあれば失敗させる |
+| ホストビルド + CTest | `scripts/build-host.sh` → `ctest`。`MUCHIP_REQUIRE_SHELLCHECK=1` を立て、SKIP が1件でもあれば失敗させる |
 | ASan/UBSan | `-fsanitize=address,undefined -fno-sanitize-recover=all`、`ASAN_OPTIONS=detect_leaks=1` |
 
 - ヘッドレスUIスモークは `SDL_VIDEODRIVER=dummy` / `SDL_AUDIODRIVER=dummy`

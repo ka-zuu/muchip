@@ -60,7 +60,7 @@ add_test(NAME test_browser COMMAND test_browser)
 
 # P6で追加した ui_metrics_compute()/ui_glyph_size_for() (SDL_Init不要な純関数)の
 # 単体テスト。ui.c 全体をリンクする必要があるためSDL2は要るが、SDL_Initは
-# 一度も呼ばない。SDL2の解決方法はルートCMakeLists.txtのmugbs本体と同じ
+# 一度も呼ばない。SDL2の解決方法はルートCMakeLists.txtのmuchip本体と同じ
 # (find_package はそちらで既に呼ばれておりTARGET SDL2::SDL2/SDL2_LIBRARIES は
 # このサブディレクトリからも見える)。
 add_executable(test_ui_metrics test_ui_metrics.c ../src/ui.c)
@@ -89,7 +89,7 @@ add_test(NAME test_battery COMMAND test_battery)
 
 # --- ヘッドレスUIスモークテスト (P5) ----------------------------------------
 # app.c の画面遷移(Browser/Player/TrackList)がクラッシュしないことを、
-# 実際にmugbs本体をSDL_VIDEODRIVER=dummy/SDL_AUDIODRIVER=dummyの下で
+# 実際にmuchip本体をSDL_VIDEODRIVER=dummy/SDL_AUDIODRIVER=dummyの下で
 # 走らせて確認する。表示や実際の操作感はホストでの手動確認(README参照)で
 # 見る前提であり、これはあくまで回帰検出用。
 add_executable(gen_fixture_gbs gen_fixture_gbs.c)
@@ -119,21 +119,21 @@ add_custom_target(ui_smoke_fixture ALL DEPENDS ${UI_SMOKE_GBS} ${UI_SMOKE_GBS2})
 set(UI_SMOKE_RESOLUTIONS 320x240 480x320 640x480 720x720 1024x768 1280x720)
 foreach(res ${UI_SMOKE_RESOLUTIONS})
     add_test(NAME test_ui_smoke_${res}
-        COMMAND mugbs --window ${res} --start-dir ${UI_SMOKE_DIR}
+        COMMAND muchip --window ${res} --start-dir ${UI_SMOKE_DIR}
                       --config ${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_${res}.ini
                       --ui-script ${CMAKE_CURRENT_SOURCE_DIR}/ui_smoke.script)
-    # MUGBS_BATTERY_FAKE (Issue #7): CIランナーにはバッテリーが無く
+    # MUCHIP_BATTERY_FAKE (Issue #7): CIランナーにはバッテリーが無く
     # SDL_GetPowerInfo() が NO_BATTERY/-1 を返すため、これが無いと
     # draw_battery() のゲージ描画・縮退分岐が6解像度ぶんASan/UBSan下で
     # 一度も実行されない。7は既定しきい値(10%)未満なので、既定の
     # battery_show=low でも赤い(低残量)描画経路まで踏める。
     set_tests_properties(test_ui_smoke_${res} PROPERTIES
-        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;MUGBS_BATTERY_FAKE=7")
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;MUCHIP_BATTERY_FAKE=7")
 endforeach()
 
 # --- .muxapp パッケージ構造の検証 (P7) ---------------------------------------
 # scripts/package.sh の出力が muOS (JACARANDA/2601世代) が要求する構造に
-# なっていることを、クロスビルド成果物 (build-aarch64/mugbs) が無いホストや
+# なっていることを、クロスビルド成果物 (build-aarch64/muchip) が無いホストや
 # CI でも確認する。package.sh が守るべき不変条件はバイナリの中身と無関係な
 # ので、テスト側がダミーファイルを --bin で渡し、aarch64向け strip は
 # --no-strip で回避する。

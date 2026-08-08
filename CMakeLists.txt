@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.13)
-# libgme は C++ で書かれている (SPEC 4.1)。mugbs 自体のソースは C だが、
+# libgme は C++ で書かれている (SPEC 4.1)。muchip 自体のソースは C だが、
 # libgme を静的リンクする最終リンクは C++ ランタイム(libstdc++)を要求するため
-# CXX も有効化し、mugbs のリンカドライバを g++ に切り替える(下記 LINKER_LANGUAGE)。
+# CXX も有効化し、muchip のリンカドライバを g++ に切り替える(下記 LINKER_LANGUAGE)。
 #
-# VERSION は muGBS の唯一のバージョン情報源。scripts/package.sh が .muxapp の
-# ファイル名 (muGBS-<version>.muxapp) を決めるためにこの行を sed で直接読むので、
-# 「project(mugbs VERSION x.y.z ...)」を1行で書く形を崩さないこと
+# VERSION は muChip の唯一のバージョン情報源。scripts/package.sh が .muxapp の
+# ファイル名 (muChip-<version>.muxapp) を決めるためにこの行を sed で直接読むので、
+# 「project(muchip VERSION x.y.z ...)」を1行で書く形を崩さないこと
 # (tests/test_package.sh が CMake の解釈と package.sh の解釈の一致を検証する)。
 #
 # 1.0.0 = MUST要件(F-01〜F-08)に加え、P8のSHOULD/NICE要件
@@ -20,7 +20,9 @@ cmake_minimum_required(VERSION 3.13)
 # 元々リンクされていた(USE_GME_NSF/NSFEがlibgme側の既定でONだったため)
 # ので実質はBrowser側の拡張子フィルタ追加であり、バイナリサイズの増分は
 # 無いが、ユーザー向けの新機能のためminorバンプ。
-project(mugbs VERSION 1.5.0 LANGUAGES C CXX)
+# 1.6.0 = アプリ名を muGBS から muChip へ改めた(Issue #13)。パッケージ名・
+# 実行ファイル名・環境変数が変わる利用者向けの変更のためminorバンプ。
+project(muchip VERSION 1.6.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -66,8 +68,8 @@ add_library(miniz STATIC
 )
 target_include_directories(miniz PUBLIC vendor/miniz)
 
-# --- mugbs 本体 -------------------------------------------------------------
-add_executable(mugbs
+# --- muchip 本体 -------------------------------------------------------------
+add_executable(muchip
     src/main.c
     src/config.c
     src/battery.c
@@ -84,12 +86,12 @@ add_executable(mugbs
     src/app.c
 )
 
-target_include_directories(mugbs PRIVATE src)
+target_include_directories(muchip PRIVATE src)
 
 # 実機の log.txt からどのビルドか判別できるように、バージョンを埋め込む。
-target_compile_definitions(mugbs PRIVATE MUGBS_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(muchip PRIVATE MUCHIP_VERSION="${PROJECT_VERSION}")
 
-# install() は意図的に用意していない。scripts/package.sh が packaging/muGBS/ の
+# install() は意図的に用意していない。scripts/package.sh が packaging/muChip/ の
 # 資材とクロスビルド済みバイナリを直接ステージングして .muxapp を作るため、
 # CMake の install ツリーを経由すると中間層が1つ増えるだけで得が無い。
 
@@ -97,10 +99,10 @@ target_compile_definitions(mugbs PRIVATE MUGBS_VERSION="${PROJECT_VERSION}")
 if(TARGET_HOST)
     find_package(SDL2 REQUIRED)
     if(TARGET SDL2::SDL2)
-        target_link_libraries(mugbs PRIVATE SDL2::SDL2)
+        target_link_libraries(muchip PRIVATE SDL2::SDL2)
     else()
-        target_include_directories(mugbs PRIVATE ${SDL2_INCLUDE_DIRS})
-        target_link_libraries(mugbs PRIVATE ${SDL2_LIBRARIES})
+        target_include_directories(muchip PRIVATE ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(muchip PRIVATE ${SDL2_LIBRARIES})
     endif()
 else()
     # クロスビルド時: 実機のSDL2にはCMake config も pkg-config も無い
@@ -111,20 +113,20 @@ else()
     # (実機で実証済み。詳細は cmake/toolchain-aarch64.cmake のコメント参照)
     set(AARCH64_TOOLCHAIN_SYSROOT "/usr/aarch64-linux-gnu" CACHE PATH
         "crossbuild-essential-arm64 が既定で参照するsysroot(実機ファイルで上書き済み)")
-    target_include_directories(mugbs PRIVATE ${AARCH64_TOOLCHAIN_SYSROOT}/include/SDL2)
-    target_link_libraries(mugbs PRIVATE SDL2)
+    target_include_directories(muchip PRIVATE ${AARCH64_TOOLCHAIN_SYSROOT}/include/SDL2)
+    target_link_libraries(muchip PRIVATE SDL2)
 endif()
 
-target_link_libraries(mugbs PRIVATE gme_static miniz m)
+target_link_libraries(muchip PRIVATE gme_static miniz m)
 
 # libgme(C++静的ライブラリ)をリンクするため、リンカドライバを g++ にする。
 # C コンパイラ(gcc)のままだと -lstdc++ が自動で付かず operator new/delete 等が
 # 未定義参照になる。
-set_target_properties(mugbs PROPERTIES LINKER_LANGUAGE CXX)
+set_target_properties(muchip PROPERTIES LINKER_LANGUAGE CXX)
 
 # 実機の glibc/libstdc++ とのバージョン差で "GLIBCXX_3.4.xx not found" が
 # 起きるのを避けるため libstdc++/libgcc を静的リンクする。 (SPEC 4.1)
-target_link_options(mugbs PRIVATE -static-libstdc++ -static-libgcc)
+target_link_options(muchip PRIVATE -static-libstdc++ -static-libgcc)
 
 if(TARGET_HOST)
     # tests/ はaarch64向けにもビルドは通るが、ctestでの実行はホスト上でしか

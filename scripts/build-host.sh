@@ -20,4 +20,4 @@ cmake -B build -DTARGET_HOST=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build -j"$(nproc)"
 
 echo ""
-echo "ビルド完了: build/mugbs"
+echo "ビルド完了: build/muchip"

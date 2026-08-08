@@ -13,7 +13,7 @@
  * muOSは /usr/lib/gamecontrollerdb.txt を実機に同梱しており、
  * mux_launch.sh が SDL_GAMECONTROLLERCONFIG_FILE を export するだけで
  * 物理ボタンが SDL_GameController として認識される(XMPlayerはこれに加え
- * gptokeyb2でキーボードへも変換しているが、mugbsは元々キーボードにも
+ * gptokeyb2でキーボードへも変換しているが、muchipは元々キーボードにも
  * 対応済みなのでgptokeyb2は不要)。よってP6では:
  *   - SDL_GameControllerAddMappingsFromFile()/AddMapping() で
  *     config.ini の [input] gamecontroller_db/controller_mapping を

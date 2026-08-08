@@ -2,8 +2,8 @@
 """muOS のアプリ一覧に出すアイコンを生成する。 (P7)
 
 生成物:
-    packaging/muGBS/glyph/mugbs.png   32x32  リスト表示用
-    packaging/muGBS/grid/mugbs.png    96x96  グリッド表示用
+    packaging/muChip/glyph/muchip.png   32x32  リスト表示用
+    packaging/muChip/grid/muchip.png    96x96  グリッド表示用
 
 生成物はコミットするので、パッケージング時 (scripts/package.sh) に Pillow は
 不要。図案を変えたいときだけこのスクリプトを再実行する。
@@ -13,7 +13,7 @@ muOS 側の仕様 (MustardOS/frontend を読んで確認したもの):
 * frontend/common/ui/glyph.c の apply_app_glyph() が
   <app_dir>/glyph/<ICON名>.<ext> を、get_app_grid_glyph() が
   <app_dir>/grid/<ICON名>.<ext> を探す。<ICON名> は mux_launch.sh の
-  "# ICON: " 行の値 (= mugbs)。既定テーマの 640x480 はグリッド表示なので、
+  "# ICON: " 行の値 (= muchip)。既定テーマの 640x480 はグリッド表示なので、
   glyph/ だけでは足りず grid/ も必要 (SPEC 9.1 はこれに触れていない)。
 * 描画時に lv_style_set_img_recolor() でテーマ色に塗り潰されるため、
   実質アルファチャンネルだけが意味を持つ。色は白固定にしておく。
@@ -47,8 +47,8 @@ SHAPES = [
 SUPERSAMPLE = 8
 
 OUTPUTS = [
-    (os.path.join("packaging", "muGBS", "glyph", "mugbs.png"), 32),
-    (os.path.join("packaging", "muGBS", "grid", "mugbs.png"), 96),
+    (os.path.join("packaging", "muChip", "glyph", "muchip.png"), 32),
+    (os.path.join("packaging", "muChip", "grid", "muchip.png"), 96),
 ]
 
 

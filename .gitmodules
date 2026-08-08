@@ -1,6 +1,6 @@
 [submodule "vendor/game-music-emu"]
 	path = vendor/game-music-emu
-	# upstream (libgme/game-music-emu) ではなくフォークを指す。muGBS は
+	# upstream (libgme/game-music-emu) ではなくフォークを指す。muChip は
 	# P12 で Gbs_Emu.cpp に独自パッチ (10進のm3uトラック番号を0始まりとして
 	# 扱う) を当てており、そのコミットは upstream に存在しないため、
 	# upstream を指したままだと CI も第三者も submodule を解決できない

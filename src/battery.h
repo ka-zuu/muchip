@@ -43,12 +43,12 @@ typedef struct {
     battery_status_t last;
     Uint32 last_poll_ms;
     int have;         /* 一度でも読んだか (last_poll_ms==0 と区別する) */
-    int fake_percent; /* MUGBS_BATTERY_FAKE による開発用の上書き。-1=無し */
+    int fake_percent; /* MUCHIP_BATTERY_FAKE による開発用の上書き。-1=無し */
     int fake_charging;
     int logged_once;  /* 初回の読み取り結果をLOG_INFOしたか */
 } battery_t;
 
-/* MUGBS_BATTERY_FAKE を読んでおく。ホストにはバッテリーが無いことが多く、
+/* MUCHIP_BATTERY_FAKE を読んでおく。ホストにはバッテリーが無いことが多く、
  * それだとこの機能の描画経路もCIも一度も踏めないための開発用の抜け道
  * (--screenshot/--ui-scriptと同格。src/app.h参照)。 */
 void battery_init(battery_t *b);

@@ -46,7 +46,7 @@ jobs:
       # コンパイル時に埋め込んでおり、実行時の外部アセットロードは無い。
       # zip/unzip が無いと test_package が 77 を返して SKIP になる。
       # shellcheck が無いと test_package のシェル静的解析が無効になる
-      # (MUGBS_REQUIRE_SHELLCHECK=1 を立てているので、消えれば失敗する)。
+      # (MUCHIP_REQUIRE_SHELLCHECK=1 を立てているので、消えれば失敗する)。
       - name: 依存パッケージ
         run: |
           sudo apt-get update
@@ -75,7 +75,7 @@ jobs:
       # (= CMake 側の構成ミス) 場合に緑にしないためのもの。
       - name: CTest
         env:
-          MUGBS_REQUIRE_SHELLCHECK: "1"
+          MUCHIP_REQUIRE_SHELLCHECK: "1"
         run: |
           set -o pipefail
           ctest --test-dir build --output-on-failure --no-tests=error \

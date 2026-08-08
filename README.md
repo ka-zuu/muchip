@@ -1,8 +1,10 @@
-# muGBS
+# muChip
 
-muOS 向けの GBS (Game Boy Sound System) プレーヤー。サブトラック構造と拡張M3U
-（曲名・曲長・ループ指定）を正しく扱う。`.nsf`/`.nsfe`（NSF, Nintendo Sound
-Format）も `.gbs` と同格に扱える（Issue #2）。詳細仕様は [`SPEC.md`](./SPEC.md)、
+muOS 向けの chiptune プレーヤー。GBS (Game Boy Sound System) と `.nsf`/`.nsfe`
+（NSF, Nintendo Sound Format）を同格の一級市民として扱い（Issue #2）、
+サブトラック構造と拡張M3U（曲名・曲長・ループ指定）を正しく扱う。
+（旧名 `muGBS`。GBS 専用に見えない名前へ Issue #13 で改めた。詳細は
+`PLAN.md`「Issue #13」節を参照）。詳細仕様は [`SPEC.md`](./SPEC.md)、
 実装進捗は [`PLAN.md`](./PLAN.md) を参照。
 
 **P0〜P10 完了（v1.0.0 + 実機フィードバック対応）**。SPEC の MUST 要件
@@ -67,8 +69,8 @@ ctest --test-dir build-asan --output-on-failure -E '^test_package$'
 実行:
 
 ```sh
-./build/mugbs --list Game.gbs      # プレイリストを列挙するだけ（無音）
-./build/mugbs --cli Game.gbs       # 1トラック目を再生
+./build/muchip --list Game.gbs      # プレイリストを列挙するだけ（無音）
+./build/muchip --cli Game.gbs       # 1トラック目を再生
 ```
 
 ## GUI (Browser / Player / TrackList / Settings)
@@ -76,14 +78,14 @@ ctest --test-dir build-asan --output-on-failure -E '^test_package$'
 引数無し、または `--list`/`--cli` 以外の起動でGUI本体が立ち上がる。
 
 ```sh
-./build/mugbs                       # カレントディレクトリのBrowserから開始
+./build/muchip                       # カレントディレクトリのBrowserから開始
                                      # (config.iniのlast_pathがあればそこから。F-13)
-./build/mugbs --start-dir /path/to/music
-./build/mugbs Game.gbs              # 指定ファイルを直接Playerで開いて開始
-./build/mugbs --window 720x720      # ホストでの別解像度レイアウト確認用
+./build/muchip --start-dir /path/to/music
+./build/muchip Game.gbs              # 指定ファイルを直接Playerで開いて開始
+./build/muchip --window 720x720      # ホストでの別解像度レイアウト確認用
                                      # (省略時は検出した解像度でフルスクリーン)
-./build/mugbs --config /path/to/config.ini  # 設定ファイルの場所を明示する
-                                     # (省略時は環境変数MUGBS_CONFIG、
+./build/muchip --config /path/to/config.ini  # 設定ファイルの場所を明示する
+                                     # (省略時は環境変数MUCHIP_CONFIG、
                                      # 無ければ ./config.ini)
 ```
 
@@ -180,7 +182,7 @@ Settings の `Show battery`（`config.ini` の `[ui] battery_show`）で
 実機では `mux_launch.sh` が muOS 側の設定を `GET_VAR` で探し、見つかれば
 それを使う。見つからなければ既定の10%（Issue #7の要求どおり）。
 バッテリーの無いホスト機では常に非表示になる。開発中に見え方を確認したい
-場合は `MUGBS_BATTERY_FAKE=85`（非充電・残量85%）や `MUGBS_BATTERY_FAKE=+5`
+場合は `MUCHIP_BATTERY_FAKE=85`（非充電・残量85%）や `MUCHIP_BATTERY_FAKE=+5`
 （先頭`+`で充電中扱い・残量5%）を付けて起動すると、実際の
 `SDL_GetPowerInfo()` の代わりにその値を使う（`--screenshot`と同格の
 非公開の開発用オプション）。
@@ -217,7 +219,7 @@ SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`（Issue #8�
 `[input] gamecontroller_db`/`controller_mapping` を持つ。`src/config.c`
 が読み書きする（外部のINIライブラリは使わない。SPEC 12）。
 
-- パス解決順: `--config PATH` > 環境変数 `MUGBS_CONFIG` > `./config.ini`
+- パス解決順: `--config PATH` > 環境変数 `MUCHIP_CONFIG` > `./config.ini`
   （`mux_launch.sh` は起動前に `cd "$APP_DIR"` するため、実機では
   結果的に SPEC 9.1 の `<APP_DIR>/config.ini` と一致する。SPEC 7 が
   例示する絶対パスはSPEC 12/13のハードコード禁止に反するため採らない）
@@ -251,7 +253,7 @@ v0.2.1）の `.muxapp` を展開して調べたところ、そのような自前
 ## 実機（muOS）向けクロスビルドについて【実機で検証済み】
 
 muOS 2601.0 (JACARANDA) 実機（Cortex-A53 aarch64）で、クロスビルドした
-`mugbs` が実際に映像・音声とも正常動作することを確認済み。`.muxapp` に
+`muchip` が実際に映像・音声とも正常動作することを確認済み。`.muxapp` に
 パッケージして実機の Archive Manager からインストールし、
 `mux_launch.sh` 経由の正式起動で、物理ボタンだけで
 Browser→ファイルを開く→Player→TrackList→トラックジャンプ→Player→
@@ -287,11 +289,11 @@ sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能し�
    ```
 2. クロスビルドする
    ```sh
-   ./scripts/build-aarch64.sh                  # -> build-aarch64/mugbs
+   ./scripts/build-aarch64.sh                  # -> build-aarch64/muchip
    ./scripts/build-aarch64.sh --rebuild-image  # sysroot/ を更新したとき
    ```
    このスクリプトは Docker イメージが無ければ自動で
-   `docker build -f docker/Dockerfile -t mugbs-crossbuild .` を実行する。
+   `docker build -f docker/Dockerfile -t muchip-crossbuild .` を実行する。
    `docker/Dockerfile` がビルド時に `sysroot/` の内容を
    `/usr/aarch64-linux-gnu/{lib,include/SDL2}` へ上書きコピーし、
    `cmake/toolchain-aarch64.cmake` はコンパイラ指定だけを行う
@@ -304,7 +306,7 @@ sysrootとして使う**ため、`CMAKE_SYSROOT` の指定だけでは機能し�
    期待する `NEEDED` は `libSDL2-2.0.so.0` / `libm.so.6` / `libc.so.6` の3つだけ
 3. `.muxapp` を作る（strip・バージョン付けまで自動。詳細は次節）
    ```sh
-   ./scripts/package.sh    # -> ./muGBS-1.0.0.muxapp
+   ./scripts/package.sh    # -> ./muChip-1.6.0.muxapp
    ```
 
 `sysroot/` はバイナリを含むため git 管理しない（`.gitignore` 済み）。
@@ -316,22 +318,24 @@ PipeWire経由のため `XDG_RUNTIME_DIR`/`PIPEWIRE_RUNTIME_DIR` の手動export
 必要。`mux_launch.sh` 経由ならこれらは `func.sh` が自動で行う）:
 
 ```sh
-scp build-aarch64/mugbs root@<実機のIP>:/root/
-ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/mugbs --cli Game.gbs'
+scp build-aarch64/muchip root@<実機のIP>:/root/
+ssh root@<実機のIP> 'export XDG_RUNTIME_DIR=/run PIPEWIRE_RUNTIME_DIR=/run; /root/muchip --cli Game.gbs'
 ```
 
 ## muOS へのインストール（P7、実機で検証済み）
 
 ```sh
-scp muGBS-1.0.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+scp muChip-1.6.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
 ```
 
-実機で **Applications > Archive Manager** から `muGBS-1.0.0` を選んで
-展開するとインストールされる（`/run/muos/storage/application/muGBS/`
+実機で **Applications > Archive Manager** から `muChip-1.6.0` を選んで
+展開するとインストールされる（`/run/muos/storage/application/muChip/`
 に配置される。実体の物理パスは機種のSD構成によって変わるため
 `/mnt/mmc` 等をコードにハードコードしていない）。以後はアプリ一覧
-（Applications）に「muGBS プレーヤー」がアイコン付きで表示され、
-物理ボタンで起動できる。
+（Applications）に「muChip プレーヤー」がアイコン付きで表示され、
+物理ボタンで起動できる。旧 `muGBS` からの移行（Issue #13）の場合、
+実機の `application/muGBS/` は自動では消えないので手動で削除すること
+（設定移行は行わない。詳細は `CHANGELOG.md`）。
 
 `config.ini` はアプリディレクトリ直下に置かれ、終了時にオートセーブ
 される（前回開いた場所・EQなどの設定が復元される。F-13）。
@@ -345,22 +349,22 @@ GUIDE単体を確認済み）。
 
 ### `.muxapp` を自分でビルドする
 
-`packaging/muGBS/` にアプリ本体以外の資材（`mux_launch.sh`・
+`packaging/muChip/` にアプリ本体以外の資材（`mux_launch.sh`・
 `mux_lang.ini`・`config.ini`・アイコン）が入っている。
 `scripts/package.sh` がこれとクロスビルド済みバイナリを合わせて
 `.muxapp`（実体はzip）を作る。
 
 ```sh
-./scripts/build-aarch64.sh   # -> build-aarch64/mugbs
-./scripts/package.sh         # -> ./muGBS-<version>.muxapp
+./scripts/build-aarch64.sh   # -> build-aarch64/muchip
+./scripts/package.sh         # -> ./muChip-<version>.muxapp
 ```
 
-バージョンは `CMakeLists.txt` の `project(mugbs VERSION x.y.z ...)`
-が唯一の情報源（`./build/mugbs --version` でも確認できる）。
+バージョンは `CMakeLists.txt` の `project(muchip VERSION x.y.z ...)`
+が唯一の情報源（`./build/muchip --version` でも確認できる）。
 `scripts/package.sh --bin PATH` で任意のバイナリを、`--no-strip` で
 strip無し生成も指定できる（`ctest -R test_package` が構造検証に使う）。
 
-アイコン（`packaging/muGBS/{glyph,grid}/mugbs.png`）は
+アイコン（`packaging/muChip/{glyph,grid}/muchip.png`）は
 `tools/make_glyph.py`（Pillow使用）で生成したものをコミット済み。
 図案を変えたいときだけ再実行する。
 
@@ -389,7 +393,7 @@ git config core.hooksPath .githooks
 **無料プラン + private リポジトリでは該当 API がどちらも 403**
 （`Upgrade to GitHub Pro or make this repository public to enable this feature.`）
 を返すため使えない。フックはあくまで自衛で、`git push --no-verify` や
-`MUGBS_ALLOW_PUSH_MAIN=1` で抜けられる。本当の強制が要るようになったら
+`MUCHIP_ALLOW_PUSH_MAIN=1` で抜けられる。本当の強制が要るようになったら
 (a) リポジトリを public にする（ruleset が無料で使える）か
 (b) GitHub Pro にする、のどちらか。
 
@@ -428,7 +432,7 @@ Issue コメントで `@claude` とタグ付けするだけで自動着手させ
 
 - ヘッドレスUIスモークは `SDL_VIDEODRIVER=dummy` / `SDL_AUDIODRIVER=dummy` で
   走るので、ランナーに X も音声デバイスも要らない
-- CI は `MUGBS_REQUIRE_SHELLCHECK=1` を立てる。これは「shellcheck が無いこと」
+- CI は `MUCHIP_REQUIRE_SHELLCHECK=1` を立てる。これは「shellcheck が無いこと」
   自体を失敗にするフラグで、apt の書き忘れで静的解析が無言で消えるのを防ぐ
 - **実機（aarch64）向けのクロスビルドは CI ではしない。** `sysroot/` が実機から
   抜いたバイナリで、リポジトリに含めない方針のため。実機検証は人手で行い、
@@ -441,7 +445,7 @@ Issue コメントで `@claude` とタグ付けするだけで自動着手させ
 **`shellcheck` も必須**（リリース時のテストは静的解析込みで回すため）。
 無ければ冒頭の前提チェックで止まる。
 
-1. `CMakeLists.txt` の `project(mugbs VERSION x.y.z ...)` を上げる
+1. `CMakeLists.txt` の `project(muchip VERSION x.y.z ...)` を上げる
 2. `CHANGELOG.md` の `## Unreleased` を `## vx.y.z - YYYY-MM-DD` に書き換える
    （1 と同じコミットで）
 3. PR 経由で `main` へマージし、ローカルの `main` を最新にする
@@ -463,7 +467,7 @@ gh run list --workflow=release-guard.yml --limit 1
 
 ```sh
 gh release edit vx.y.z --draft=false
-scp muGBS-x.y.z.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+scp muChip-x.y.z.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
 ```
 
 `scripts/release.sh` は取り返しのつかない操作（タグ作成・push・リリース作成）を

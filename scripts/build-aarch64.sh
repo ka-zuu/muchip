@@ -13,15 +13,15 @@
 #   ./scripts/fetch-sysroot.sh root@<実機のIP>
 #
 # 環境変数:
-#   MUGBS_CROSS_IMAGE      Dockerイメージ名   (既定: mugbs-crossbuild)
-#   MUGBS_CROSS_BUILD_DIR  ビルドディレクトリ (既定: build-aarch64)
+#   MUCHIP_CROSS_IMAGE      Dockerイメージ名   (既定: muchip-crossbuild)
+#   MUCHIP_CROSS_BUILD_DIR  ビルドディレクトリ (既定: build-aarch64)
 #
 set -e
 
 cd "$(dirname "$0")/.."
 
-IMAGE="${MUGBS_CROSS_IMAGE:-mugbs-crossbuild}"
-BUILD_DIR="${MUGBS_CROSS_BUILD_DIR:-build-aarch64}"
+IMAGE="${MUCHIP_CROSS_IMAGE:-muchip-crossbuild}"
+BUILD_DIR="${MUCHIP_CROSS_BUILD_DIR:-build-aarch64}"
 REBUILD_IMAGE=0
 
 for arg in "$@"; do
@@ -94,11 +94,11 @@ $DOCKER_RUN sh -c "
 # "GLIBCXX_3.4.xx not found" になる。SPEC 4.1/13章)。
 echo ""
 $DOCKER_RUN sh -c "
-	file '$BUILD_DIR/mugbs'
+	file '$BUILD_DIR/muchip'
 	echo '--- NEEDED ---'
-	aarch64-linux-gnu-readelf -d '$BUILD_DIR/mugbs' | sed -n 's/.*NEEDED.*\[\(.*\)\]/  \1/p'
+	aarch64-linux-gnu-readelf -d '$BUILD_DIR/muchip' | sed -n 's/.*NEEDED.*\[\(.*\)\]/  \1/p'
 "
 
 echo ""
-echo "ビルド完了: $BUILD_DIR/mugbs"
+echo "ビルド完了: $BUILD_DIR/muchip"
 echo "パッケージ化する場合: ./scripts/package.sh"

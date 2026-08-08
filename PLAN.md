@@ -2767,6 +2767,73 @@ CLIハーネスは`playlist_open()`→`playlist_apply_config()`というGUIと
 実機操作に切り替えた。CLIハーネス側の`--list`はSDLの映像サブシステムを
 初期化しない`SDL_Init(SDL_INIT_AUDIO)`のみで動くため、この問題は起きない）。
 
+## Issue #13: アプリ名を muChip へ改める（v1.6.0）
+
+Issue #2（NSF再生対応）の検討時に「`muGBS`という名前がGBS専用に見えて
+実態と食い違う」という論点が出たが、実機の既存インストール（
+`application/muGBS/config.ini`）の移行コストを避けるため改名を見送り、
+別Issueとして起票していた（「Issue #2 (b) アプリ名は変更しない」節参照）。
+今回それを実施する。
+
+ユーザー確認済みの決定事項:
+
+1. 新しい名前は **muChip**
+2. 改名は**実行ファイルまで**の深さで行う。パッケージ名・実行ファイル名・
+   CMakeプロジェクト名・環境変数（`MUGBS_*` → `MUCHIP_*`）・アイコン・
+   表示名・ドキュメントは全て新名にするが、**C言語の型名とヘッダガード
+   （`mugbs_config_t`/`mugbs_audio_t`/`MUGBS_PATH_MAX`/`MUGBS_MAPPING_MAX`/
+   各 `MUGBS_*_H` ヘッダガード/テストの `MUGBS_TEST_*`）は据え置いた**。
+   ユーザーからもシェルからも見えない純粋な内部識別子であり、全ソースに
+   触れる大差分（数百箇所）に見合う実益が無いと判断した
+3. 実機の旧 `application/muGBS/` から新 `application/muChip/` への
+   **設定移行の仕組みは作らない**。現時点の利用者は開発者本人のみで
+   移行コストが実質ゼロのため、`mux_launch.sh` へマイグレーション処理を
+   入れる複雑さは不要と判断した。旧フォルダは利用者が手動で削除する
+4. 版番号は **v1.6.0**（パッケージ名・実行ファイル名・環境変数が変わる
+   利用者向けの変更のためminorバンプ。C側のAPI変更は無い）
+5. GitHubリポジトリ名も `ka-zuu/gbs-player` から `ka-zuu/muchip` へ
+   改名する。PRのマージ後、`gh api -X PATCH repos/ka-zuu/gbs-player
+   -f name=muchip` で実施し、`git remote set-url` でローカルを追随させる
+   （旧URLはGitHub側で自動的にリダイレクトされる）。ローカルの作業
+   ディレクトリ名（`~/work/gbs-player`）はこのセッションのcwdを壊すため
+   このIssueでは変更せず、利用者が作業終了後に手動で `mv` する
+
+### 命名規則
+
+| 用途 | 旧 | 新 |
+|---|---|---|
+| 表示名・パッケージディレクトリ・zipトップレベル・`.muxapp`名 | `muGBS` | `muChip` |
+| 実行ファイル・CMakeターゲット・プロセス名・`# ICON:`キー・PNG名 | `mugbs` | `muchip` |
+| 環境変数（実行時・開発用とも） | `MUGBS_*` | `MUCHIP_*` |
+| Dockerイメージ既定名 | `mugbs-crossbuild` | `muchip-crossbuild` |
+| Cの型名・ヘッダガード・テストマクロ | `mugbs_config_t`等 | **据え置き** |
+
+`GBS (Game Boy Sound System)`のようにフォーマット名として書かれている
+箇所（README/SPECの技術説明中の「GBSの既定の音」等）や、
+`mux_launch.sh`の音楽フォルダ探索候補`ROMS/GBS`はアプリ名ではないので
+変更していない。
+
+### 実装時の判断
+
+- **`.gitmodules`の`branch = mugbs`は据え置いた**。これは
+  `ka-zuu/game-music-emu`フォーク側に実在するブランチ名（P12で
+  Gbs_Emu.cppへ独自パッチを当てたブランチ）であり、変更するにはフォーク
+  リポジトリ側で新ブランチを作ってpushする必要がある。submoduleは
+  SHAでpinされているため実害は無く、今回のスコープ外とした
+- `.github/workflows/ci.yml`の「`ka-zuu/game-music-emu`の`mugbs`ブランチ」
+  というコメントも同じ理由で据え置き
+- CHANGELOG.mdの過去のリリース節（v1.5.0以前）は、Issue #22での前例
+  （`master`→`main`改名時にPLAN.mdの過去ログを書き換えなかった）に倣い、
+  当時の記録として書き換えていない。`MUGBS_ALLOW_PUSH_MASTER`等の
+  historicalな環境変数名の言及もそのまま残した
+- README冒頭は「旧名`muGBS`。GBS専用に見えない名前へIssue #13で改めた」
+  という移行の説明を残し、実機インストール節にも旧`application/muGBS/`を
+  手動削除する案内を加えた
+
+### 実機検証
+
+（マージ後に実施。結果をここへ追記する）
+
 ## 検証手順
 
 ```sh
@@ -2782,27 +2849,27 @@ sudo apt install -y zip unzip shellcheck
 ctest --test-dir build --output-on-failure
 
 # プレイリスト構築の確認（音を出さない）
-./build/mugbs --list Game.gbs
-./build/mugbs --list Game.m3u
+./build/muchip --list Game.gbs
+./build/muchip --list Game.m3u
 
 # 実再生（要 .gbs 実素材）
-./build/mugbs --cli Game.gbs
-./build/mugbs --cli --duration 8 Game.gbs
+./build/muchip --cli Game.gbs
+./build/muchip --cli --duration 8 Game.gbs
 
 # GUI: Browser/Player/TrackList/Settings をキーボードで操作する
-./build/mugbs                         # カレントディレクトリのBrowserから開始
-./build/mugbs --start-dir /path/to/music
-./build/mugbs --window 720x720        # 別解像度でレイアウト確認(ホストのみ。掴んで伸縮も可)
-./build/mugbs Game.gbs                # 指定ファイルを直接Playerで開いて開始
+./build/muchip                         # カレントディレクトリのBrowserから開始
+./build/muchip --start-dir /path/to/music
+./build/muchip --window 720x720        # 別解像度でレイアウト確認(ホストのみ。掴んで伸縮も可)
+./build/muchip Game.gbs                # 指定ファイルを直接Playerで開いて開始
 
 # GUI (P6): config.ini の読み書きとSettings画面
-./build/mugbs --config /tmp/test.ini --start-dir /path/to/music
+./build/muchip --config /tmp/test.ini --start-dir /path/to/music
 #   Start で Settings を開く -> LEFT/RIGHT で値変更 -> B で戻る(保存される) -> Esc で終了
 cat /tmp/test.ini                     # 変更が保存されていることを確認
-./build/mugbs --config /tmp/test.ini  # last_path 等が復元されることを確認
+./build/muchip --config /tmp/test.ini  # last_path 等が復元されることを確認
 
 # GUI (P8): EQ・波形
-./build/mugbs --config /tmp/test.ini Game.gbs
+./build/muchip --config /tmp/test.ini Game.gbs
 #   Player で波形が動く
 #   Return(START) で Settings -> EQ bass / EQ treble を LEFT/RIGHT で振る
 grep -E 'eq_' /tmp/test.ini           # 保存されていることを確認
@@ -2811,7 +2878,7 @@ grep -E 'eq_' /tmp/test.ini           # 保存されていることを確認
 # ホストには実機の /dev/fb0 に当たるものが無いのでこれで代用する。
 # SDL_VIDEODRIVER=offscreen なので X/Wayland が無くても動く。
 SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy timeout 2 \
-  ./build/mugbs --window 320x240 Game.gbs --config /tmp/test.ini \
+  ./build/muchip --window 320x240 Game.gbs --config /tmp/test.ini \
                 --screenshot /tmp/shot.bmp
 # --ui-script と組み合わせれば任意の画面まで進めてから撮れる
 
@@ -2839,7 +2906,7 @@ git config core.hooksPath .githooks
 git push --dry-run origin HEAD:main   # 拒否されること
 
 # CIと同じ条件でローカルにテストを回す(SKIPが出ないこと)
-MUGBS_REQUIRE_SHELLCHECK=1 ctest --test-dir build --output-on-failure
+MUCHIP_REQUIRE_SHELLCHECK=1 ctest --test-dir build --output-on-failure
 
 # リリースノートの切り出しを確認
 ./scripts/release.sh --print-notes
@@ -2852,7 +2919,7 @@ MUGBS_REQUIRE_SHELLCHECK=1 ctest --test-dir build --output-on-failure
 gh run list --workflow=release-guard.yml --limit 1   # 緑を確認
 gh release edit v1.0.0 --draft=false
 gh release download v1.0.0 -D /tmp/rel
-sha256sum /tmp/rel/muGBS-1.0.0.muxapp                # 本文のSHA256と一致すること
+sha256sum /tmp/rel/muChip-1.0.0.muxapp                # 本文のSHA256と一致すること
 ```
 
 ### クロスビルド・パッケージング・実機検証（P7で確立。実証済みの手順）
@@ -2867,17 +2934,17 @@ sha256sum /tmp/rel/muGBS-1.0.0.muxapp                # 本文のSHA256と一致�
 
 # 3. .muxapp を作る (strip・バージョン付けまで自動)
 ./scripts/package.sh
-#   -> ./muGBS-1.0.0.muxapp
+#   -> ./muChip-1.6.0.muxapp
 
 # 4. 実機へ転送してインストール (正式ルート: Archive Manager)
-scp muGBS-1.0.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
-# 実機で Applications > Archive Manager > muGBS-1.0.0 を選んで展開する
-# (SSH越しに /opt/muos/script/mux/extract.sh /mnt/mmc/ARCHIVE/muGBS-1.0.0.muxapp
+scp muChip-1.6.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
+# 実機で Applications > Archive Manager > muChip-1.6.0 を選んで展開する
+# (SSH越しに /opt/muos/script/mux/extract.sh /mnt/mmc/ARCHIVE/muChip-1.6.0.muxapp
 #  を直接叩いても同じ結果になる。Archive Managerが内部で呼ぶのと同一スクリプト)
 
 # 5. アプリ一覧(Applications)から物理ボタンで起動する
-#    ログは実機の /run/muos/storage/application/muGBS/log.txt (=SD上の
-#    MUOS/application/muGBS/log.txt) に出る
+#    ログは実機の /run/muos/storage/application/muChip/log.txt (=SD上の
+#    MUOS/application/muChip/log.txt) に出る
 ```
 
 P6以前にあった「SSH直接起動でXDG_RUNTIME_DIR等を手動exportする」手順は、

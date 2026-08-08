@@ -5,7 +5,7 @@
 
 #include "log.h"
 
-/* MUGBS_BATTERY_FAKE を解釈する。書式は "85"(非充電) / "+85"(充電中)。
+/* MUCHIP_BATTERY_FAKE を解釈する。書式は "85"(非充電) / "+85"(充電中)。
  * 不正な値は「上書きしない」(-1)。開発機でも描画経路と色分岐を
  * 一通り踏めるようにするための隠しオプション。 */
 static void parse_fake_env(const char *s, int *out_percent, int *out_charging) {
@@ -33,7 +33,7 @@ void battery_init(battery_t *b) {
     b->last_poll_ms = 0;
     b->have = 0;
     b->logged_once = 0;
-    parse_fake_env(getenv("MUGBS_BATTERY_FAKE"), &b->fake_percent, &b->fake_charging);
+    parse_fake_env(getenv("MUCHIP_BATTERY_FAKE"), &b->fake_percent, &b->fake_charging);
 }
 
 int battery_should_poll(Uint32 last_ms, Uint32 now_ms, int have_sample) {

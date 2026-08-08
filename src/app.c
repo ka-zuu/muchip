@@ -1445,10 +1445,10 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     }
 
     /* Browserの開始位置(F-13):
-     *   --start-dir > last_path > MUGBS_START_DIR > カレントディレクトリ。
+     *   --start-dir > last_path > MUCHIP_START_DIR > カレントディレクトリ。
      * --start-dirが明示されたときは、以後それが記憶される対象になる
      * (次回起動時にlast_pathとして使われる)。
-     * MUGBS_START_DIR(P7) は last_path より後に置くのが肝で、実機の
+     * MUCHIP_START_DIR(P7) は last_path より後に置くのが肝で、実機の
      * mux_launch.sh は毎回これを渡してくるため、--start-dir と同じ優先度に
      * すると last_path が毎回上書きされ F-13 が永久に発火しなくなる。 */
     if (opt->start_dir && opt->start_dir[0]) {
@@ -1462,7 +1462,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     } else if (opt->fallback_start_dir && opt->fallback_start_dir[0] &&
                browser_open_dir(&app.browser, opt->fallback_start_dir,
                                  app.cfg->show_all_files) == 0) {
-        LOG_INFO("MUGBS_START_DIR から開始します: %s", opt->fallback_start_dir);
+        LOG_INFO("MUCHIP_START_DIR から開始します: %s", opt->fallback_start_dir);
     } else {
         browser_open_dir(&app.browser, ".", app.cfg->show_all_files);
     }

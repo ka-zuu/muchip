@@ -1,15 +1,15 @@
 #!/bin/sh
 # scripts/package.sh
 #
-# packaging/muGBS/ の資材とクロスビルド済みバイナリから、muOS 用の
-# muGBS-<version>.muxapp を生成する。 (SPEC 9.4)
+# packaging/muChip/ の資材とクロスビルド済みバイナリから、muOS 用の
+# muChip-<version>.muxapp を生成する。 (SPEC 9.4)
 #
 #   ./scripts/build-aarch64.sh && ./scripts/package.sh
 #
 # オプション:
-#   --bin PATH      同梱する mugbs 実行ファイル (既定: build-aarch64/mugbs)
+#   --bin PATH      同梱する muchip 実行ファイル (既定: build-aarch64/muchip)
 #   --version VER   版番号 (既定: CMakeLists.txt の project(...) から読む)
-#   --out FILE      出力先 (既定: ./muGBS-<version>.muxapp)
+#   --out FILE      出力先 (既定: ./muChip-<version>.muxapp)
 #   --no-strip      strip をしない (ダミーバイナリで構造だけ検証するとき用)
 #   --keep-stage    staging ディレクトリを消さない (デバッグ用)
 #   --print-version 解決したバージョンを表示して終了する
@@ -19,12 +19,12 @@
 # .muxapp は拡張子を変えた zip。muOS の Archive Manager から
 # Applications > Archive Manager で展開してインストールする。
 #
-# **zip 内のトップレベルディレクトリは `muGBS/`** であり、SPEC 9.1 が書く
-# `mnt/mmc/MUOS/application/muGBS/` ではない。MustardOS/internal の
+# **zip 内のトップレベルディレクトリは `muChip/`** であり、SPEC 9.1 が書く
+# `mnt/mmc/MUOS/application/muChip/` ではない。MustardOS/internal の
 # script/mux/extract.sh が
 #     EXTRACT_ARCHIVE "Application" "$ARCHIVE" "$MUOS_STORE_DIR/application"
 # (= unzip -o -d /run/muos/storage/application) で展開するため、SPEC通りだと
-# .../application/mnt/mmc/MUOS/application/muGBS/ に展開されて動かない。
+# .../application/mnt/mmc/MUOS/application/muChip/ に展開されて動かない。
 # 実際に動作している muOS アプリ (XMPlayer v0.2.1) の .muxapp も全エントリが
 # `XMPlayer/` 始まりだった。
 #
@@ -32,11 +32,11 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-IMAGE="${MUGBS_CROSS_IMAGE:-mugbs-crossbuild}"
-PKG_NAME="muGBS"     # zip内トップレベル = 実機の application/<これ>/
+IMAGE="${MUCHIP_CROSS_IMAGE:-muchip-crossbuild}"
+PKG_NAME="muChip"     # zip内トップレベル = 実機の application/<これ>/
 SRC_DIR="packaging/$PKG_NAME"
 
-BIN="build-aarch64/mugbs"
+BIN="build-aarch64/muchip"
 VERSION=""
 OUT=""
 DO_STRIP=1
@@ -69,10 +69,10 @@ done
 # tests/test_package.sh が --print-version と CMake の PROJECT_VERSION の
 # 一致を検証している。
 if [ -z "$VERSION" ]; then
-	VERSION=$(sed -n 's/^[[:space:]]*project([[:space:]]*mugbs[[:space:]]\{1,\}VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -1)
+	VERSION=$(sed -n 's/^[[:space:]]*project([[:space:]]*muchip[[:space:]]\{1,\}VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -1)
 	[ -n "$VERSION" ] ||
 		die "CMakeLists.txt からバージョンを読めませんでした。" \
-			"project(mugbs VERSION x.y.z LANGUAGES C CXX) を1行で書く形を保ってください。"
+			"project(muchip VERSION x.y.z LANGUAGES C CXX) を1行で書く形を保ってください。"
 fi
 
 if [ "$PRINT_VERSION" = 1 ]; then
@@ -109,15 +109,15 @@ fi
 PKG="$STAGE/$PKG_NAME"
 mkdir -p "$PKG/bin" "$PKG/glyph" "$PKG/grid"
 
-# packaging/muGBS/ の中身は zip 内の muGBS/ と1:1に対応している。
+# packaging/muChip/ の中身は zip 内の muChip/ と1:1に対応している。
 cp "$SRC_DIR/mux_launch.sh" "$PKG/"
 cp "$SRC_DIR/mux_lang.ini" "$PKG/"
 cp "$SRC_DIR/config.ini" "$PKG/"
-cp "$SRC_DIR/glyph/mugbs.png" "$PKG/glyph/"
-cp "$SRC_DIR/grid/mugbs.png" "$PKG/grid/"
+cp "$SRC_DIR/glyph/muchip.png" "$PKG/glyph/"
+cp "$SRC_DIR/grid/muchip.png" "$PKG/grid/"
 # build-aarch64/ が(古い環境で)root所有でも、cp した先はホストユーザー所有に
 # なるので以降の chmod / strip が通る。
-cp "$BIN" "$PKG/bin/mugbs"
+cp "$BIN" "$PKG/bin/muchip"
 
 # lib/ と assets/ は同梱しない (SPEC 9.1 からの逸脱)。
 #   lib/    … SDL2 だけが実機の動的ライブラリで、libgme/miniz は静的リンク、
@@ -145,14 +145,14 @@ strip_binary() {
 }
 
 if [ "$DO_STRIP" = 1 ]; then
-	before=$(wc -c <"$PKG/bin/mugbs")
+	before=$(wc -c <"$PKG/bin/muchip")
 	# 黙って strip 無しの巨大バイナリを出荷しないよう、失敗したら止める。
-	strip_binary "$PKG/bin/mugbs" ||
+	strip_binary "$PKG/bin/muchip" ||
 		die "aarch64-linux-gnu-strip を実行できませんでした。" \
 			"ホストにクロス binutils が無く、Dockerイメージ $IMAGE も見つかりません。" \
 			"  ./scripts/build-aarch64.sh   (イメージを作る)" \
 			"strip せずに作る場合は --no-strip を付けてください。"
-	after=$(wc -c <"$PKG/bin/mugbs")
+	after=$(wc -c <"$PKG/bin/muchip")
 	echo "strip: $before -> $after バイト"
 fi
 
@@ -163,14 +163,14 @@ fi
 # ログに "Invalid app launcher" が出るだけになる。zip は Unix のモードを
 # external file attributes に保存し、muOS の unzip (Info-ZIP) が復元するので、
 # ここで立てておけば実機まで保たれる。
-chmod 755 "$PKG/mux_launch.sh" "$PKG/bin/mugbs"
-chmod 644 "$PKG/mux_lang.ini" "$PKG/config.ini" "$PKG/glyph/mugbs.png" "$PKG/grid/mugbs.png"
+chmod 755 "$PKG/mux_launch.sh" "$PKG/bin/muchip"
+chmod 644 "$PKG/mux_lang.ini" "$PKG/config.ini" "$PKG/glyph/muchip.png" "$PKG/grid/muchip.png"
 
 rm -f "$OUT_ABS"
 # -X で uid/gid と拡張タイムスタンプを落とす(モードは保たれる)。
 # SPEC 9.4 の `cd package_root && zip -r ../x.muxapp .` は使わない:
 # "./" エントリが混ざり、かつトップレベルディレクトリ名が zip に入らないため
-# 上記の muGBS/ 構造を満たせない。
+# 上記の muChip/ 構造を満たせない。
 # -x '.*' はトップレベルのドットファイルにしかマッチしないので '*/.*' も要る。
 (cd "$STAGE" && zip -r -X -q "$OUT_ABS" "$PKG_NAME" -x '.*' '*/.*' '__MACOSX/*')
 

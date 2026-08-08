@@ -98,11 +98,11 @@ int config_save(const mugbs_config_t *c, const char *path);
 /* 読み書きに使う config.ini のパスを out へ書く。ファイルが存在しなくても
  * 常に1つ返す(初回起動時はそこへ新規作成するため)。優先順:
  *   1. explicit_path (--config PATH)
- *   2. 環境変数 MUGBS_CONFIG
+ *   2. 環境変数 MUCHIP_CONFIG
  *   3. "./config.ini"
  * 3 は muOS の mux_launch.sh が `cd "$APP_DIR"` してから起動するため、
  * SPEC 9.1 の <APP_DIR>/config.ini と一致する。SPEC 7 が例示している
- * 絶対パス /run/muos/storage/application/muGBS/config.ini は
+ * 絶対パス /run/muos/storage/application/muChip/config.ini は
  * SPEC 12/13 の「絶対パスのハードコード禁止」に反するため採らない。 */
 void config_resolve_path(char *out, size_t out_size, const char *explicit_path);
 

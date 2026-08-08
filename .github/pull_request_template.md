@@ -24,7 +24,7 @@
 
 <!-- 実機検証が要るものの目安:
      音声出力、入力 (SDL GameController)、
-     パッケージング (packaging/muGBS/mux_launch.sh, scripts/package.sh)、
+     パッケージング (packaging/muChip/mux_launch.sh, scripts/package.sh)、
      クロスビルド設定 (docker/, cmake/toolchain-aarch64.cmake)、
      SDL2 の使い方の変更、レイアウトの実寸に関わる変更 -->
 
