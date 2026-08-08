@@ -84,6 +84,15 @@ int player_load_playlist(player_t *p, const playlist_t *pl);
  * emu を開き直す (m3uが複数ファイルを参照する場合。SPEC 5.4)。 */
 int player_play_entry(player_t *p, int entry_index);
 
+/* Issue #21: playlist_apply_config() が skip_short_sec に基づいて
+ * entries[](可視ビュー)を作り直したとき、いま鳴っているトラックの
+ * 新しい添字へ current_entry を付け替える。emu には一切触れないため
+ * 音は途切れない。entry_index が範囲外(-1 = 見失った。理論上、いま
+ * 鳴っているトラックは keep_source/keep_track で常に可視に残るはずなので
+ * 起きないが、念のため)なら何もしない。shuffle順序も
+ * (entry_count が変わっていれば)追随させる (sync_shuffle() 経由)。 */
+void player_reanchor_entry(player_t *p, int entry_index);
+
 void player_toggle_pause(player_t *p);
 
 /* オーディオコールバックが曲の終端(フェード完了)を検出済みなら非0。 */
@@ -127,7 +136,7 @@ int player_current_duration_ms(const player_t *p);
  * repeat_mode のうち REPEAT_ONE への出入り(Issue #15)と
  * length_override_sec(Issue #19: ながさチェンジ)はいま鳴っている
  * トラックのフェード有無/開始時刻へ即時反映する(audio_lockで保護。
- * 詳細はplayer.c。呼び出し側は先に playlist_apply_length_config() で
+ * 詳細はplayer.c。呼び出し側は先に playlist_apply_config() で
  * entries[].duration_ms を更新してから呼ぶこと)。
  * それ以外(REPEAT_NONE<->ALLの切り替えやシャッフル)は次のトラック送りから、
  * default_length_sec/fade_length_ms は次に start_track_at() を通ったとき

@@ -17,6 +17,11 @@
 # Issue #19 (ながさチェンジ。SETTINGS[]の先頭にLengthを追加)後もこの
 # スクリプトは通ること。Lengthの変更は再生中(SELECTで再開済み)に踏むので、
 # player_apply_config()の新しいfade_at_ms更新経路(SET_LENGTH)を通る。
+#
+# Issue #21 (短い曲のスキップ。SETTINGS[]のDefault lengthの直後にSkip short
+# を追加)後もこのスクリプトは通ること。Skip shortの変更は再生中
+# (SELECTで再開済み)に踏むので、entries[](可視ビュー)の再構築と
+# player_reanchor_entry()による現在トラックの追随を通る。
 
 A       # Browser: Game.gbs を開く -> Player
 UP      # Player: 一覧の先頭からUP -> 末尾(Game2.gbs)へ折り返す(カーソルのみ)
@@ -42,7 +47,11 @@ RIGHT   # Length を auto -> 5 min へ変える(SET_LENGTH。0からの目盛り
         # 再生中への即時反映=player_apply_config()の新しいfade_at_ms更新を通す)
 DOWN    # Length -> Default length
 RIGHT   # Default length を変える(SET_MINUTES。1分刻みへの目盛り吸着を通す)
-DOWN    # Default length -> Repeat
+DOWN    # Default length -> Skip short (Issue #21)
+RIGHT   # Skip short を off -> 1s へ変える(SET_SECONDS。entries[]の再構築と
+        # player_reanchor_entry()による現在トラックの追随を、再生中
+        # (SELECTで再開済み)に通す)
+DOWN    # Skip short -> Repeat
 RIGHT   # Repeat の値を変える(all -> none。Settings画面からの変更でも
         # いま鳴っている曲へ即時反映されることをplayer_apply_config()経由で通す)
 DOWN    # Repeat -> Shuffle

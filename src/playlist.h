@@ -52,6 +52,15 @@ typedef struct {
 typedef struct {
     playlist_source_t *sources;
     int source_count;
+
+    /* Issue #21: all[] がスキャンで見つかった全トラック(title の所有権は
+     * ここにある)。entries[]/entry_count はそのうち現在可視なものだけを
+     * 指す「ビュー」で、playlist_apply_config() が skip_short_sec に基づいて
+     * 作り直す。entries[] の要素は all[] からの浅いコピーであり、
+     * entries[].title は借用(free してはいけない)。
+     * skip_short_sec が0(off)なら all[] と entries[] は常に一致する。 */
+    playlist_entry_t *all;
+    int all_count;
     playlist_entry_t *entries;
     int entry_count;
     char *game; /* 表示用ゲーム名。取得できた最初のソースの情報を使う。空文字列もあり得る */
@@ -104,14 +113,43 @@ int playlist_resolve_length_ms(int natural_ms, int known, const mugbs_config_t *
 int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *cfg,
                                   int *out_known);
 
-/* cfg->default_length_sec / cfg->length_override_sec が変わったとき、
- * 全エントリの duration_ms を playlist_resolve_length_ms() で計算し直す。
+/* Issue #21: e の実測曲長(natural_ms)が cfg->skip_short_sec 以下なら1を返す
+ * (=トラックリスト・再生順から隠す対象)。skip_short_sec が0(off)なら
+ * 常に0。曲長不明(length_known==0、default_length_secへフォールバックする
+ * トラック)は対象外(誤って消さないため)。判定は常に実測長で行い、
+ * length_override_sec(Length, Issue #19)による見かけの曲長上書きの
+ * 影響は受けない(上書き中でも中身が数秒の効果音は隠す)。 */
+int playlist_is_short(const playlist_entry_t *e, const mugbs_config_t *cfg);
+
+/* cfg->default_length_sec / cfg->length_override_sec / cfg->skip_short_sec が
+ * 変わったとき、all[] 全件の duration_ms を playlist_resolve_length_ms() で
+ * 計算し直し、続けて skip_short_sec に基づく可視ビュー entries[]/entry_count
+ * を all[] から作り直す(2つの再計算をこの1関数にまとめているのは、
+ * duration_ms の更新とビューの再構築がずれると entries[] が古い duration_ms
+ * を持った浅いコピーのまま残ってしまうため)。
  * natural_ms(実測値)自体は書き換えない(Lengthをautoへ戻したときに
  * 復元できるようにするため)。libgmeを呼び直さないので安価で、
- * ファイルを開き直す必要がない (P6 Settings画面用)。既に再生中のトラックの
- * 既に armed 済みのフェードはこれだけでは変わらない
- * (player_apply_config()が別途 fade_at_ms を追随させる。Issue #19)。 */
-void playlist_apply_length_config(playlist_t *pl, const mugbs_config_t *cfg);
+ * ファイルを開き直す必要がない (P6 Settings画面用)。
+ *
+ * keep_source/keep_track に非負を渡すと、そのトラック(all[]上で
+ * source_index==keep_source && track_index==keep_track のもの)は
+ * skip_short_sec に関わらず必ず可視に残す(いま再生中の曲をしきい値変更で
+ * 消してしまわないため。Issue #21)。使わない場合は両方に-1を渡す。
+ * フィルタの結果、可視が1件も無くなる場合はフィルタ自体を諦めて全件可視に
+ * 戻す(全滅ガード。playlist_open()がエントリなしで失敗しないように)。
+ *
+ * 既に再生中のトラックの既に armed 済みのフェードはこれだけでは変わらない
+ * (player_apply_config()が別途 fade_at_ms を追随させる。Issue #19)。
+ * ビューの添字が変わりうるので、呼び出し側は
+ * playlist_find_entry() + player_reanchor_entry() で current_entry を
+ * 追随させること (Issue #21, app_apply_settings() 参照)。 */
+void playlist_apply_config(playlist_t *pl, const mugbs_config_t *cfg,
+                            int keep_source, int keep_track);
+
+/* entries[](可視ビュー)上で source_index/track_index に一致するエントリの
+ * 添字を返す。無ければ-1。Issue #21: playlist_apply_config() でビューが
+ * 作り直された後、再生中だったトラックの新しい添字を引くために使う。 */
+int playlist_find_entry(const playlist_t *pl, int source_index, int track_index);
 
 /* Issue #15: repeat_mode が REPEAT_ONE のときはフェードせずエンドレスに
  * 再生する(「この曲をずっと鳴らしっぱなしにしたい」という one の意図に

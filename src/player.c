@@ -222,6 +222,14 @@ int player_play_entry(player_t *p, int entry_index) {
     return 0;
 }
 
+void player_reanchor_entry(player_t *p, int entry_index) {
+    if (!p->playlist || entry_index < 0 || entry_index >= p->playlist->entry_count) {
+        return;
+    }
+    p->current_entry = entry_index;
+    sync_shuffle(p);
+}
+
 void player_toggle_pause(player_t *p) {
     if (p->state == PLAYER_PLAYING) {
         audio_set_pause(&p->audio, 1);
@@ -355,7 +363,7 @@ void player_apply_config(player_t *p) {
 
     /* Issue #19: length_override_sec(ながさチェンジ)が変わったときも、
      * いま鳴っているトラックのフェード開始時刻へ即時反映する。呼び出し元
-     * (app_apply_settings())が先に playlist_apply_length_config() で
+     * (app_apply_settings())が先に playlist_apply_config() で
      * entries[].duration_ms を更新済みなので、ここではそれを
      * fade_at_ms(名目のフェード開始時刻)へ読み直すだけでよい。
      * REPEAT_ONE中でなければこの新しいfade_at_msがそのままgme_set_fade_msecs

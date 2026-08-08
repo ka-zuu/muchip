@@ -127,11 +127,59 @@ int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *c
     return playlist_resolve_length_ms(natural_ms, known, cfg);
 }
 
-void playlist_apply_length_config(playlist_t *pl, const mugbs_config_t *cfg) {
-    for (int i = 0; i < pl->entry_count; i++) {
-        playlist_entry_t *e = &pl->entries[i];
+int playlist_is_short(const playlist_entry_t *e, const mugbs_config_t *cfg) {
+    if (cfg->skip_short_sec <= 0) return 0;
+    if (!e->length_known) return 0; /* 曲長不明は誤って消さない */
+    return e->natural_ms <= cfg->skip_short_sec * 1000;
+}
+
+/* all[] から entries[](可視ビュー)を作り直す。all[] の要素を浅くコピーする
+ * (title は借用。playlist_free() は entries[] 側の title を解放しない)。
+ * keep_source/keep_track に非負を渡すと、そのトラックは skip_short_sec に
+ * 関わらず必ず可視に残す。可視が1件も無ければフィルタ自体を諦めて全件可視に
+ * 戻す(全滅ガード)。 */
+static void rebuild_view(playlist_t *pl, const mugbs_config_t *cfg,
+                          int keep_source, int keep_track) {
+    free(pl->entries);
+    pl->entries = malloc(sizeof(*pl->entries) * (size_t)pl->all_count);
+    pl->entry_count = 0;
+
+    for (int i = 0; i < pl->all_count; i++) {
+        const playlist_entry_t *e = &pl->all[i];
+        int keep = (e->source_index == keep_source && e->track_index == keep_track);
+        if (keep || !playlist_is_short(e, cfg)) {
+            pl->entries[pl->entry_count++] = *e;
+        }
+    }
+
+    if (pl->entry_count == 0 && pl->all_count > 0) {
+        /* 全滅ガード (Issue #21): 全トラックがしきい値以下だった場合、
+         * フィルタを諦めて全件可視に戻す。曲が1つも無い状態で
+         * playlist_open() を失敗させないため。 */
+        LOG_WARN("skip_short_secにより全トラックが隠れるため、フィルタを無視して全曲表示します");
+        for (int i = 0; i < pl->all_count; i++) {
+            pl->entries[pl->entry_count++] = pl->all[i];
+        }
+    }
+}
+
+void playlist_apply_config(playlist_t *pl, const mugbs_config_t *cfg,
+                            int keep_source, int keep_track) {
+    for (int i = 0; i < pl->all_count; i++) {
+        playlist_entry_t *e = &pl->all[i];
         e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, cfg);
     }
+    rebuild_view(pl, cfg, keep_source, keep_track);
+}
+
+int playlist_find_entry(const playlist_t *pl, int source_index, int track_index) {
+    for (int i = 0; i < pl->entry_count; i++) {
+        if (pl->entries[i].source_index == source_index &&
+            pl->entries[i].track_index == track_index) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 int playlist_fade_start_ms(int length_ms, const mugbs_config_t *cfg) {
@@ -158,7 +206,7 @@ static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path, char
 }
 
 /* source_index の指すファイルを実際に開き、gme_track_count() 分だけ
- * gme_track_info() を回して entries[] に追記する。曲長等の重い判定は
+ * gme_track_info() を回して all[] に追記する。曲長等の重い判定は
  * player.c 側(再生開始時)に任せ、ここではタイトルの収集に徹する。
  * zip由来のソース(zip_entry != NULL)は、その都度zipから展開して
  * gme_open_data() で開く(SPEC 5.3: 一時ファイルをディスクに書かない)。 */
@@ -218,8 +266,11 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
             title = title_buf;
         }
 
-        pl->entries = realloc(pl->entries, sizeof(*pl->entries) * (size_t)(pl->entry_count + 1));
-        playlist_entry_t *e = &pl->entries[pl->entry_count];
+        /* Issue #21: スキャン結果は常に all[] へ追記する(全件・順序不変)。
+         * 可視ビュー entries[] は playlist_open() の末尾で
+         * playlist_apply_config() が all[] から作る。 */
+        pl->all = realloc(pl->all, sizeof(*pl->all) * (size_t)(pl->all_count + 1));
+        playlist_entry_t *e = &pl->all[pl->all_count];
         e->title = dup_str(title);
         e->source_index = source_index;
         e->track_index = i;
@@ -231,9 +282,9 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
         }
         /* Issue #19: duration_msは「今使うべき」実効値。Length上書き中に
          * 開いたファイルでも、auto に戻したとき natural_ms から復元できる
-         * よう別途保持しておく(playlist_apply_length_config()参照)。 */
+         * よう別途保持しておく(playlist_apply_config()参照)。 */
         e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, cfg);
-        pl->entry_count++;
+        pl->all_count++;
 
         if (info) {
             if ((!pl->game || !pl->game[0]) && info->game[0]) {
@@ -519,6 +570,11 @@ int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **o
         rc = playlist_open_music_file(pl, path, config);
     }
 
+    /* Issue #21: スキャンはall[]へ追記されただけなので、可視ビュー
+     * entries[]をここで初めて作る(keep_source/keep_trackは無し。
+     * 再生開始前なので「いま鳴っている曲」は存在しない)。 */
+    playlist_apply_config(pl, config, -1, -1);
+
     if (rc != 0 || pl->entry_count == 0) {
         if (pl->entry_count == 0) {
             LOG_ERR("再生可能なトラックがありません: %s", path);
@@ -543,9 +599,13 @@ void playlist_free(playlist_t *pl) {
         free(pl->sources[i].system);
     }
     free(pl->sources);
-    for (int i = 0; i < pl->entry_count; i++) {
-        free(pl->entries[i].title);
+    /* Issue #21: title の所有権は all[] にある。entries[] は all[] からの
+     * 浅いコピー(可視ビュー)なので、その title を解放してはいけない
+     * (二重解放になる)。配列自体はどちらも free する。 */
+    for (int i = 0; i < pl->all_count; i++) {
+        free(pl->all[i].title);
     }
+    free(pl->all);
     free(pl->entries);
     free(pl->game);
     archive_close(pl->archive); /* NULLなら何もしない */

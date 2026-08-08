@@ -51,6 +51,7 @@ typedef struct {
 static const config_key_t KEYS[] = {
     { "playback", "default_length_sec", CFG_INT,    offsetof(mugbs_config_t, default_length_sec), 1, 3600,  0 },
     { "playback", "length_override_sec", CFG_INT,   offsetof(mugbs_config_t, length_override_sec), 0, 3600, 0 },
+    { "playback", "skip_short_sec",     CFG_INT,    offsetof(mugbs_config_t, skip_short_sec),      0, 600,  0 },
     { "playback", "fade_length_ms",     CFG_INT,    offsetof(mugbs_config_t, fade_length_ms),     0, 60000, 0 },
     { "playback", "repeat_mode",        CFG_REPEAT, offsetof(mugbs_config_t, repeat_mode),        0, 0,     0 },
     { "playback", "shuffle",            CFG_BOOL,   offsetof(mugbs_config_t, shuffle),            0, 0,     0 },
@@ -182,6 +183,7 @@ void config_set_defaults(mugbs_config_t *c) {
 
     c->default_length_sec = 180; /* Issue #16: Settingsが分単位(1分刻み)になったため3分ちょうどへ */
     c->length_override_sec = 0; /* Issue #19: 既定はauto(memsetのゼロと同じだが明示しておく) */
+    c->skip_short_sec = 0; /* Issue #21: 既定はoff(memsetのゼロと同じだが明示しておく) */
     c->fade_length_ms = 8000;
     c->repeat_mode = REPEAT_ALL;
     c->shuffle = 0;
