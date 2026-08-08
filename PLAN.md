@@ -2726,11 +2726,46 @@ Issueの本文は「短い再生時間（3秒や5秒）はスキップする機�
   ない。純粋に画面遷移・クラッシュ回帰の確認）。
 - ホストでの`ctest --test-dir build`（17件）・
   `cmake -B build-asan ... && ctest --test-dir build-asan`は全緑を確認
-  した。実機（aarch64クロスビルド・muOS実機への導入）での確認は本セッション
-  ではまだ行っていない――次回、`./scripts/build-aarch64.sh` →
-  `./scripts/package.sh`で`muGBS-1.5.0.muxapp`を作り、Issue #19のときと
-  同様の手順（実在のループ曲での`--cli`ログ確認、GUIでのSettings操作・
-  TrackList件数変化の目視）で行うこと。
+  した。
+
+### 実機検証（完了）
+
+`./scripts/build-aarch64.sh` → `./scripts/package.sh` →
+`scp muGBS-1.5.0.muxapp root@192.168.0.20:/mnt/mmc/ARCHIVE/` →
+`/opt/muos/script/mux/extract.sh`（Archive Managerが内部で呼ぶのと同一
+スクリプト）で実機へ導入し、`bin/mugbs --version`が`muGBS 1.5.0`を
+報告することを確認した。
+
+**実データでのフィルタ動作**は、実機の`/mnt/sdcard/ROMS/VGM/GBS/
+GB_zopher/Super Mario Land 2 - 6-tsu no Kinka (EMU).zophar.zip`
+（zophar.net配布形式。曲ごとに個別m3uを持つ実在のリップ、T-14と同じ形式）
+を使い、`--list`のログだけで機械的に確認した（Issue #15/#19の検証方針を
+踏襲）。このzipには`Golden Coin`（実測7秒）・`Goal`（実測3秒）という、
+Issue本文の「3秒や5秒」という例そのままの短いジングルトラックが実在した:
+
+- `--skip-short 0`（off）: 全40トラックが列挙される
+- `--skip-short 10`: 29トラックに減り、`Golden Coin`・`Goal`を含む
+  11トラックが一覧・曲数の両方から消えている
+
+CLIハーネスは`playlist_open()`→`playlist_apply_config()`というGUIと
+共通のコード経路を通るため、これは実機向けにクロスビルドしたバイナリでの
+機能面の直接証拠になる。
+
+**GUIの見た目**はユーザー自身が実機で操作して確認した:
+同じzipをPlayer画面から開き、Start→SettingsでカーソルをDefault lengthの
+次（`Skip short`）まで動かし、右キーで`10s`まで上げてBでPlayer画面へ
+戻り（この時点でconfig.iniへ保存される）、XでTrackList画面を開いたところ
+見出しが`Tracks (29)`になり、`Golden Coin`・`Goal`等のジングルトラックが
+一覧から消えていることを確認した（`off`に戻すと`Tracks (40)`に復活する
+ことも確認済み）。
+
+（余談: GUIの目視確認は当初AIが`--ui-script`+`--screenshot`で自動化
+しようとしたが、確認時点で実機の画面は`muxfrontend`（Archive Manager）が
+フレームバッファを掴んだまま動作中だった。SSH越しにSDLアプリを直接
+起動するとこれと画面を奪い合い、最悪フリーズして実機側の手動復旧が
+必要になるリスクがあると判断し、自動化を見送ってユーザー自身による
+実機操作に切り替えた。CLIハーネス側の`--list`はSDLの映像サブシステムを
+初期化しない`SDL_Init(SDL_INIT_AUDIO)`のみで動くため、この問題は起きない）。
 
 ## 検証手順
 
