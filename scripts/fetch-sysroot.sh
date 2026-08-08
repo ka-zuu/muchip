@@ -69,4 +69,4 @@ fi
 
 echo ""
 echo "sysroot/ の構成が完了しました。"
-echo "次に: docker build -f docker/Dockerfile -t mugbs-crossbuild ."
+echo "次に: docker build -f docker/Dockerfile -t muchip-crossbuild ."

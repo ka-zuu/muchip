@@ -1,6 +1,6 @@
 # 変更履歴
 
-muGBS のユーザー向け変更履歴。実装の設計判断・実機検証の詳細は
+muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断・実機検証の詳細は
 [`PLAN.md`](./PLAN.md)、仕様は [`SPEC.md`](./SPEC.md) を参照。
 
 ## 書式について
@@ -15,7 +15,23 @@ muGBS のユーザー向け変更履歴。実装の設計判断・実機検証�
 
 未リリースの変更は `## Unreleased` 節に書き溜め、リリース時に
 `## vX.Y.Z - YYYY-MM-DD` へ書き換える。`CMakeLists.txt` の
-`project(mugbs VERSION ...)` の更新と同じコミットで行うこと。
+`project(muchip VERSION ...)` の更新と同じコミットで行うこと。
+
+## v1.6.0 - 2026-08-08
+
+### アプリ名
+
+- アプリ名を `muGBS` から `muChip` へ改めた（Issue #13）。GBS専用ではなく
+  GBS/NSFに対応したchiptuneプレーヤーであることを名前が反映するように
+  した。パッケージディレクトリ名・`.muxapp` のファイル名・実行ファイル名・
+  ウィンドウタイトル・アプリ一覧の表示名が `muGBS`/`mugbs` から
+  `muChip`/`muchip` へ変わり、開発用の環境変数も `MUGBS_*` から
+  `MUCHIP_*`（`MUCHIP_CONFIG`/`MUCHIP_START_DIR`/`MUCHIP_BATTERY_FAKE`/
+  `MUCHIP_BATTERY_LOW_PCT` 等）へ改名した。実機のインストール先も
+  `/run/muos/storage/application/muGBS/` から `.../muChip/` へ変わるため、
+  既存ユーザーは新パッケージを別アプリとしてインストールした上で、
+  旧 `application/muGBS/` を手動で削除すること（設定の自動移行は行わない。
+  詳細は `PLAN.md`「Issue #13」節）
 
 ## v1.5.0 - 2026-08-08
 

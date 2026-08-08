@@ -8,7 +8,7 @@
 # 判定する流儀なので、sh でも tests/ の思想からは外れない
 # (test_util.h の「FAIL <場所>: <内容>」という出力形式だけ踏襲する)。
 #
-# クロスビルド成果物 (build-aarch64/mugbs) が無いホストやCIでも動くこと。
+# クロスビルド成果物 (build-aarch64/muchip) が無いホストやCIでも動くこと。
 # package.sh が守るべき不変条件はバイナリの中身と無関係なので、--bin に
 # ダミーファイルを渡し、aarch64向けの strip は --no-strip で回避する。
 #
@@ -37,7 +37,7 @@ cd "$ROOT" || exit 2
 rm -rf "$WORK"
 mkdir -p "$WORK"
 # 実バイナリの代わりのダミー。中身は検証に使わない。
-dd if=/dev/zero of="$WORK/dummy-mugbs" bs=1024 count=1 2>/dev/null
+dd if=/dev/zero of="$WORK/dummy-muchip" bs=1024 count=1 2>/dev/null
 
 # --- A. シェルスクリプトの構文 ----------------------------------------------
 # 検査対象はこのリポジトリのシェルスクリプト全部。新しくシェルスクリプトを
@@ -47,7 +47,7 @@ scripts/build-aarch64.sh
 scripts/build-host.sh
 scripts/fetch-sysroot.sh
 scripts/release.sh
-packaging/muGBS/mux_launch.sh
+packaging/muChip/mux_launch.sh
 tests/test_package.sh
 .githooks/pre-push"
 
@@ -59,18 +59,18 @@ done
 # 実機の busybox ash で動く mux_launch.sh に bashism が紛れ込むと SC3xxx で
 # 落ちる。SC3xxx の severity は warning なので -S error では拾えない。
 #
-# なお shellcheck は開発ツールであって muGBS のビルド成果物の依存では
+# なお shellcheck は開発ツールであって muChip のビルド成果物の依存では
 # ないので、手元に無ければ黙って飛ばす
 # (SPEC 12 の「依存追加は事前に相談」の対象外)。
 # ただしそれだと CI で apt を書き忘れたときに検査が無言で消えるため、
-# MUGBS_REQUIRE_SHELLCHECK=1 のときだけは「無いこと」自体を失敗にする。
+# MUCHIP_REQUIRE_SHELLCHECK=1 のときだけは「無いこと」自体を失敗にする。
 # CI (.github/workflows/ci.yml) と scripts/release.sh がこれを立てる。
 if command -v shellcheck >/dev/null 2>&1; then
 	# shellcheck disable=SC2086 # SHELL_SCRIPTS は意図的に単語分割させる
 	shellcheck -s sh -S warning $SHELL_SCRIPTS ||
 		fail "shellcheck" "A-2 warning 以上の指摘がある"
-elif [ "${MUGBS_REQUIRE_SHELLCHECK:-0}" = "1" ]; then
-	fail "shellcheck" "A-2 MUGBS_REQUIRE_SHELLCHECK=1 だが shellcheck が無い"
+elif [ "${MUCHIP_REQUIRE_SHELLCHECK:-0}" = "1" ]; then
+	fail "shellcheck" "A-2 MUCHIP_REQUIRE_SHELLCHECK=1 だが shellcheck が無い"
 fi
 
 # --- B. バージョンの一致 ----------------------------------------------------
@@ -84,10 +84,10 @@ pkg_version=$(./scripts/package.sh --print-version 2>&1) || pkg_version="(失敗
 
 # --- パッケージを生成 -------------------------------------------------------
 # 出力は作業ディレクトリへ出す。リポジトリルートの既定名で作ると、ユーザーが
-# 手で作った muGBS-<version>.muxapp を上書き・削除してしまう。
+# 手で作った muChip-<version>.muxapp を上書き・削除してしまう。
 
-OUT="$WORK/muGBS-test.muxapp"
-if ! ./scripts/package.sh --bin "$WORK/dummy-mugbs" --no-strip --out "$OUT" \
+OUT="$WORK/muChip-test.muxapp"
+if ! ./scripts/package.sh --bin "$WORK/dummy-muchip" --no-strip --out "$OUT" \
 	>"$WORK/package.log" 2>&1; then
 	echo "FAIL scripts/package.sh: 実行に失敗した" >&2
 	cat "$WORK/package.log" >&2
@@ -99,25 +99,25 @@ modes=$(unzip -Z "$OUT")
 
 # --- C. zip の構造 ----------------------------------------------------------
 
-# C-1: 全エントリが muGBS/ 始まり。
-#      (SPEC 9.1 の mnt/mmc/MUOS/application/muGBS/ ではない。extract.sh が
+# C-1: 全エントリが muChip/ 始まり。
+#      (SPEC 9.1 の mnt/mmc/MUOS/application/muChip/ ではない。extract.sh が
 #       /run/muos/storage/application へ展開するため)
-printf '%s\n' "$entries" | grep -qv '^muGBS/' &&
-	fail "$OUT" "C-1 トップレベルが muGBS/ ではないエントリがある"
+printf '%s\n' "$entries" | grep -qv '^muChip/' &&
+	fail "$OUT" "C-1 トップレベルが muChip/ ではないエントリがある"
 
 # C-2: muOS の SAFE_ARCHIVE (internal/script/var/zip.sh) と同じ拒否条件。
 printf '%s\n' "$entries" | grep -Eq '^/|(^|/)\.\.(/|$)' &&
 	fail "$OUT" "C-2 絶対パスまたは '..' を含む(Archive Manager に拒否される)"
 
 # C-3: 必須エントリ。
-for e in muGBS/mux_launch.sh muGBS/mux_lang.ini muGBS/config.ini \
-	muGBS/bin/mugbs muGBS/glyph/mugbs.png muGBS/grid/mugbs.png; do
+for e in muChip/mux_launch.sh muChip/mux_lang.ini muChip/config.ini \
+	muChip/bin/muchip muChip/glyph/muchip.png muChip/grid/muchip.png; do
 	printf '%s\n' "$entries" | grep -qx "$e" || fail "$OUT" "C-3 $e が無い"
 done
 
 # C-4: 実行ビット。muxfrontend (script/mux/frontend.sh) は
 #      [ -x "$RUN_APP/mux_launch.sh" ] を見てからアプリを起動する。
-for e in muGBS/mux_launch.sh muGBS/bin/mugbs; do
+for e in muChip/mux_launch.sh muChip/bin/muchip; do
 	m=$(printf '%s\n' "$modes" | awk -v f="$e" '$NF == f { print $1 }')
 	case "$m" in
 	-rwx*) ;;
@@ -128,12 +128,12 @@ done
 # C-5: assets/ を含まない。SPEC 9.1 は assets/font.ttf を要求するが、
 #      フォントは vendor/font8x8 をコンパイル時埋め込みしている(src/ui.c)ため
 #      不要。この逸脱を固定するための negative test。
-printf '%s\n' "$entries" | grep -q '^muGBS/assets/' &&
+printf '%s\n' "$entries" | grep -q '^muChip/assets/' &&
 	fail "$OUT" "C-5 assets/ が入っている(font8x8 埋め込みなので不要)"
 
 # --- D. mux_launch.sh の muOS 作法 ------------------------------------------
 
-LAUNCH=packaging/muGBS/mux_launch.sh
+LAUNCH=packaging/muChip/mux_launch.sh
 
 head -1 "$LAUNCH" | grep -qx '#!/bin/sh' || fail "$LAUNCH" "D-1 1行目が #!/bin/sh でない"
 
@@ -165,14 +165,14 @@ if [ -z "$icon" ]; then
 	fail "$LAUNCH" "D-6 '# ICON:' の値を読めない"
 else
 	for d in glyph grid; do
-		printf '%s\n' "$entries" | grep -qx "muGBS/$d/$icon.png" ||
-			fail "$OUT" "D-6 '# ICON: $icon' に対応する muGBS/$d/$icon.png が無い"
+		printf '%s\n' "$entries" | grep -qx "muChip/$d/$icon.png" ||
+			fail "$OUT" "D-6 '# ICON: $icon' に対応する muChip/$d/$icon.png が無い"
 	done
 fi
 
 # --- E. mux_lang.ini --------------------------------------------------------
 
-LANG_INI=packaging/muGBS/mux_lang.ini
+LANG_INI=packaging/muChip/mux_lang.ini
 for sec in full grid help; do
 	grep -q "^\[$sec\]$" "$LANG_INI" || fail "$LANG_INI" "E-1 [$sec] セクションが無い"
 done

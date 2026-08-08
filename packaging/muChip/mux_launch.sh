@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# muOS のアプリケーションランチャ。.muxapp の中では muGBS/mux_launch.sh に置かれ、
+# muOS のアプリケーションランチャ。.muxapp の中では muChip/mux_launch.sh に置かれ、
 # muxfrontend (MustardOS/internal script/mux/frontend.sh) から
 #
 #     "$RUN_APP"/mux_launch.sh "$RUN_APP"
@@ -15,13 +15,13 @@
 #   ICON: glyph/<ICON>.png と grid/<ICON>.png を引くためのキー
 #   GRID: グリッド表示時の短い名前
 
-# HELP: A proper GBS (Game Boy Sound System) music player with full sub-track and M3U support.
-# ICON: mugbs
-# GRID: muGBS
+# HELP: A chiptune music player (GBS/NSF) with full sub-track and M3U support.
+# ICON: muchip
+# GRID: muChip
 
 # --- アプリケーションディレクトリ -------------------------------------------
 # muxfrontend は $1 にアプリディレクトリ(bind mount 済みの
-# /run/muos/storage/application/muGBS)を渡してくる。SSH からの手動実行や
+# /run/muos/storage/application/muChip)を渡してくる。SSH からの手動実行や
 # muOS 側の実装変更に備えて $0 からも導出できるようにしておく。
 # /mnt/mmc や /mnt/sdcard は絶対にハードコードしない (SPEC 12/13。
 # SD2 搭載機やストレージ構成の異なる機種で壊れる)。
@@ -32,7 +32,7 @@ cd "$APP_DIR" || exit 1
 # 実機のトラブルシュートはこのファイルが唯一の手がかりになる。
 # func.sh を読む前にリダイレクトしておくと func.sh 自体の失敗も拾える。
 exec >"$APP_DIR/log.txt" 2>&1
-echo "=== muGBS mux_launch.sh ==="
+echo "=== muChip mux_launch.sh ==="
 date
 echo "APP_DIR=$APP_DIR"
 
@@ -46,15 +46,15 @@ echo "APP_DIR=$APP_DIR"
 # muOS の script/mux/quit.sh が
 #   pidof "$(GET_VAR system foreground_process)" -> SIGTERM -> (3秒後) SIGKILL
 # の順で終了させるため、実バイナリ名と一致していないとスリープ・電源断で
-# プロセスが残る。バイナリは bin/mugbs なのでプロセス名は "mugbs"。
+# プロセスが残る。バイナリは bin/muchip なのでプロセス名は "muchip"。
 #
 # 第2引数は gamecontrollerdb のレイアウト強制指定 ("retro"|"modern"|"")。
 # 空文字にすると muOS 側のユーザー設定 (settings/remap/layout) に従う。
-# retro と modern の差は A/B・X/Y の入れ替えだけで、mugbs は SDL_GameController の
+# retro と modern の差は A/B・X/Y の入れ替えだけで、muchip は SDL_GameController の
 # 論理ボタン(SDL_CONTROLLER_BUTTON_*)で入力を解釈するため、ユーザーが muOS 全体で
 # 選んでいるレイアウトをそのまま尊重するのが正しい。
 # (SPEC 9.2 はコードブロックが "retro"、散文が "" と自己矛盾している。"" を採る)
-APP_BIN="mugbs"
+APP_BIN="muchip"
 SETUP_APP "$APP_BIN" ""
 
 # SETUP_APP -> SETUP_SDL_ENVIRONMENT が SDL_GAMECONTROLLERCONFIG_FILE を既に
@@ -66,7 +66,7 @@ SETUP_APP "$APP_BIN" ""
 # --- 低バッテリー判定のしきい値 (Issue #7) -----------------------------------
 # 画面右上のバッテリーゲージを「残量が少ないときだけ」表示する設定
 # ([ui] battery_show = low)向けのしきい値。muOS 側に設定があればそれを
-# 尊重し、無ければ mugbs の既定(10%)に任せる(battery_low_threshold_from_env,
+# 尊重し、無ければ muchip の既定(10%)に任せる(battery_low_threshold_from_env,
 # src/battery.c)。
 #
 # muOS のどのキーがこれに当たるかはバージョン・機種で変わりうるので、候補を
@@ -93,14 +93,14 @@ for PROBE in device:battery/low \
 done
 if [ -n "$BATT_LOW" ]; then
 	echo "battery: low threshold ${BATT_LOW}% (muOS)"
-	export MUGBS_BATTERY_LOW_PCT="$BATT_LOW"
+	export MUCHIP_BATTERY_LOW_PCT="$BATT_LOW"
 else
-	echo "battery: muOS 側にしきい値の設定が無いため、mugbs の既定(10%)に任せる"
+	echo "battery: muOS 側にしきい値の設定が無いため、muchip の既定(10%)に任せる"
 fi
 
 # SD が exFAT なら mount オプション由来で常に 0755 に見えるため実質 no-op だが、
 # ext4 の SD へ手で展開されたケースのために実行権限を保証しておく。
-chmod +x "$APP_DIR/bin/mugbs" 2>/dev/null
+chmod +x "$APP_DIR/bin/muchip" 2>/dev/null
 
 # lib/ は現状同梱していない (SDL2 だけが実機の動的ライブラリで、libgme/miniz は
 # 静的リンク、libstdc++/libgcc も -static-* 済み。SPEC 9.1 からの逸脱)。
@@ -113,7 +113,7 @@ chmod +x "$APP_DIR/bin/mugbs" 2>/dev/null
 # muOS 自身のストレージ選択に合わせて SD2 -> SD1 -> USB。
 #
 # 注: /run/muos/storage/music (= <SD>/MUOS/music) は muOS フロントエンドの
-# BGM(.ogg) 置き場であってユーザーの音楽ライブラリではない。mugbs は ogg を
+# BGM(.ogg) 置き場であってユーザーの音楽ライブラリではない。muchip は ogg を
 # 再生できないので候補に入れない。
 ROM_MOUNT="$(GET_VAR device storage/rom/mount)"
 SD_MOUNT="$(GET_VAR device storage/sdcard/mount)"
@@ -153,14 +153,14 @@ echo "start dir: $START_DIR"
 # 自動検出した値は「保存された last_path がまだ無いときの初期値」として渡す。
 # --start-dir だと config.ini の last_path (F-13) より優先されてしまい、
 # 前回の続きから開けなくなるため、優先度の低い環境変数で渡す。
-# (優先度: --start-dir > last_path > MUGBS_START_DIR > ".")
-export MUGBS_START_DIR="$START_DIR"
+# (優先度: --start-dir > last_path > MUCHIP_START_DIR > ".")
+export MUCHIP_START_DIR="$START_DIR"
 
 # --- 起動 -------------------------------------------------------------------
 # config.ini は APP_DIR に置く。config.c の config_resolve_path() は引数も
 # 環境変数も無ければ "./config.ini" を見る(ここで cd 済み)ので既定でも同じ
 # 場所になるが、意図を固定するため明示的に渡す。
-./bin/mugbs --config "$APP_DIR/config.ini"
+./bin/muchip --config "$APP_DIR/config.ini"
 RC=$?
-echo "mugbs exited with $RC"
+echo "muchip exited with $RC"
 exit "$RC"

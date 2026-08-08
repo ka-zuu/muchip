@@ -118,37 +118,37 @@ static int test_threshold_from_env(void) {
     return 0;
 }
 
-/* --- battery_init (MUGBS_BATTERY_FAKE) --------------------------------- */
+/* --- battery_init (MUCHIP_BATTERY_FAKE) --------------------------------- */
 
 static int test_fake_env_via_init(void) {
     /* battery_init() は getenv() を直接読むため、setenv() で差し替えて
      * 確認する(SDL_Init は呼ばれない)。 */
     battery_t b;
 
-    setenv("MUGBS_BATTERY_FAKE", "85", 1);
+    setenv("MUCHIP_BATTERY_FAKE", "85", 1);
     battery_init(&b);
     CHECK(b.fake_percent == 85);
     CHECK(b.fake_charging == 0);
 
-    setenv("MUGBS_BATTERY_FAKE", "+30", 1);
+    setenv("MUCHIP_BATTERY_FAKE", "+30", 1);
     battery_init(&b);
     CHECK(b.fake_percent == 30);
     CHECK(b.fake_charging == 1);
 
-    setenv("MUGBS_BATTERY_FAKE", "nope", 1);
+    setenv("MUCHIP_BATTERY_FAKE", "nope", 1);
     battery_init(&b);
     CHECK(b.fake_percent == -1);
 
-    setenv("MUGBS_BATTERY_FAKE", "150", 1); /* 範囲外は無効 */
+    setenv("MUCHIP_BATTERY_FAKE", "150", 1); /* 範囲外は無効 */
     battery_init(&b);
     CHECK(b.fake_percent == -1);
 
-    unsetenv("MUGBS_BATTERY_FAKE");
+    unsetenv("MUCHIP_BATTERY_FAKE");
     battery_init(&b);
     CHECK(b.fake_percent == -1);
 
     /* fake_percentが設定されていれば、SDLを呼ばずにその値を返す。 */
-    setenv("MUGBS_BATTERY_FAKE", "+7", 1);
+    setenv("MUCHIP_BATTERY_FAKE", "+7", 1);
     battery_init(&b);
     const battery_status_t *st = battery_poll(&b, 0);
     CHECK(st->present == 1);
@@ -157,7 +157,7 @@ static int test_fake_env_via_init(void) {
 
     /* 間隔内の再ポーリングはキャッシュを返す(fake値を変えても即座には
      * 反映されない)。 */
-    setenv("MUGBS_BATTERY_FAKE", "99", 1);
+    setenv("MUCHIP_BATTERY_FAKE", "99", 1);
     battery_t b2;
     battery_init(&b2);
     b2.fake_percent = 50; /* テストのため直接差し替え(実運用では起動時1回だけ読む) */
@@ -168,7 +168,7 @@ static int test_fake_env_via_init(void) {
     const battery_status_t *fresh = battery_poll(&b2, BATTERY_POLL_INTERVAL_MS);
     CHECK(fresh->percent == 90);
 
-    unsetenv("MUGBS_BATTERY_FAKE");
+    unsetenv("MUCHIP_BATTERY_FAKE");
     return 0;
 }
 

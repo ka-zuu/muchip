@@ -113,7 +113,7 @@ int ui_init(ui_t *ui, int req_w, int req_h, int fullscreen) {
         flags |= SDL_WINDOW_RESIZABLE;
     }
 
-    ui->win = SDL_CreateWindow("muGBS", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+    ui->win = SDL_CreateWindow("muChip", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                 w, h, flags);
     if (!ui->win) {
         LOG_ERR("SDL_CreateWindow failed: %s", SDL_GetError());

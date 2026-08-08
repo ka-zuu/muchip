@@ -17,7 +17,7 @@ typedef struct {
     const char *start_dir;    /* Browserの開始ディレクトリ。NULLならlast_path、
                                   それも無ければ fallback_start_dir、
                                   それも無ければカレントディレクトリ。 */
-    const char *fallback_start_dir; /* 環境変数 MUGBS_START_DIR (P7)。last_path が
+    const char *fallback_start_dir; /* 環境変数 MUCHIP_START_DIR (P7)。last_path が
                                   まだ無い初回起動時だけ使われる開始ディレクトリ。
                                   実機では mux_launch.sh が音楽フォルダを自動検出して
                                   ここへ渡す。start_dir(--start-dir)と違い last_path
@@ -45,7 +45,7 @@ typedef struct {
     int battery_low_pct; /* Issue #7: [ui] battery_show = low での「低い」しきい値(%)。
                              main.c が battery_low_threshold_from_env() で決める
                              (muOS の mux_launch.sh が export する
-                             MUGBS_BATTERY_LOW_PCT があればそれ、無ければ既定10%)。 */
+                             MUCHIP_BATTERY_LOW_PCT があればそれ、無ければ既定10%)。 */
 } app_options_t;
 
 /* cfg は呼び出し側(main())が所有する唯一の権威あるインスタンスへのポインタ。

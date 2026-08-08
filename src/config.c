@@ -417,7 +417,7 @@ static int str_value_is_safe(const char *s, const char *key) {
 
 static int write_config(const mugbs_config_t *c, FILE *f) {
     fprintf(f,
-        "; muGBS config.ini\n"
+        "; muChip config.ini\n"
         "; 起動時に読み込み、終了時に自動保存されます。\n"
         "; 終了時にこのファイルは丸ごと書き直されるため、手書きしたコメントや\n"
         "; 並び順は保存されません(値そのものは保持されます)。\n");
@@ -502,7 +502,7 @@ void config_resolve_path(char *out, size_t out_size, const char *explicit_path) 
         snprintf(out, out_size, "%s", explicit_path);
         return;
     }
-    const char *env = getenv("MUGBS_CONFIG");
+    const char *env = getenv("MUCHIP_CONFIG");
     if (env && env[0]) {
         snprintf(out, out_size, "%s", env);
         return;

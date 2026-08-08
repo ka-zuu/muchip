@@ -1,7 +1,7 @@
 #!/bin/sh
 # scripts/release.sh
 #
-# muGBS のリリース作業を1本にまとめる。 (SPEC 9.5, P13)
+# muChip のリリース作業を1本にまとめる。 (SPEC 9.5, P13)
 #
 # GitHub Actions では実機向け aarch64 バイナリを作れない。クロスビルドには
 # 実機から抜いた sysroot/ (実機の libc.so.6 と libSDL2 の実体) が必要で、
@@ -16,7 +16,7 @@
 # あるので、途中で落ちてもリモートには何も残らない。
 #
 # 事前にやっておくこと:
-#   1. CMakeLists.txt の project(mugbs VERSION x.y.z ...) を上げる
+#   1. CMakeLists.txt の project(muchip VERSION x.y.z ...) を上げる
 #   2. CHANGELOG.md の「## Unreleased」を「## vx.y.z - YYYY-MM-DD」にする
 #   3. 上の2つを PR 経由で main へマージし、ローカルの main を最新にする
 #   4. 実機から sysroot/ を取得済みであること (scripts/fetch-sysroot.sh)
@@ -34,7 +34,7 @@
 #   --remote NAME   push 先リモート (既定: origin)
 #   --branch NAME   リリース元ブランチ (既定: main)
 #   --notes FILE    リリース本文を CHANGELOG.md ではなくこのファイルから取る
-#   --keep-binary   クロスビルドをやり直さず既存の build-aarch64/mugbs を使う
+#   --keep-binary   クロスビルドをやり直さず既存の build-aarch64/muchip を使う
 #   --no-github     タグの push までで止め、gh release を作らない
 #   --publish       下書きではなく公開状態でリリースを作る
 #                   (既定は下書き。Release Guard ワークフローが緑になったのを
@@ -93,7 +93,7 @@ done
 VERSION=$(./scripts/package.sh --print-version)
 [ -n "$VERSION" ] || die "バージョンを取得できませんでした。"
 TAG="v$VERSION"
-MUXAPP="./muGBS-$VERSION.muxapp"
+MUXAPP="./muChip-$VERSION.muxapp"
 
 # --- CHANGELOG からリリースノートを切り出す ---------------------------------
 # 「## vX.Y.Z - YYYY-MM-DD」の次の行から、次の「## 」の直前まで。
@@ -117,7 +117,7 @@ if [ "$PRINT_NOTES" = 1 ]; then
 	exit 0
 fi
 
-echo "== muGBS $TAG のリリース =="
+echo "== muChip $TAG のリリース =="
 if [ "$DRY_RUN" = 1 ]; then
 	echo "(--dry-run: 検査とビルドは実行しますが、変更操作はしません)"
 fi
@@ -129,7 +129,7 @@ echo "-- 前提コマンドを確認 --"
 for c in git docker zip unzip sha256sum cmake; do
 	command -v "$c" >/dev/null 2>&1 || die "$c が見つかりません。"
 done
-# 下の CTest は MUGBS_REQUIRE_SHELLCHECK=1 で回すので shellcheck も必須。
+# 下の CTest は MUCHIP_REQUIRE_SHELLCHECK=1 で回すので shellcheck も必須。
 # ここで見ておかないと、クロスビルドの直前まで進んでから
 # test_package の中で落ちることになる。
 command -v shellcheck >/dev/null 2>&1 ||
@@ -211,7 +211,7 @@ cmake --build "$BUILD_DIR" -j"$(nproc)" >/dev/null
 
 CTEST_LOG=$(mktemp)
 trap 'rm -f "$NOTES" "$CTEST_LOG"' EXIT INT TERM
-if ! MUGBS_REQUIRE_SHELLCHECK=1 ctest --test-dir "$BUILD_DIR" \
+if ! MUCHIP_REQUIRE_SHELLCHECK=1 ctest --test-dir "$BUILD_DIR" \
 	--output-on-failure --no-tests=error -j"$(nproc)" >"$CTEST_LOG" 2>&1; then
 	cat "$CTEST_LOG" >&2
 	die "CTest が失敗しました。"
@@ -227,8 +227,8 @@ tail -3 "$CTEST_LOG"
 echo ""
 echo "-- 実機向けクロスビルドと .muxapp の生成 --"
 if [ "$KEEP_BINARY" = 1 ]; then
-	echo "  (--keep-binary: build-aarch64/mugbs をそのまま使います)"
-	[ -f build-aarch64/mugbs ] || die "build-aarch64/mugbs がありません。"
+	echo "  (--keep-binary: build-aarch64/muchip をそのまま使います)"
+	[ -f build-aarch64/muchip ] || die "build-aarch64/muchip がありません。"
 else
 	./scripts/build-aarch64.sh
 fi
@@ -237,7 +237,7 @@ rm -f "$MUXAPP"
 [ -f "$MUXAPP" ] || die "$MUXAPP が生成されませんでした。"
 
 # package.sh 側が zip の構造 (絶対パス無し / '..' 無し / 全エントリが
-# muGBS/ 始まり) と strip を自己検証済みなので、ここでは重複して見ない。
+# muChip/ 始まり) と strip を自己検証済みなので、ここでは重複して見ない。
 SIZE=$(wc -c <"$MUXAPP")
 SHA=$(sha256sum "$MUXAPP" | cut -d' ' -f1)
 echo "  $MUXAPP ($SIZE バイト)"
@@ -250,7 +250,7 @@ echo "  SHA256: $SHA"
 	echo ""
 	echo "### 成果物"
 	echo ""
-	echo "- \`muGBS-$VERSION.muxapp\` ($SIZE バイト)"
+	echo "- \`muChip-$VERSION.muxapp\` ($SIZE バイト)"
 	echo "  - SHA256: \`$SHA\`"
 	echo "- muOS の **Applications > Archive Manager** から展開してインストールしてください。"
 } >>"$NOTES"
@@ -259,7 +259,7 @@ echo "  SHA256: $SHA"
 
 echo ""
 echo "-- タグ $TAG --"
-run git tag -a "$TAG" -m "muGBS $TAG"
+run git tag -a "$TAG" -m "muChip $TAG"
 run git push "$REMOTE" "$TAG"
 
 # --- 9. GitHub Release ------------------------------------------------------
@@ -272,10 +272,10 @@ else
 	echo "-- GitHub Release --"
 	if [ "$PUBLISH" = 1 ]; then
 		run gh release create "$TAG" "$MUXAPP" \
-			--title "muGBS $VERSION" --notes-file "$NOTES"
+			--title "muChip $VERSION" --notes-file "$NOTES"
 	else
 		run gh release create "$TAG" "$MUXAPP" \
-			--title "muGBS $VERSION" --notes-file "$NOTES" --draft
+			--title "muChip $VERSION" --notes-file "$NOTES" --draft
 	fi
 fi
 
