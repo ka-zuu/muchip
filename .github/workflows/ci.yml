@@ -13,12 +13,12 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
   workflow_call:
 
-# PR へ追い push したら古い実行は止める。master への push は
+# PR へ追い push したら古い実行は止める。main への push は
 # 「この commit で緑だった」という記録なので止めない。
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
