@@ -127,12 +127,13 @@ Settingsへ入らずにRepeat/Shuffleを変えられる。`S`+`←`/`→` でRep
 Settings 画面は Browser/Player どちらからも Start で開ける（SPEC 6.3の表は
 Player限定だが、ファイルを開くまで設定に入れないのは初回体験が悪いため
 意図的に広げてある。`PLAN.md` 参照）。**Length**（Issue #19で最も触る
-項目として先頭へ）・**Default length**（Issue #16）・Repeat・**Shuffle**・
-Stereo depth・**EQ bass**・**EQ treble**・Fade・Show all files・
-Scroll title（Issue #8）・Show battery（Issue #7）の11項目を編集でき、
-抜けるときとアプリ終了時に `config.ini` へ自動保存する（`sample_rate` は
+項目として先頭へ）・**Default length**（Issue #16）・**Skip short**
+（Issue #21）・Repeat・**Shuffle**・Stereo depth・**EQ bass**・
+**EQ treble**・Fade・Show all files・Scroll title（Issue #8）・
+Show battery（Issue #7）の12項目を編集でき、抜けるときとアプリ終了時に
+`config.ini` へ自動保存する（`sample_rate` は
 デバイス再オープンが必要なため対象外）。`X`（キーボードは
-`A`）でこれら11項目を一括で既定値に戻す確認ダイアログを開ける
+`A`）でこれら12項目を一括で既定値に戻す確認ダイアログを開ける
 （`last_path`やコントローラ設定など、Settings画面に出てこない値は対象外）。
 Default length は `config.ini` 上は秒のまま（既定180秒）だが、Settings画面
 では `3 min` のように分単位・1分刻みで編集する（Issue #16。`config.ini` に
@@ -148,6 +149,17 @@ m3uの曲長や実測値があればそれを使い、無い曲だけ Default le
 秒（`length_override_sec`。`0`が`auto`）で、Default lengthと同じ吸着ルール
 で分単位に見せる。変更はいま鳴っている曲へ即座に反映され、有効な間は
 Player画面のステータス行に `len:15m` のように追記される。
+
+**Skip short（短い曲のスキップ、Issue #21）**: 既定は `off`。`off` 以外
+（1秒刻みで0〜30秒）を選ぶと、実測曲長がその秒数以下のトラック（効果音・
+ジングルなど）をTrackList一覧・再生順の両方から隠す。値は `config.ini`
+上も秒のまま（`skip_short_sec`。`0`が`off`）で、Default lengthと違い分に
+丸めず `5s` のように秒で表示する。判定は常に実測曲長で行われ、Length
+（上のながさチェンジ）で見かけの曲長を上書き中でも中身が短い曲は隠れる。
+曲長が分からない曲（Default lengthのフォールバック対象）は対象外なので
+消えない。いま再生中のトラックはしきい値を変えても消えない（次に別の曲へ
+移ると通常どおり判定される）。変更はTrackList一覧・曲数表示へ即座に
+反映される。
 
 Shuffle を有効にすると、次/前トラック（自動送りも含む）がランダムな順で
 進む。1周（全エントリを1回ずつ）したら Repeat が `all` なら次の周のために
@@ -211,9 +223,9 @@ SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`（Issue #8�
   例示する絶対パスはSPEC 12/13のハードコード禁止に反するため採らない）
 - 保存は正規形で書き直す（手書きしたコメントや並び順は保存されない。
   値そのものは保持される）
-- `--duration`/`--length`/`--fade-ms`/`--repeat` のいずれかをCLIで指定した
-  場合、一回きりのテスト用オーバーライドを永続化しないよう終了時の
-  自動保存を無効化する
+- `--duration`/`--length`/`--skip-short`/`--fade-ms`/`--repeat` のいずれかを
+  CLIで指定した場合、一回きりのテスト用オーバーライドを永続化しないよう
+  終了時の自動保存を無効化する
 
 ## 入力 (P6): gamecontrollerdb 連携
 

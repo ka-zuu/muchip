@@ -627,8 +627,8 @@ static void handle_tracklist_input(app_t *app, input_action_t a) {
 /* ---- Settings画面 (P6, SPEC 6.1) --------------------------------------
  *
  * mugbs_config_t のフィールドをoffsetofで指す1枚の表で駆動する。
- * SET_INT/SET_DOUBLE/SET_BOOL/SET_ENUM/SET_MINUTESの5種のみをここで扱う。
- * sample_rate はオーディオデバイスの再オープンが必要なため含めていない
+ * SET_INT/SET_DOUBLE/SET_BOOL/SET_ENUM/SET_MINUTES/SET_LENGTH/SET_SECONDSの
+ * 7種のみをここで扱う。sample_rate はオーディオデバイスの再オープンが必要なため含めていない
  * (P6以降も非対応)。eq_bass/eq_treble は P8 で音へ反映されるようになった
  * ので表に入れてある。 */
 
@@ -647,6 +647,11 @@ typedef enum {
      * 表示・目盛り吸着(60単位ではなく300=5分単位)だけ専用にする。
      * 0は特別扱いで"auto"と表示する(SET_MINUTESには無い分岐)。 */
     SET_LENGTH,
+    /* Issue #21: 極端に短い曲のスキップしきい値。秒(int)を1秒刻みで保持する
+     * (SET_MINUTES/SET_LENGTHと違い秒単位のまま表示する。刻みが1なので
+     * adjust_setting()の目盛り吸着(端数からの復帰)自体が不要=SET_INTと
+     * 同じ else 分岐で動く)。0は特別扱いで"off"と表示する。 */
+    SET_SECONDS,
 } setting_kind_t;
 
 typedef struct {
@@ -670,10 +675,13 @@ static const char *const BATTERY_SHOW_NAMES[] = { "off", "when low", "always" };
  * Issue #16: Default length は曲長不明ファイルを扱う際に最も触る項目
  * なので先頭に置く(以前は6番目)。1..10分・1分刻み(=60..600秒・step 60)。
  * Issue #19: Length(ながさチェンジ)はそれより優先して触る項目なので
- * さらに先頭へ置く。auto(0)..30分・5分刻み(=0..1800秒・step 300)。 */
+ * さらに先頭へ置く。auto(0)..30分・5分刻み(=0..1800秒・step 300)。
+ * Issue #21: Skip short(短い曲のスキップ)はDefault lengthのすぐ後ろに置く
+ * (どちらも「曲長に関する項目」でまとまりが良い)。off(0)..30秒・1秒刻み。 */
 static const setting_def_t SETTINGS[] = {
     { "Length",              SET_LENGTH,  offsetof(mugbs_config_t, length_override_sec), 0,   1800, 300, NULL, 0 },
     { "Default length",     SET_MINUTES, offsetof(mugbs_config_t, default_length_sec), 60,  600,  60, NULL, 0 },
+    { "Skip short",       SET_SECONDS, offsetof(mugbs_config_t, skip_short_sec),      0,    30,   1, NULL, 0 },
     { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3 },
     { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0 },
     { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0 },
@@ -703,6 +711,7 @@ static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
         case SET_ENUM:    return *(const int *)field;
         case SET_MINUTES: return *(const int *)field; /* 秒のまま保持(表示側で分に換算) */
         case SET_LENGTH:  return *(const int *)field; /* 同上。0=auto */
+        case SET_SECONDS: return *(const int *)field; /* 秒のまま保持。0=off */
     }
     return 0;
 }
@@ -716,22 +725,50 @@ static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
         case SET_ENUM:    *(int *)field = (int)v; break;
         case SET_MINUTES: *(int *)field = (int)v; break;
         case SET_LENGTH:  *(int *)field = (int)v; break;
+        case SET_SECONDS: *(int *)field = (int)v; break;
     }
 }
 
 /* Settingsで変更した値を、いま反映できる範囲で反映する。呼び出し側
  * (adjust_setting)が値変更のたびに呼ぶ。stereo_depth/eq_*は
  * player_apply_config()経由で即時、default_length_sec/length_override_sec
- * は全エントリのduration_msをplaylist_apply_length_config()で
- * 再計算する(次トラックからフェード自体が新しい値になるのは
- * player.cのstart_track_at()が毎回p->configを読むため。詳細はplayer.h)。
+ * は全エントリのduration_msをplaylist_apply_config()で再計算する
+ * (次トラックからフェード自体が新しい値になるのはplayer.cの
+ * start_track_at()が毎回p->configを読むため。詳細はplayer.h)。
+ * Issue #21: skip_short_secが変わったときはduration_msの再計算に加えて
+ * entries[](可視ビュー)自体の件数が変わりうる。「いま鳴っている曲」を
+ * source_index/track_indexで控えてplaylist_apply_config()のkeep_source/
+ * keep_trackへ渡し(=しきい値に関わらずその曲だけは可視に残す)、
+ * ビュー再構築後にplaylist_find_entry()で新しい添字を引いて
+ * player_reanchor_entry()でplayer側のcurrent_entryを追随させる
+ * (emuには触れないので音は途切れない)。TrackList画面のカーソル/スクロール
+ * も新しいentry_countへクランプしておく(先頭画面に戻ってから件数が
+ * 減っていて配列外を指す、という事故を防ぐ)。
  * Issue #19: length_override_secが変わったときも同じ経路でduration_msを
- * 更新する必要があるため、playlist_apply_length_config()を先に呼んで
+ * 更新する必要があるため、playlist_apply_config()を先に呼んで
  * playlist_entry_t.duration_msを確定させてから player_apply_config() を
  * 呼ぶ(順序が逆だと、いま再生中の曲のフェードが古いduration_msの
  * ままになる。player_apply_config()参照)。 */
 static void app_apply_settings(app_t *app) {
-    if (app->pl) playlist_apply_length_config(app->pl, app->cfg);
+    if (app->pl) {
+        int keep_source = -1, keep_track = -1;
+        int cur = app->player.current_entry;
+        if (cur >= 0 && cur < app->pl->entry_count) {
+            keep_source = app->pl->entries[cur].source_index;
+            keep_track = app->pl->entries[cur].track_index;
+        }
+
+        playlist_apply_config(app->pl, app->cfg, keep_source, keep_track);
+
+        if (keep_source >= 0) {
+            int reanchored = playlist_find_entry(app->pl, keep_source, keep_track);
+            if (reanchored >= 0) player_reanchor_entry(&app->player, reanchored);
+        }
+
+        int n = app->pl->entry_count;
+        if (app->tracklist_sel > n - 1) app->tracklist_sel = n > 0 ? n - 1 : 0;
+        if (app->tracklist_scroll > app->tracklist_sel) app->tracklist_scroll = app->tracklist_sel;
+    }
     player_apply_config(&app->player);
 }
 
@@ -1260,6 +1297,18 @@ static const char *settings_item_text(void *ctx, int index) {
                 snprintf(valbuf, sizeof(valbuf), "%d min", sec / 60);
             } else {
                 snprintf(valbuf, sizeof(valbuf), "%.1f min", sec / 60.0);
+            }
+            break;
+        }
+        case SET_SECONDS: {
+            /* Issue #21: 0は「隠さない」= off。それ以外は秒のまま表示する
+             * (1秒刻みなので分表示にする意味が薄い。3秒/5秒のようなIssueに
+             * 挙がった具体値がそのまま読める方が分かりやすい)。 */
+            int sec = (int)v;
+            if (sec == 0) {
+                snprintf(valbuf, sizeof(valbuf), "off");
+            } else {
+                snprintf(valbuf, sizeof(valbuf), "%ds", sec);
             }
             break;
         }

@@ -35,6 +35,8 @@ typedef struct {
      * -1 は「上書きしない(config.ini/既定値をそのまま使う)」を表す。 */
     int default_length_sec; /* --duration SEC */
     int length_override_sec; /* --length SEC (Issue #19: 0=auto、非0で全トラック強制上書き) */
+    int skip_short_sec;      /* --skip-short SEC (Issue #21: 0=off、非0でこの秒数以下の
+                                 実測曲長のトラックを隠す) */
     int fade_length_ms;      /* --fade-ms MS */
     int repeat_mode;         /* --repeat none|one|all (repeat_mode_t にキャスト) */
 
@@ -55,6 +57,8 @@ static void print_usage(const char *prog) {
         "  --duration SEC     曲長不明時の既定再生秒数を上書きする (config.default_length_sec)\n"
         "  --length SEC       全トラックの曲長を強制的にSEC秒へ上書きする。0でauto\n"
         "                     (config.length_override_sec。Issue #19: ながさチェンジ)\n"
+        "  --skip-short SEC   実測曲長がSEC秒以下のトラックを一覧・再生順から隠す。0でoff\n"
+        "                     (config.skip_short_sec。Issue #21)\n"
         "  --fade-ms MS        フェード長を上書きする (config.fade_length_ms)\n"
         "  --repeat MODE      none|one|all でリピートモードを上書きする\n"
         "  --config PATH      設定ファイルの場所を指定する\n"
@@ -74,6 +78,7 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
     out->track = 1;
     out->default_length_sec = -1;
     out->length_override_sec = -1;
+    out->skip_short_sec = -1;
     out->fade_length_ms = -1;
     out->repeat_mode = -1;
 
@@ -117,6 +122,9 @@ static int parse_args(int argc, char **argv, mugbs_args_t *out) {
         } else if (strcmp(a, "--length") == 0) {
             if (i + 1 >= argc) { LOG_ERR("--length には数値引数が必要です"); return -1; }
             out->length_override_sec = atoi(argv[++i]);
+        } else if (strcmp(a, "--skip-short") == 0) {
+            if (i + 1 >= argc) { LOG_ERR("--skip-short には数値引数が必要です"); return -1; }
+            out->skip_short_sec = atoi(argv[++i]);
         } else if (strcmp(a, "--fade-ms") == 0) {
             if (i + 1 >= argc) { LOG_ERR("--fade-ms には数値引数が必要です"); return -1; }
             out->fade_length_ms = atoi(argv[++i]);
@@ -155,6 +163,7 @@ static void build_config(const mugbs_args_t *args, mugbs_config_t *cfg,
 
     if (args->default_length_sec >= 0) cfg->default_length_sec = args->default_length_sec;
     if (args->length_override_sec >= 0) cfg->length_override_sec = args->length_override_sec;
+    if (args->skip_short_sec >= 0) cfg->skip_short_sec = args->skip_short_sec;
     if (args->fade_length_ms >= 0) cfg->fade_length_ms = args->fade_length_ms;
     if (args->repeat_mode >= 0) cfg->repeat_mode = (repeat_mode_t)args->repeat_mode;
 }
@@ -266,6 +275,7 @@ int main(int argc, char **argv) {
      * 場合、一回きりのテスト用オーバーライドを config.ini へ永続化しては
      * ならないため、終了時のオートセーブ(C4で実装)を無効化する。 */
     int cli_override = (args.default_length_sec >= 0 || args.length_override_sec >= 0 ||
+                         args.skip_short_sec >= 0 ||
                          args.fade_length_ms >= 0 || args.repeat_mode >= 0);
     if (cli_override) {
         LOG_INFO("CLI引数で設定を上書きしているため、終了時の自動保存を無効化します");

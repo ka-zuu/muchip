@@ -37,6 +37,13 @@ typedef struct {
     int length_override_sec; /* Issue #19: ながさチェンジ。0=auto(m3u/実測優先、
                                * 不明時はdefault_length_secへフォールバック)、
                                * 非0なら全トラックの曲長をこの秒数へ強制上書きする (F-28) */
+    int skip_short_sec; /* Issue #21: 極端に短い曲をスキップする。0=off。
+                          * 非0なら実測曲長(natural_ms)がこの秒数以下のトラックを
+                          * トラックリスト・再生順の双方から隠す (F-29)。
+                          * 判定は常に実測長で行い、length_override_sec(Length)による
+                          * 見かけの曲長上書きの影響は受けない。曲長不明(length_known==0、
+                          * default_length_secへフォールバックする)トラックは対象外
+                          * (誤って消してしまわないため)。 */
     int fade_length_ms;
     repeat_mode_t repeat_mode;
     int shuffle;    /* 0/1。エントリの再生順をランダム化する (F-25, P10) */

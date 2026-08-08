@@ -2622,6 +2622,116 @@ gh api -X POST repos/ka-zuu/gbs-player/branches/master/rename -f new_name=main
 は存在しない `master` を保護対象として探すため、その間だけ `main` への
 直push が素通しになる（作業はfeatureブランチ経由だったため実害は無い）。
 
+## Issue #21: 短い曲のスキップ機能（v1.5.0）
+
+Issueの本文は「短い再生時間（3秒や5秒）はスキップする機能をつける。
+時間は設定できるように」。GBS/NSFのリップには効果音・ジングル・空
+トラックなど数秒しかない曲が混ざっていることが多く、全曲リピートで
+流しっぱなしにすると数秒ごとに割り込んで聴取体験を壊す、という既知の
+不満点への対応。
+
+ユーザー確認済みの決定事項:
+
+1. スキップ対象の曲は再生順から除くだけでなく、TrackListの一覧・曲数
+   （`Tracks (N)`）からも消す（「そもそも載せない」方式）
+2. しきい値の既定は `off`・0〜30秒・1秒刻み（Settings画面の新項目
+   `Skip short`）
+3. 判定は実測長（`natural_ms`）で行う。`Length`（ながさチェンジ、
+   Issue #19）で全曲を上書き中でも、中身が数秒の効果音は隠す
+
+### 設計判断
+
+- **「全件」と「可視ビュー」の分離**: `pl_scan_source()`の追記時点で
+  弾く素直な実装だと、Settingsでしきい値を変えたときに開き直さない限り
+  一覧が古いままになってしまう。かといって`playlist_open()`をやり直すと
+  再生が中断する。そこで`playlist_t`に`all[]`（スキャン結果全件。title
+  の所有権はここにある）と`entries[]`（そのうち可視なものだけの浅い
+  コピー。titleは借用）を分け、`entries[]`/`entry_count`を読む既存の
+  呼び出し側（`player.c`、`app.c`の`app_prev_source()`/`app_next_source()`
+  等、`main.c`の`print_playlist()`）を無改造のまま使えるようにした。
+  `natural_ms`/`length_known`はスキャン時に既に保存済みなので、
+  ビューの再構築はlibgmeを呼び直さず安価に行える（`playlist_apply_length_
+  config()`が安価なのと同じ理屈）。
+- **関数の統合**: `playlist_apply_length_config()`を
+  `playlist_apply_config(pl, cfg, keep_source, keep_track)`へ改名・拡張
+  した。`duration_ms`の再計算（全件）と可視ビューの再構築を1関数にまとめて
+  いるのは、これを分けると`entries[]`が古い`duration_ms`を持った浅い
+  コピーのまま残ってしまう齟齬が起きうるため。
+- **再生中の曲は必ず可視に残す**: しきい値を変えた瞬間に「いま鳴っている
+  曲」が消えると`current_entry`が迷子になる。`playlist_apply_config()`に
+  `keep_source`/`keep_track`（可視ビューに関わらず必ず残すトラックを
+  `source_index`/`track_index`で指定）を持たせ、`app_apply_settings()`が
+  再構築前の`current_entry`からこれを控えて渡す。ビュー再構築後は
+  `playlist_find_entry()`で新しい添字を引き、新設した
+  `player_reanchor_entry()`（範囲チェック→`current_entry`書き換え→
+  `sync_shuffle()`）で`player_t`側を追随させる。emuには一切触れないため
+  音は途切れない。
+- **全滅ガード**: 全トラックがしきい値以下だった場合、可視0件だと
+  `playlist_open()`が「エントリなし」エラーになってしまう。可視が0件に
+  なる場合はフィルタ自体を諦めて全件可視に戻す（`LOG_WARN`を出す）。
+- **判定は常に実測長**: `playlist_is_short(e, cfg)`は
+  `e->natural_ms <= cfg->skip_short_sec*1000`（境界は含む=「以下」）を
+  `e->length_known`のときだけ見る、独立した純関数として切り出した。
+  `length_override_sec`（Length）による見かけの上書きは`duration_ms`にしか
+  影響しないため、これを見ずに常に`natural_ms`で判定することで
+  「上書き中でも中身が数秒の効果音は隠れる」という決定事項3を自然に
+  満たす。曲長不明（`length_known==0`。`default_length_sec`フォールバック
+  対象）のトラックは対象外とし、誤って消してしまわないようにした。
+- **設定の持ち方**: `mugbs_config_t`に`skip_short_sec`を追加（0=off、
+  非0でその秒数）。`length_override_sec`と同じ流儀で、config.iniの
+  クランプ範囲は0..600秒と広め、Settings画面が実際に出す値は0..30の
+  1秒刻みだけにした。
+- **UI**: `setting_kind_t`に`SET_SECONDS`を追加した。刻みが1秒なので
+  `SET_MINUTES`/`SET_LENGTH`のような目盛り吸着（`adjust_setting()`）は
+  不要で、既存の`else`分岐（`v = before + direction*step`）がそのまま
+  使える。`0`は特別扱いで`"off"`、それ以外は分に丸めず`"5s"`のように
+  秒のまま表示する（Issueに挙がった「3秒/5秒」という具体値がそのまま
+  読める方が分かりやすいと判断した）。`SETTINGS[]`では`Default length`の
+  直後に置いた（どちらも「曲長に関する項目」でまとまりが良いため）。
+- **TrackList画面のカーソル**: `app_apply_settings()`の最後で
+  `tracklist_sel`/`tracklist_scroll`を新しい`entry_count`へクランプする
+  防御的コードを入れた。実際にはTrackList画面はPlayer画面からの`X`で
+  開くたびに`tracklist_sel = current_entry`へ作り直され（`app.c`）、
+  Settings画面はTrackList画面からは開けない（START入力を受け付けない）
+  ため実害は無いはずだが、将来の画面遷移変更に備えた保険。
+
+### 検証
+
+- プレイリスト単位: `tests/test_playlist.c`に7本追加。しきい値以下の
+  トラックが隠れること・境界（ちょうどしきい値と同じ長さも隠れる側）・
+  `off`（既定）では何も隠れないこと（非退行）・曲長不明のトラックは対象外
+  なこと・`Length`上書き中でも実測長で判定されること・
+  `playlist_apply_config()`でしきい値を上げ下げして件数が正しく往復
+  すること・`keep_source`/`keep_track`で指定したトラックがしきい値以下
+  でも残ること・全滅ガードで全件可視に戻ること。
+  - 「曲長不明のトラック」を`length_known`混在のm3uで作るには、
+    そのトラック用のm3u行自体は書きつつ時間フィールドを空にする必要が
+    ある（m3uをロードすると`gme_track_count()`は生のトラック数ではなく
+    m3uのエントリ数になるため。`vendor/game-music-emu/gme/
+    M3u_Playlist.cpp`の`track_count_ = playlist.size()`）。さらに
+    空の名前フィールドを区切りのカンマとして認識させるには、その直後が
+    カンマ/ダッシュ/数字である必要がある（`parse_name()`の
+    「文字列内のカンマは次の1文字が数字/カンマ/ダッシュに見えるときだけ
+    区切りとみなす」仕様）ため、`"GBS,1,,,\n"`のようにカンマを1つ余分に
+    要求する。最初`"GBS,1,,\n"`（カンマ2つ）で書いたところ名前が`","`に
+    化けて失敗し、ソースを読んでこの仕様を確認してから直した。
+- 設定の永続化: `tests/test_config.c`に既定値（0）・`test_spec_sample()`
+  への追記・ラウンドトリップ・`skip_short_sec`単体のパース/クランプ
+  （範囲外の`-5`が`0`へ、`999999`が`600`へ丸まること）のテストを追加。
+- UIスモーク: `tests/ui_smoke.script`のSettings区間、`Default length`の
+  直後に、再生中（`SELECT`で再開済み）に`Skip short`を`off`から`1s`へ
+  変えるステップを追加し、`entries[]`の再構築と`player_reanchor_entry()`
+  を6解像度×ASan/UBSanのCIで踏むようにした（スモークで使う合成
+  フィクスチャはm3u無し=曲長不明なので、この操作自体で曲が消えることは
+  ない。純粋に画面遷移・クラッシュ回帰の確認）。
+- ホストでの`ctest --test-dir build`（17件）・
+  `cmake -B build-asan ... && ctest --test-dir build-asan`は全緑を確認
+  した。実機（aarch64クロスビルド・muOS実機への導入）での確認は本セッション
+  ではまだ行っていない――次回、`./scripts/build-aarch64.sh` →
+  `./scripts/package.sh`で`muGBS-1.5.0.muxapp`を作り、Issue #19のときと
+  同様の手順（実在のループ曲での`--cli`ログ確認、GUIでのSettings操作・
+  TrackList件数変化の目視）で行うこと。
+
 ## 検証手順
 
 ```sh

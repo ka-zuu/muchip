@@ -455,7 +455,7 @@ static int test_resolve_length_ms(void) {
 }
 
 /* Issue #19: playlist_open()でスキャンした直後は上書きが効いていること、
- * playlist_apply_length_config()でauto(0)へ戻すとm3u由来の実測値
+ * playlist_apply_config()でauto(0)へ戻すとm3u由来の実測値
  * (natural_ms)へ復元されること(=情報が失われていないこと)を確認する。
  * test_sidecar_m3u()と同じ合成フィクスチャ・m3u構文(拡張M3Uの曲長
  * フィールド)を使う。 */
@@ -488,17 +488,223 @@ static int test_length_override_applies_and_reverts(void) {
     /* autoへ戻す(Settings画面でLengthをautoに操作したときと同じ経路)。
      * ファイルを開き直さずに m3u 由来の実測値へ復元されること。 */
     cfg.length_override_sec = 0;
-    playlist_apply_length_config(pl, &cfg);
+    playlist_apply_config(pl, &cfg, -1, -1);
     CHECK(pl->entries[0].duration_ms == 32000);
     CHECK(pl->entries[1].duration_ms == 154000);
     CHECK(pl->entries[2].duration_ms == 105000);
 
     /* もう一度上書きへ戻しても正しく効くこと(往復できること)。 */
     cfg.length_override_sec = 300;
-    playlist_apply_length_config(pl, &cfg);
+    playlist_apply_config(pl, &cfg, -1, -1);
     for (int i = 0; i < pl->entry_count; i++) {
         CHECK(pl->entries[i].duration_ms == 300000);
     }
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #21: skip_short_sec が非0のとき、実測曲長がしきい値以下のトラックが
+ * entries[](可視ビュー)から隠れること。境界(ちょうどしきい値と同じ長さ)も
+ * 隠れる側(<=)であることを確認する。test_sidecar_m3u()と同じ合成
+ * フィクスチャ・m3u構文を使う。 */
+static int test_skip_short_hides_and_boundary(void) {
+    char *gbs = path_in("skip_short.gbs");
+    write_synthetic_gbs(gbs, 4);
+    write_text_file(path_in("skip_short.m3u"),
+        "skip_short.gbs::GBS,0,Title Screen,0:32\n"
+        "skip_short.gbs::GBS,1,Jingle,0:03\n"
+        "skip_short.gbs::GBS,2,Exactly Five,0:05\n"
+        "skip_short.gbs::GBS,3,Battle,1:45\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.skip_short_sec = 5; /* Jingle(3秒)とExactly Five(5秒。境界)が対象 */
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 2);
+    CHECK_STREQ(pl->entries[0].title, "Title Screen");
+    CHECK_STREQ(pl->entries[1].title, "Battle");
+    /* all[]側は全件残っている(隠しているのはビューだけ)。 */
+    CHECK(pl->all_count == 4);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #21: skip_short_sec = 0(off、既定)では何も隠れないこと
+ * (アップデートしても既存ユーザーの一覧が黙って変わらないための非退行確認)。 */
+static int test_skip_short_off_keeps_all(void) {
+    char *gbs = path_in("skip_short_off.gbs");
+    write_synthetic_gbs(gbs, 2);
+    write_text_file(path_in("skip_short_off.m3u"),
+        "skip_short_off.gbs::GBS,0,Jingle,0:03\n"
+        "skip_short_off.gbs::GBS,1,Battle,1:45\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    CHECK(cfg.skip_short_sec == 0);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 2);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #21: 曲長不明(m3uの時間フィールドが空、length_known==0)のトラックは
+ * skip_short_secの対象外(誤って消さない)。
+ *
+ * m3uをロードすると gme_track_count() は生のトラック数ではなく
+ * m3uのエントリ数になる(vendor/game-music-emu/gme/M3u_Playlist.cpp の
+ * track_count_ = playlist.size())。そのため「曲長不明のトラック」を
+ * 混在させるには、そのトラック用の行自体は書きつつ時間フィールドだけ
+ * 空にする必要がある(時間フィールドを省略すると
+ * vendor/game-music-emu/gme/Gme_File.cpp の track_info() が
+ * out->length を既定値-1のままにする=unknownになる)。 */
+static int test_skip_short_keeps_unknown_length(void) {
+    char *gbs = path_in("skip_short_unknown.gbs");
+    write_synthetic_gbs(gbs, 2);
+    write_text_file(path_in("skip_short_unknown.m3u"),
+        "skip_short_unknown.gbs::GBS,0,Jingle,0:03\n"
+        /* 名前・時間とも空にするには末尾にもう1つカンマが要る
+         * (M3u_Playlist.cppのparse_name(): 空の名前フィールドを区切りの
+         * カンマとして認識させるには、その直後がカンマ/ダッシュ/数字の
+         * いずれかである必要がある。無いと直前のカンマ自体が名前の一部
+         * として飲み込まれてしまう)。結果は "Track 02"・曲長不明になる。 */
+        "skip_short_unknown.gbs::GBS,1,,,\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.skip_short_sec = 30; /* Jingleは確実に隠れるしきい値 */
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    /* Jingle(実測3秒、既知)は隠れるが、曲長不明の"Track 02"は残る。 */
+    CHECK(pl->entry_count == 1);
+    CHECK_STREQ(pl->entries[0].title, "Track 02");
+    CHECK(!pl->entries[0].length_known);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #21: Length(length_override_sec)で全曲の見かけの長さを上書き中でも、
+ * スキップ判定は常に実測長(natural_ms)で行われること。上書きで曲長不明の
+ * トラックまで「見かけ上15分」になっても、それだけでskip_short_secの対象には
+ * ならない(length_knownが0のままなので)。 */
+static int test_skip_short_ignores_length_override(void) {
+    char *gbs = path_in("skip_short_override.gbs");
+    write_synthetic_gbs(gbs, 2);
+    write_text_file(path_in("skip_short_override.m3u"),
+        "skip_short_override.gbs::GBS,0,Jingle,0:03\n"
+        "skip_short_override.gbs::GBS,1,Battle,1:45\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.skip_short_sec = 5;
+    cfg.length_override_sec = 900; /* 全曲を15分に見せかける (F-28) */
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    /* 見かけの長さは900000msでも、中身が3秒のJingleは隠れる。 */
+    CHECK(pl->entry_count == 1);
+    CHECK_STREQ(pl->entries[0].title, "Battle");
+    CHECK(pl->entries[0].duration_ms == 900000); /* 上書き自体は効いている */
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #21: playlist_apply_config()でしきい値を上げ下げしたとき、
+ * entries[]の件数がそのたびに正しく増減すること(情報が失われていない)。 */
+static int test_skip_short_apply_config_round_trip(void) {
+    char *gbs = path_in("skip_short_toggle.gbs");
+    write_synthetic_gbs(gbs, 2);
+    write_text_file(path_in("skip_short_toggle.m3u"),
+        "skip_short_toggle.gbs::GBS,0,Jingle,0:03\n"
+        "skip_short_toggle.gbs::GBS,1,Battle,1:45\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 2); /* skip_short_sec=0(既定)なので開いた時点では全件 */
+
+    cfg.skip_short_sec = 5;
+    playlist_apply_config(pl, &cfg, -1, -1);
+    CHECK(pl->entry_count == 1);
+    CHECK_STREQ(pl->entries[0].title, "Battle");
+
+    cfg.skip_short_sec = 0;
+    playlist_apply_config(pl, &cfg, -1, -1);
+    CHECK(pl->entry_count == 2);
+    CHECK_STREQ(pl->entries[0].title, "Jingle");
+    CHECK_STREQ(pl->entries[1].title, "Battle");
+
+    /* 往復できること(もう一度上げても同じ結果になる)。 */
+    cfg.skip_short_sec = 5;
+    playlist_apply_config(pl, &cfg, -1, -1);
+    CHECK(pl->entry_count == 1);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #21: keep_source/keep_track に「いま再生中のトラック」を渡すと、
+ * しきい値以下でもそのトラックだけは可視に残ること(しきい値変更で
+ * 再生中の曲を見失わないための仕組み。app_apply_settings()参照)。 */
+static int test_skip_short_keeps_current_track(void) {
+    char *gbs = path_in("skip_short_keep.gbs");
+    write_synthetic_gbs(gbs, 2);
+    write_text_file(path_in("skip_short_keep.m3u"),
+        "skip_short_keep.gbs::GBS,0,Jingle,0:03\n"
+        "skip_short_keep.gbs::GBS,1,Battle,1:45\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    int jingle_source = pl->entries[0].source_index;
+    int jingle_track = pl->entries[0].track_index;
+
+    cfg.skip_short_sec = 5;
+    /* Jingleを再生中、という体でkeepを渡す。 */
+    playlist_apply_config(pl, &cfg, jingle_source, jingle_track);
+    CHECK(pl->entry_count == 2); /* 本来隠れるはずのJingleも残る */
+    CHECK(playlist_find_entry(pl, jingle_source, jingle_track) >= 0);
+
+    /* 再生中でなくなれば(keepを渡さなければ)通常どおり隠れる。 */
+    playlist_apply_config(pl, &cfg, -1, -1);
+    CHECK(pl->entry_count == 1);
+    CHECK(playlist_find_entry(pl, jingle_source, jingle_track) < 0);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #21: 全滅ガード。既知の曲長を持つ全トラックがしきい値以下の場合、
+ * フィルタを諦めて全件可視に戻る(playlist_open()がエントリなしで
+ * 失敗しないように)。 */
+static int test_skip_short_all_filtered_guard(void) {
+    char *gbs = path_in("skip_short_guard.gbs");
+    write_synthetic_gbs(gbs, 2);
+    write_text_file(path_in("skip_short_guard.m3u"),
+        "skip_short_guard.gbs::GBS,0,Jingle A,0:02\n"
+        "skip_short_guard.gbs::GBS,1,Jingle B,0:03\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.skip_short_sec = 30; /* 両方とも対象になるしきい値 */
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    /* 全件フィルタされるはずが、全滅ガードにより2件とも可視のまま。 */
+    CHECK(pl->entry_count == 2);
 
     playlist_free(pl);
     return 0;
@@ -539,6 +745,13 @@ int main(void) {
     if (test_fade_start_ms()) return 1;
     if (test_resolve_length_ms()) return 1;
     if (test_length_override_applies_and_reverts()) return 1;
+    if (test_skip_short_hides_and_boundary()) return 1;
+    if (test_skip_short_off_keeps_all()) return 1;
+    if (test_skip_short_keeps_unknown_length()) return 1;
+    if (test_skip_short_ignores_length_override()) return 1;
+    if (test_skip_short_apply_config_round_trip()) return 1;
+    if (test_skip_short_keeps_current_track()) return 1;
+    if (test_skip_short_all_filtered_guard()) return 1;
 
     printf("test_playlist: すべて成功\n");
     return 0;
