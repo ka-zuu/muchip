@@ -2830,9 +2830,51 @@ Issue #2（NSF再生対応）の検討時に「`muGBS`という名前がGBS専�
   という移行の説明を残し、実機インストール節にも旧`application/muGBS/`を
   手動削除する案内を加えた
 
-### 実機検証
+### 実機検証（完了）
 
-（マージ後に実施。結果をここへ追記する）
+muOS 2601.0 (JACARANDA) 実機で、PR #26 のマージ前に検証した。手順は
+`./scripts/build-aarch64.sh && ./scripts/package.sh` で
+`muChip-1.6.0.muxapp` を生成し、`scp` で転送後
+`/opt/muos/script/mux/extract.sh`（Archive Managerが内部で呼ぶのと
+同一スクリプト）で展開した。
+
+**SSH直接起動で気づいた既知の落とし穴の再確認**: `mux_launch.sh` を
+SSH越しに直接叩いて起動すると`muxfrontend`側のフォアグラウンドプロセス
+受け渡しを経由しないため、アプリ終了後に画面が固まる（`muxfrontend`
+自体は生きているが再描画されない）ことを実機で再現した。これは
+「余談」節に書いた過去の判断（SSH直接起動を避けてユーザー自身の物理操作に
+切り替えた理由）と一致する事象で、今回も同じ結論に至った。ユーザーに
+物理ボタンで再操作してもらったところ`muxfrontend`は正常に復帰した
+（実害なし。単に受け渡しの手順を踏んでいないだけ）。
+
+以降はユーザーが物理ボタンで操作し、Claude側はSSH越しに`/dev/fb0`を
+`dd if=/dev/fb0 bs=1 count=1228800`でダンプして
+`fbset -i`で確認したフォーマット(`640x480`, `rgba 8/16,8/8,8/0,8/24`
+= BGRA)からPNG化して画面を確認する、P7以来の分担で検証した:
+
+- **アプリ一覧**: 「muChip プレーヤー」が音符アイコン付きで表示され、
+  旧「muGBS プレーヤー」と共存することを確認（`mux_lang.ini`の
+  `[full] Japanese=muChip プレーヤー`が正しく引かれている）
+- **正式起動**: `muxfrontend`からの物理ボタン起動で
+  `mux_launch.sh`→`bin/muchip --config .../muChip/config.ini`の
+  プロセスツリーになることを`ps aux`で確認。`log.txt`に
+  `=== muChip mux_launch.sh ===`・`muChip 1.6.0`・
+  `MUCHIP_START_DIR から開始します`が出ることを確認（環境変数の改名も
+  実機で機能している）
+- **Browser→Player→Settings**: 物理ボタンでBrowser（前回の`last_path`
+  から再開）→zip内のGBSファイルを開いてPlayer（曲名・トラック番号・
+  波形ビジュアライザが正常動作）→Settings（Length/Default length/
+  Skip short/Repeat/Shuffle/Stereo depth/EQ bass/EQ treble/Fade/
+  Show all files/Scroll title/Show batteryの12項目）まで一巡し、
+  文字化けやレイアウト崩れが無いことをスクリーンショットで確認
+- **正式終了**: Start+Select同時押しで終了。`log.txt`に
+  `muchip exited with 0`、`config.ini`に`last_path`（zip内パスまで
+  含む）が保存されていることを確認。終了後`muxfrontend`のアプリ一覧に
+  正しく復帰し、カーソルが終了元の「muChip プレーヤー」に残ることを
+  確認（正式なフォアグラウンドプロセス受け渡しが機能している証拠）
+
+実機の`application/muGBS/`（旧パッケージ）はユーザーの判断で残置。
+新旧が別ディレクトリとして共存することも確認できた。
 
 ## 検証手順
 
