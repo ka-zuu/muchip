@@ -98,6 +98,11 @@ Settingsへ入らずにRepeat/Shuffleを変えられる。`S`+`←`/`→` でRep
 明示的にon/offする(トグルではない)。`S`単体(押して離すだけ)は何もしない。
 ステータス行(`repeat:xxx shuffle:on/off`)ですぐ確認できる。
 
+**Theme Editor**(Settingsの`Edit theme`から`Z`で開く): `↑↓`でスロット
+選択、`Q`/`W`(L1/R1相当)で編集するチャンネル(R/G/B)を切替、`←→`で値を
+8刻みで増減、`A`(X相当)で確認ダイアログ無しに開いたときの状態へ戻す、
+`X`(B相当)または`Return`(Start相当)でSettingsへ戻る(保存される)。
+
 音量調整機能は無い(常に最大出力)。本体側のハードウェア音量と非連動で
 紛らわしいため廃止した。
 
@@ -107,12 +112,14 @@ Settings 画面は Browser/Player どちらからも Start で開ける。**Leng
 **EQ treble**・Fade・Show all files・Scroll title・Show battery・
 **Theme**（カラーテーマ）の13項目を編集でき、抜けるときとアプリ終了時に
 `config.ini` へ自動保存する（`sample_rate` はデバイス再オープンが必要な
-ため対象外）。`X`（キーボードは `A`）でこれら13項目を一括で既定値に戻す
-確認ダイアログを開ける（`last_path`やコントローラ設定など、Settings画面
-に出てこない値は対象外。ただし `Theme` の `custom` パレットはSettings画面
-に出てこないが、`Theme` 自体のリセット対象なので一緒に既定へ戻る）。
-Default length は `config.ini` 上は秒のまま（既定180秒）だが、Settings
-画面では `3 min` のように分単位・1分刻みで編集する。
+ため対象外）。末尾の **Edit theme** は値を持たず、`A` で `Theme` の
+`custom` パレットを編集するサブ画面（Theme Editor）を開く。`X`
+（キーボードは `A`）でこれら13項目を一括で既定値に戻す確認ダイアログを
+開ける（`last_path`やコントローラ設定など、Settings画面に出てこない値は
+対象外。ただし `Theme` の `custom` パレットはSettings画面に出てこないが、
+`Theme` 自体のリセット対象なので一緒に既定へ戻る）。Default length は
+`config.ini` 上は秒のまま（既定180秒）だが、Settings画面では `3 min` の
+ように分単位・1分刻みで編集する。
 
 **Length（ながさチェンジ）**: 既定は `auto`（今までどおり、m3uの曲長や
 実測値があればそれを使い、無い曲だけ Default length へフォールバック
@@ -157,12 +164,17 @@ Settings の `Show battery`（`config.ini` の `[ui] battery_show`）で
 
 ### カラーテーマ
 
-Settings の `Theme`（末尾）で5つのプリセット（`midnight`〈既定〉/
-`gameboy`/`mono`/`amber`/`synthwave`。実機の反射型/低輝度パネル向けに
-すべてダーク系）と `custom` を循環選択できる。`custom` のパレットは
-`config.ini` の `[theme]` セクション（9キー、`RRGGBB` の16進）を手編集
-すると反映される（Settings画面から9色を編集する `Edit theme` サブ画面は
-別Issueで実装予定）。
+Settings の `Theme` で5つのプリセット（`midnight`〈既定〉/`gameboy`/
+`mono`/`amber`/`synthwave`。実機の反射型/低輝度パネル向けにすべてダーク系）
+と `custom` を循環選択できる。`Theme` の次の `Edit theme`（`A`）で開く
+Theme Editor サブ画面では、9つの色スロット（背景・パネル・本文・副文・
+アクセント・選択行・再生中マーク・警告・充電中）を一覧から編集できる。
+`UP`/`DOWN` でスロット選択、`L1`/`R1` で編集するチャンネル(R/G/B)を切替、
+`LEFT`/`RIGHT` で値を8刻みで増減する。値を変えた瞬間に `Theme` は
+`custom` へ切り替わり、4画面すべてへ即座にライブプレビューされる。`X`
+で確認ダイアログ無しに開いたときの状態へ戻せる（パレットは1枚だけなので
+これがそのままundoになる）。`custom` のパレットは `config.ini` の
+`[theme]` セクション（9キー、`RRGGBB` の16進）を手編集しても変更できる。
 
 実機の物理ボタンでの終了は **GUIDEボタン単体、または Start+Select 同時押し**。
 

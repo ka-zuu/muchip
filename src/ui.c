@@ -552,11 +552,15 @@ int ui_save_screenshot(ui_t *ui, const char *path) {
     return 0;
 }
 
-void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
-                   int *scroll, ui_list_item_fn item_fn, void *ctx) {
+int ui_list_visible_rows(const ui_t *ui, ui_rect_t r) {
     int row_h = ui->metrics.line_h;
     int visible = r.h / row_h;
     if (visible < 1) visible = 1;
+    return visible;
+}
+
+void ui_list_clamp_scroll(const ui_t *ui, ui_rect_t r, int count, int selected, int *scroll) {
+    int visible = ui_list_visible_rows(ui, r);
 
     if (count > 0) {
         if (selected < 0) selected = 0;
@@ -572,6 +576,22 @@ void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
     } else {
         *scroll = 0;
     }
+}
+
+void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
+                   int *scroll, ui_list_item_fn item_fn, void *ctx) {
+    int row_h = ui->metrics.line_h;
+    int visible = ui_list_visible_rows(ui, r);
+
+    /* selectedの範囲内クランプは下のハイライト判定(idx==selected)にも
+     * 使うので、ui_list_clamp_scroll()に渡す一時値としてだけでなく
+     * ここでも保持する(Issue #27でエディタ画面と共有する際、
+     * scroll計算とハイライト計算の依存関係を分けすぎないための判断)。 */
+    if (count > 0) {
+        if (selected < 0) selected = 0;
+        if (selected >= count) selected = count - 1;
+    }
+    ui_list_clamp_scroll(ui, r, count, selected, scroll);
 
     const SDL_Color sel_bg = ui_color(ui, THEME_ROLE_SEL);
     const SDL_Color mark_fg = ui_color(ui, THEME_ROLE_MARK);

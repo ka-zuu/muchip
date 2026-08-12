@@ -80,6 +80,23 @@ RIGHT   # synthwave -> custom (config_set_defaults()時点のtheme_custom
         # =midnightのコピーが実効になる経路を通す)
 RIGHT   # custom -> midnight (6値を1周してENUMの循環がcustomを跨いで
         # 戻ることを確認する)
+DOWN    # Theme -> Edit theme (SET_ACTION行。SETTINGS[]の末尾)
+LEFT    # SET_ACTION行ではLEFTが無反応であること(adjust_settingの早期return)
+A       # エディタを開く(app_enter_theme_edit)。カーソルはBackground(先頭)
+UP      # 先頭でUP -> 末尾(Charging)へ折り返す(P9と同じ規約)
+DOWN    # Charging -> Background(先頭)へ戻る
+DOWN    # Background -> Panel
+DOWN    # Panel -> Text
+R1      # チャンネル R -> G
+R1      # G -> B
+RIGHT   # B値を上げる(theme_channel_step)。初回編集でtheme=customへ切り替わる
+        # 経路(copy-on-first-edit)を、再生中(SELECTで再開済み)に通す
+RIGHT
+RIGHT
+L1      # チャンネル B -> G
+LEFT    # G値を下げる(2回目以降の編集。theme_customへの直接書き込み経路)
+X       # 入室時のテーマ(まだmidnightだった)へ戻す(確認ダイアログ無しのundo)
+B       # エディタ -> Settings (ここでconfig_save)
 X       # リセット確認ダイアログを開く(P10)
 B       # キャンセル(変更はそのまま残る)
 X       # 再度開く

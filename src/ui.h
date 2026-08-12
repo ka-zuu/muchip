@@ -148,6 +148,15 @@ void ui_draw_waveform(ui_t *ui, ui_rect_t r, const short *samples, int count,
  * 複数解像度のレイアウトを目視確認する手段として用意している。 */
 int ui_save_screenshot(ui_t *ui, const char *path);
 
+/* r.h に収まる行数(最低1)。ui_draw_list()の内部計算をIssue #27の
+ * テーマエディタ画面(独自の行描画ループを持つが、可視行数とスクロール
+ * クランプはui_draw_list()と共有したい)向けに切り出したもの。 */
+int ui_list_visible_rows(const ui_t *ui, ui_rect_t r);
+
+/* selected が常に可視範囲に収まるよう *scroll を調整する(ui_draw_list()の
+ * 内部計算そのもの)。count<=0 なら *scroll=0。 */
+void ui_list_clamp_scroll(const ui_t *ui, ui_rect_t r, int count, int selected, int *scroll);
+
 /* Browser/TrackList で共有するスクロール付きリスト描画。
  * item_fn(ctx, index) は行の表示文字列を返す(呼び出し中のみ有効な
  * ポインタでよい。内部で即座に描画する)。
