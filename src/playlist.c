@@ -118,13 +118,27 @@ int playlist_natural_length_ms(const gme_info_t *info, int *out_known) {
     return 0;
 }
 
-/* Issue #19: length_override_sec(非0)が設定されていれば、既知/不明を
- * 問わず全トラックの曲長をそれへ強制する (F-28)。autoならF-08どおり
- * knownならnatural_ms、そうでなければdefault_length_secへフォールバック
- * する。 */
-int playlist_resolve_length_ms(int natural_ms, int known, const mugbs_config_t *cfg) {
+/* Issue #24: loop_length>0 だけを見る。playlist_natural_length_ms()の
+ * intro>0 && loop>0 は「introが0/未指定でもloopは有効」なm3u表現
+ * (`,-` や `,0:30` )を取りこぼすため、ここでは独立して判定する。 */
+int playlist_track_loops(const gme_info_t *info) {
+    return info->loop_length > 0;
+}
+
+/* Issue #19: length_override_sec(非0)が設定されていれば、原則として
+ * 全トラックの曲長をそれへ強制する (F-28)。ただし Issue #24: 曲長が既知
+ * (known!=0)なのに鳴り続けられない(loops==0)トラックは、上書きしても
+ * 実際には natural_ms で無音自動終了してしまい表示と実挙動が乖離するため、
+ * min(override, natural_ms) にとどめる(延長はしないが短縮は効く)。
+ * 曲長不明(known==0。素のGBS/NSFなど判断材料が無い曲)は現状どおり
+ * 強制する。autoならF-08どおりknownならnatural_ms、そうでなければ
+ * default_length_secへフォールバックする。 */
+int playlist_resolve_length_ms(int natural_ms, int known, int loops,
+                                const mugbs_config_t *cfg) {
     if (cfg->length_override_sec > 0) {
-        return cfg->length_override_sec * 1000;
+        int override_ms = cfg->length_override_sec * 1000;
+        if (loops || !known) return override_ms;
+        return override_ms < natural_ms ? override_ms : natural_ms;
     }
     return known ? natural_ms : cfg->default_length_sec * 1000;
 }
@@ -134,7 +148,7 @@ int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *c
     int known;
     int natural_ms = playlist_natural_length_ms(info, &known);
     if (out_known) *out_known = known;
-    return playlist_resolve_length_ms(natural_ms, known, cfg);
+    return playlist_resolve_length_ms(natural_ms, known, playlist_track_loops(info), cfg);
 }
 
 int playlist_is_short(const playlist_entry_t *e, const mugbs_config_t *cfg) {
@@ -177,7 +191,7 @@ void playlist_apply_config(playlist_t *pl, const mugbs_config_t *cfg,
                             int keep_source, int keep_track) {
     for (int i = 0; i < pl->all_count; i++) {
         playlist_entry_t *e = &pl->all[i];
-        e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, cfg);
+        e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, e->loops, cfg);
     }
     rebuild_view(pl, cfg, keep_source, keep_track);
 }
@@ -286,14 +300,16 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
         e->track_index = i;
         if (info) {
             e->natural_ms = playlist_natural_length_ms(info, &e->length_known);
+            e->loops = playlist_track_loops(info);
         } else {
             e->natural_ms = 0;
             e->length_known = 0;
+            e->loops = 0;
         }
         /* Issue #19: duration_msは「今使うべき」実効値。Length上書き中に
          * 開いたファイルでも、auto に戻したとき natural_ms から復元できる
          * よう別途保持しておく(playlist_apply_config()参照)。 */
-        e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, cfg);
+        e->duration_ms = playlist_resolve_length_ms(e->natural_ms, e->length_known, e->loops, cfg);
         pl->all_count++;
 
         if (info) {

@@ -47,6 +47,12 @@ typedef struct {
                             上書き(length_override_sec)を無視した実測曲長(ms)。
                             Lengthをautoへ戻したときにこの値へ復帰するために
                             duration_msとは別に保持しておく。length_known==0なら0 */
+    int loops;            /* Issue #24: playlist_track_loops()の結果(loop_length>0)。
+                            非0ならこのトラックは鳴り続けられるので、ながさチェンジ
+                            (length_override_sec)で延長してよい。0(GBS/NSFの素の
+                            曲など曲長・ループ情報が無いか、m3uで曲長だけ既知で
+                            実際には途中で終わる曲)なら、known時はnatural_msを
+                            超えて延長しない(playlist_resolve_length_ms()参照) */
 } playlist_entry_t;
 
 typedef struct {
@@ -97,17 +103,34 @@ void playlist_free(playlist_t *pl);
  * 戻り値は0(呼び出し側がdefault_length_secへフォールバックする)。 */
 int playlist_natural_length_ms(const gme_info_t *info, int *out_known);
 
-/* natural_ms/known(playlist_natural_length_ms()の結果)とconfigから、
- * フェード開始時刻=実効曲長(ms)を決定する。
- * cfg->length_override_sec が非0なら(Issue #19: ながさチェンジ)、known/
- * unknownを問わず全トラックをその秒数へ強制する (F-28)。0(auto)なら
- * 従来どおりknownならnatural_ms、そうでなければcfg->default_length_sec
- * にフォールバックする (F-08)。 */
-int playlist_resolve_length_ms(int natural_ms, int known, const mugbs_config_t *cfg);
+/* info から、ながさチェンジ(length_override_sec)で延長してよいトラックかを
+ * 判定する(Issue #24)。info->loop_length > 0 を条件にする
+ * (info->intro_length > 0 && info->loop_length > 0 という
+ * playlist_natural_length_ms() の判定は使わない。m3uの `,-`(intro=-1,
+ * loop=length)や `,0:30`(intro=0)のような「introが0/未指定でもloopは
+ * 有効」な表現を取りこぼすため)。GBS/NSFはヘッダにループ情報を一切
+ * 持たない(m3uでのみ得られる)ため、素のGBS/NSFは常に0を返す。 */
+int playlist_track_loops(const gme_info_t *info);
 
-/* playlist_natural_length_ms() + playlist_resolve_length_ms() をまとめて
- * 呼ぶ薄いラッパ。player.c の start_track_at() 等、素の曲長を経由せず
- * 実効曲長だけを1回で得たい呼び出し元向けに残している。
+/* natural_ms/known(playlist_natural_length_ms()の結果)とloops
+ * (playlist_track_loops()の結果)とconfigから、フェード開始時刻=実効曲長
+ * (ms)を決定する。cfg->length_override_sec が非0のとき(Issue #19:
+ * ながさチェンジ)の扱いは3区分(Issue #24, F-28):
+ *   - loopsが非0(鳴り続けられる曲): 既知/不明を問わずその秒数へ強制する
+ *   - loopsが0かつ不明(known==0。素のGBS/NSFなど判断材料が無い曲):
+ *     従来どおりその秒数へ強制する(現状維持)
+ *   - loopsが0かつ既知(known!=0。m3u等で曲長は分かるが実際には途中で
+ *     終わる曲): min(上書き秒数, natural_ms)。延長はしないが短縮方向
+ *     (natural_msの方が長い場合)は従来どおり効く
+ * 0(auto)なら従来どおりknownならnatural_ms、そうでなければ
+ * cfg->default_length_sec にフォールバックする (F-08)。 */
+int playlist_resolve_length_ms(int natural_ms, int known, int loops,
+                                const mugbs_config_t *cfg);
+
+/* playlist_natural_length_ms() + playlist_track_loops() +
+ * playlist_resolve_length_ms() をまとめて呼ぶ薄いラッパ。player.c の
+ * start_track_at() 等、素の曲長を経由せず実効曲長だけを1回で得たい
+ * 呼び出し元向けに残している。
  * out_known は playlist_natural_length_ms() と同じ意味(実測かどうか)を
  * 返す。上書き(length_override_sec)の有無とは独立。 */
 int playlist_effective_length_ms(const gme_info_t *info, const mugbs_config_t *cfg,
