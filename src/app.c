@@ -21,6 +21,7 @@ typedef enum {
     SCREEN_PLAYER,
     SCREEN_TRACKLIST,
     SCREEN_SETTINGS, /* P6: SPEC 6.1。START で Browser/Player どちらからも開く */
+    SCREEN_THEME_EDIT, /* Issue #27: Settings画面の"Edit theme"(A)で開くサブ画面 */
 } app_screen_t;
 
 typedef struct {
@@ -68,6 +69,26 @@ typedef struct {
     int settings_scroll;
     app_screen_t settings_return; /* Settingsを抜けたら戻る画面(Browser/Player) */
     int settings_confirm_reset; /* P10: Xで開くリセット確認ダイアログの表示中フラグ */
+
+    /* Issue #27: テーマエディタ(SCREEN_THEME_EDIT)の状態。
+     * theme_edit_working は表示・編集中の9色そのもの(app_enter_theme_edit()
+     * で実効テーマへ初期化し、以後はLEFT/RIGHTで直接書き換える)。
+     * theme_edit_entry_id/theme_edit_entry_custom は入室時の
+     * cfg->theme_id/cfg->theme_custom の生の値(copy-on-first-editで
+     * theme_idをCUSTOMへ切り替える前の状態。Xでの完全な取り消しに使う。
+     * 「resolveした表示色」ではなく生の値を保持するのは、入室時点で
+     * theme_idがCUSTOMでなかった場合、cfg->theme_customには無関係な
+     * 過去のcustomパレットが残っている可能性があり、Xで戻すときに
+     * それを実効色で上書きして消してしまわないため)。
+     * theme_edit_dirty は「このセッションでcfg->theme_id/theme_customに
+     * 実際に書き込んだか」(=すでにCUSTOMとして編集中か)。 */
+    theme_t theme_edit_working;
+    theme_id_t theme_edit_entry_id;
+    theme_t theme_edit_entry_custom;
+    int theme_edit_dirty;
+    int theme_edit_slot;    /* 0..THEME_SLOT_COUNT-1 */
+    int theme_edit_channel; /* 0=R, 1=G, 2=B */
+    int theme_edit_scroll;
 
     /* F-14 ビジュアライザ。app_update_scope() が1フレームに1回だけ
      * player から取り込み、トリガ(立ち上がりゼロ交差)を合わせたもの。
@@ -665,6 +686,11 @@ typedef enum {
      * adjust_setting()の目盛り吸着(端数からの復帰)自体が不要=SET_INTと
      * 同じ else 分岐で動く)。0は特別扱いで"off"と表示する。 */
     SET_SECONDS,
+    /* Issue #27: 値を持たない行。LEFT/RIGHTでは何も変わらず、Aでサブ画面
+     * (Edit theme)を開く。setting_get/setting_setは0を返す/no-opにする
+     * ことで、setSETTINGS[]を全走査するapp_reset_settings()から見ても
+     * 自動的に無害になる(何も読まない・書かない)。 */
+    SET_ACTION,
 } setting_kind_t;
 
 typedef struct {
@@ -716,6 +742,11 @@ static const setting_def_t SETTINGS[] = {
      * 追記だけで済ませるため)。customも循環に含める
      * (含めないとadjust_setting()の%nから抜けられない片道になる)。 */
     { "Theme",                  SET_ENUM,   offsetof(mugbs_config_t, theme_id),         0,     5,   1, THEME_NAMES, 6 },
+    /* Issue #27: customパレットを画面から編集するサブ画面への入口。
+     * SET_ACTIONはoffset/min/max/step/enum_namesを一切使わないが、
+     * offsetには意味的に近いフィールドを入れておく(将来offset比較の
+     * コードが増えたときの誤爆を避けるための保険。現状は使われない)。 */
+    { "Edit theme",             SET_ACTION, offsetof(mugbs_config_t, theme_id),         0,     0,   0, NULL, 0 },
 };
 #define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
 
@@ -738,6 +769,7 @@ static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
         case SET_MINUTES: return *(const int *)field; /* 秒のまま保持(表示側で分に換算) */
         case SET_LENGTH:  return *(const int *)field; /* 同上。0=auto */
         case SET_SECONDS: return *(const int *)field; /* 秒のまま保持。0=off */
+        case SET_ACTION:  return 0; /* 値を持たない */
     }
     return 0;
 }
@@ -752,6 +784,7 @@ static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
         case SET_MINUTES: *(int *)field = (int)v; break;
         case SET_LENGTH:  *(int *)field = (int)v; break;
         case SET_SECONDS: *(int *)field = (int)v; break;
+        case SET_ACTION:  break; /* no-op */
     }
 }
 
@@ -800,6 +833,10 @@ static void app_apply_settings(app_t *app) {
 
 static void adjust_setting(app_t *app, int direction) {
     const setting_def_t *s = &SETTINGS[app->settings_sel];
+    /* Issue #27: SET_ACTION行はLEFT/RIGHTでは何も変わらない(Aでサブ画面を
+     * 開く方はhandle_settings_input()側で分岐する)。 */
+    if (s->kind == SET_ACTION) return;
+
     double before = setting_get(app->cfg, s);
     double v;
 
@@ -842,13 +879,19 @@ static void adjust_setting(app_t *app, int direction) {
     }
 }
 
-/* Settingsを抜けて呼び出し元の画面へ戻る。config_pathが設定されていれば
- * ここで保存する(終了を待たず、変更のたびに実機の電源断耐性を持たせる)。 */
-static void app_leave_settings(app_t *app) {
-    app->screen = app->settings_return;
+/* config_pathが設定されていれば保存する(終了を待たず、変更のたびに
+ * 実機の電源断耐性を持たせる)。Settings退出時とテーマエディタ退出時の
+ * 両方から呼ぶ共通ヘルパ (Issue #27)。 */
+static void app_save_config(app_t *app) {
     if (app->config_path) {
         config_save(app->cfg, app->config_path);
     }
+}
+
+/* Settingsを抜けて呼び出し元の画面へ戻る。 */
+static void app_leave_settings(app_t *app) {
+    app->screen = app->settings_return;
+    app_save_config(app);
 }
 
 /* Settings画面に出ている項目(SETTINGS[])だけを既定値に戻す (P10)。
@@ -875,6 +918,91 @@ static void app_reset_settings(app_t *app) {
     browser_open_dir(&app->browser, app->browser.cwd, app->cfg->show_all_files);
     if (app->player_path[0]) app_sync_player_list(app, app->player_path, 1);
     set_status(app, "Settings reset to defaults");
+}
+
+/* Settings画面の"Edit theme"(A)で呼ばれる。実効テーマ(プリセットまたは
+ * customパレット)をtheme_edit_workingへコピーして編集を始める。この時点
+ * ではcfg->theme_id/theme_customには一切触れない(眺めるだけで設定が
+ * 変わる副作用を避ける。copy-on-first-edit。docs/design-notes.md参照)。 */
+static void app_enter_theme_edit(app_t *app) {
+    app->theme_edit_entry_id = app->cfg->theme_id;
+    app->theme_edit_entry_custom = app->cfg->theme_custom;
+    theme_resolve(app->theme_edit_entry_id, &app->theme_edit_entry_custom, &app->theme_edit_working);
+    app->theme_edit_dirty = (app->theme_edit_entry_id == THEME_CUSTOM);
+    app->theme_edit_slot = 0;
+    app->theme_edit_channel = 0;
+    app->theme_edit_scroll = 0;
+    app->screen = SCREEN_THEME_EDIT;
+}
+
+/* theme_edit_workingの変更をcfgへ反映する。初回だけtheme_idをCUSTOMへ
+ * 切り替える(以後はdirty済みなので毎回上書きするだけ)。app_apply_theme()
+ * が毎フレーム呼ばれているため、ここで書けば次フレームから即座に
+ * 画面全体へライブプレビューされる。 */
+static void theme_edit_commit(app_t *app) {
+    if (!app->theme_edit_dirty) {
+        app->cfg->theme_id = THEME_CUSTOM;
+        app->theme_edit_dirty = 1;
+    }
+    app->cfg->theme_custom = app->theme_edit_working;
+}
+
+static void theme_edit_adjust_channel(app_t *app, int direction) {
+    theme_color_t *c = &app->theme_edit_working.slot[app->theme_edit_slot];
+    unsigned char *const channels[3] = { &c->r, &c->g, &c->b };
+    unsigned char *ch = channels[app->theme_edit_channel];
+    *ch = (unsigned char)theme_channel_step(*ch, direction);
+    theme_edit_commit(app);
+}
+
+/* テーマエディタを抜けてSettingsへ戻る。config_pathがあればここで保存する
+ * (app_leave_settings()と同じ理由。編集作業は長くなりがちなので、退出まで
+ * 保存を待たせない)。 */
+static void app_leave_theme_edit(app_t *app) {
+    app->screen = SCREEN_SETTINGS;
+    app_save_config(app);
+}
+
+static void handle_theme_edit_input(app_t *app, input_action_t a) {
+    switch (a) {
+        /* 端で折り返す(P9と同じ規約)。THEME_SLOT_COUNTはコンパイル時定数。 */
+        case INPUT_UP:
+            app->theme_edit_slot = (app->theme_edit_slot + THEME_SLOT_COUNT - 1) % THEME_SLOT_COUNT;
+            break;
+        case INPUT_DOWN:
+            app->theme_edit_slot = (app->theme_edit_slot + 1) % THEME_SLOT_COUNT;
+            break;
+        case INPUT_L1:
+            app->theme_edit_channel = (app->theme_edit_channel + 2) % 3; /* -1 mod 3 */
+            break;
+        case INPUT_R1:
+            app->theme_edit_channel = (app->theme_edit_channel + 1) % 3;
+            break;
+        case INPUT_LEFT:
+            theme_edit_adjust_channel(app, -1);
+            break;
+        case INPUT_RIGHT:
+            theme_edit_adjust_channel(app, 1);
+            break;
+        case INPUT_X:
+            /* 入室時の状態(theme_id/theme_customとも)へ完全に戻す。パレット
+             * 1枚だけの機能なので、これがそのままundoとして機能する
+             * (確認ダイアログは無し)。theme_edit_entry_customは「実効色」
+             * ではなく生の値を保持しているので、入室時にtheme_idがCUSTOM
+             * でなかった場合でも、無関係な過去のcustomパレットを実効色で
+             * 上書きして消してしまうことがない。 */
+            app->cfg->theme_id = app->theme_edit_entry_id;
+            app->cfg->theme_custom = app->theme_edit_entry_custom;
+            theme_resolve(app->theme_edit_entry_id, &app->theme_edit_entry_custom, &app->theme_edit_working);
+            app->theme_edit_dirty = (app->theme_edit_entry_id == THEME_CUSTOM);
+            break;
+        case INPUT_B:
+        case INPUT_START:
+            app_leave_theme_edit(app);
+            break;
+        default:
+            break;
+    }
 }
 
 static void handle_settings_input(app_t *app, input_action_t a) {
@@ -908,8 +1036,16 @@ static void handle_settings_input(app_t *app, input_action_t a) {
             adjust_setting(app, -1);
             break;
         case INPUT_RIGHT:
-        case INPUT_A: /* 親指1本で右方向へ回せるようにする */
             adjust_setting(app, 1);
+            break;
+        case INPUT_A: /* 親指1本で右方向へ回せるようにする。ただし
+                       * SET_ACTION行(Edit theme)ではサブ画面を開く方に
+                       * 意味が変わる (Issue #27)。 */
+            if (SETTINGS[app->settings_sel].kind == SET_ACTION) {
+                app_enter_theme_edit(app);
+            } else {
+                adjust_setting(app, 1);
+            }
             break;
         case INPUT_X:
             app->settings_confirm_reset = 1;
@@ -934,6 +1070,7 @@ static void app_dispatch(app_t *app, input_action_t a) {
         case SCREEN_PLAYER:     handle_player_input(app, a); break;
         case SCREEN_TRACKLIST:  handle_tracklist_input(app, a); break;
         case SCREEN_SETTINGS:   handle_settings_input(app, a); break;
+        case SCREEN_THEME_EDIT: handle_theme_edit_input(app, a); break;
     }
 }
 
@@ -1343,6 +1480,10 @@ static const char *settings_item_text(void *ctx, int index) {
             }
             break;
         }
+        case SET_ACTION:
+            /* Issue #27: 値欄ではなく「開ける」ことを示す記号だけ出す。 */
+            snprintf(valbuf, sizeof(valbuf), ">");
+            break;
     }
     /* 等幅8x8フォントなので固定幅のラベル列が ui.c を触らずに揃う。 */
     snprintf(buf, sizeof(buf), "%-18s %s", s->label, valbuf);
@@ -1404,6 +1545,11 @@ static void draw_settings(app_t *app) {
     if (app->status[0] && SDL_GetTicks() < app->status_until) {
         ui_text_clipped(ui, ui->metrics.pad, footer_y, ui->screen_w - ui->metrics.pad * 2,
                          UI_TEXT_SMALL, err, app->status);
+    } else if (SETTINGS[app->settings_sel].kind == SET_ACTION) {
+        /* Issue #27: SET_ACTION行(Edit theme)ではLEFT/RIGHTが無反応なので
+         * "L/R:Adjust" は誤解を招く。選択行に応じてフッタを差し替える。 */
+        ui_text(ui, ui->metrics.pad, footer_y, UI_TEXT_SMALL, dim,
+                "A:Open  B/START:Back  X:Reset");
     } else {
         ui_text(ui, ui->metrics.pad, footer_y, UI_TEXT_SMALL, dim,
                 "L/R:Adjust  B/START:Back  X:Reset");
@@ -1412,6 +1558,84 @@ static void draw_settings(app_t *app) {
     if (app->settings_confirm_reset) {
         draw_settings_confirm_reset(app);
     }
+}
+
+/* Issue #27: 9スロットをラベル+R/G/B値+スウォッチで並べる。ui_draw_list()
+ * ではなく専用ループを使う理由: 1行の中で選択中チャンネルだけ色や記号を
+ * 変えたい・可視幅からスウォッチ分を除きたい、がui_list_item_fnの
+ * 「1行=1文字列+1色」という契約では表現できないため(docs/design-notes.md
+ * 参照)。ただし可視行数とスクロールクランプはui_draw_list()と同じ
+ * ui_list_visible_rows()/ui_list_clamp_scroll()を再利用し、挙動を揃える。 */
+static void draw_theme_edit(app_t *app) {
+    ui_t *ui = &app->ui;
+    const SDL_Color bg = ui_color(ui, THEME_ROLE_BG);
+    const SDL_Color panel = ui_color(ui, THEME_ROLE_PANEL);
+    const SDL_Color sel_bg = ui_color(ui, THEME_ROLE_SEL);
+
+    /* bg/fgそのものが編集対象になりうる画面なので、行の文字とフッタだけは
+     * theme_best_on(bg, 黒, 白)で必ず読める色を選ぶ(theme.h参照。
+     * ハイライト矩形の背景色(sel_bg)は通常どおりテーマ由来のままにする
+     * ―― 万一selがbgに溶けても、文字自体は読めるしB/Xで必ず抜けられる)。 */
+    theme_color_t safe_c = theme_best_on(theme_role_color(&ui->theme, THEME_ROLE_BG),
+                                          (theme_color_t){ 0, 0, 0 }, (theme_color_t){ 255, 255, 255 });
+    const SDL_Color safe_fg = { safe_c.r, safe_c.g, safe_c.b, 255 };
+
+    ui_clear(ui, bg);
+
+    ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
+    ui_fill_rect(ui, header, panel);
+    ui_text_clipped(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
+                     ui->screen_w - ui->metrics.pad * 2, UI_TEXT_BODY, safe_fg, "Edit theme");
+
+    ui_rect_t list = list_rect(app);
+    int visible = ui_list_visible_rows(ui, list);
+    ui_list_clamp_scroll(ui, list, THEME_SLOT_COUNT, app->theme_edit_slot, &app->theme_edit_scroll);
+
+    int row_h = ui->metrics.line_h;
+    int glyph = ui_glyph_size(ui, UI_TEXT_BODY);
+    int pad = ui->metrics.pad;
+    int swatch_w = glyph * 2;
+
+    for (int row = 0; row < visible; row++) {
+        int idx = app->theme_edit_scroll + row;
+        if (idx >= THEME_SLOT_COUNT) break;
+        int y = list.y + row * row_h;
+        theme_color_t c = app->theme_edit_working.slot[idx];
+
+        if (idx == app->theme_edit_slot) {
+            ui_rect_t hi = { list.x, y, list.w, row_h };
+            ui_fill_rect(ui, hi, sel_bg);
+        }
+
+        /* 選択中チャンネルの文字の前にだけ'>'を付けて示す(色そのものでの
+         * 強調はスウォッチが担う)。等幅フォントで揃うよう固定幅で書く。 */
+        int on_row = (idx == app->theme_edit_slot);
+        char rc = (on_row && app->theme_edit_channel == 0) ? '>' : ' ';
+        char gc = (on_row && app->theme_edit_channel == 1) ? '>' : ' ';
+        char bc = (on_row && app->theme_edit_channel == 2) ? '>' : ' ';
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%-11s%cR%3d %cG%3d %cB%3d",
+                 theme_slot_label((theme_slot_t)idx), rc, c.r, gc, c.g, bc, c.b);
+
+        int text_max_w = list.w - pad - swatch_w - pad;
+        ui_text_clipped(ui, list.x + pad, y + (row_h - glyph) / 2, text_max_w,
+                         UI_TEXT_BODY, safe_fg, buf);
+
+        /* スウォッチ: draw_battery()と同じ「矩形を塗って枠を描く」レシピ。
+         * 枠はtheme_best_on(スロット色, 黒, 白)で選ぶ(bgスロット自身の
+         * スウォッチが背景に溶けて見えなくなるのを防ぐ)。 */
+        SDL_Color swatch_fill = { c.r, c.g, c.b, 255 };
+        theme_color_t border_c = theme_best_on(c, (theme_color_t){ 0, 0, 0 }, (theme_color_t){ 255, 255, 255 });
+        SDL_Color swatch_border = { border_c.r, border_c.g, border_c.b, 255 };
+        ui_rect_t swatch = { list.x + list.w - pad - swatch_w, y + (row_h - glyph) / 2, swatch_w, glyph };
+        ui_fill_rect(ui, swatch, swatch_fill);
+        ui_draw_rect(ui, swatch, swatch_border);
+    }
+
+    ui_rect_t footer = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
+    ui_fill_rect(ui, footer, panel);
+    ui_text(ui, ui->metrics.pad, footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2,
+            UI_TEXT_SMALL, safe_fg, "L/R:Channel  <>:Adjust  X:Revert  B:Back");
 }
 
 /* ---- 起動時のBrowser開始位置 (F-13) ------------------------------------- */
@@ -1551,10 +1775,11 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         app_apply_theme(&app); /* Issue #27: 同上 */
 
         switch (app.screen) {
-            case SCREEN_BROWSER:   draw_browser(&app); break;
-            case SCREEN_PLAYER:    draw_player(&app); break;
-            case SCREEN_TRACKLIST: draw_tracklist(&app); break;
-            case SCREEN_SETTINGS:  draw_settings(&app); break;
+            case SCREEN_BROWSER:    draw_browser(&app); break;
+            case SCREEN_PLAYER:     draw_player(&app); break;
+            case SCREEN_TRACKLIST:  draw_tracklist(&app); break;
+            case SCREEN_SETTINGS:   draw_settings(&app); break;
+            case SCREEN_THEME_EDIT: draw_theme_edit(&app); break;
         }
         /* --screenshot(開発用): 毎フレーム上書きすることで、ループを抜けた
          * 時点のファイルが「最後に描かれた画面」になる。ui_present() の後だと

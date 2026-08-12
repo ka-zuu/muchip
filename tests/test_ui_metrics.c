@@ -8,9 +8,20 @@
  * 不変条件が、実機の 640x480 から極端な解像度まで崩れないことを検証する。
  */
 #include <stdio.h>
+#include <string.h>
 
 #include "ui.h"
 #include "test_util.h"
+
+/* SDL_Init不要な ui_t を作る(metricsだけ埋める。win/ren/atlasはNULLのまま
+ * でよい。ui_list_visible_rows()/ui_list_clamp_scroll()はmetricsしか
+ * 見ないため、ui_draw_list()やui_text()と違ってこれで安全にテストできる)。 */
+static ui_t make_ui(int screen_w, int screen_h) {
+    ui_t ui;
+    memset(&ui, 0, sizeof(ui));
+    ui_metrics_compute(screen_w, screen_h, &ui.metrics);
+    return ui;
+}
 
 /* muOS実機で想定される解像度に加え、極端な値・アスペクト比を含める。 */
 static const struct { int w, h; } RESOLUTIONS[] = {
@@ -168,6 +179,57 @@ static int test_marquee_multiple_glyph_sizes(void) {
     return 0;
 }
 
+/* Issue #27: ui_draw_list()から抽出したui_list_visible_rows()。
+ * テーマエディタ画面(独自の行描画ループを持つ)がこれを共有する。 */
+static int test_list_visible_rows(void) {
+    ui_t ui = make_ui(640, 480);
+
+    ui_rect_t r5 = { 0, 0, 640, ui.metrics.line_h * 5 };
+    CHECK(ui_list_visible_rows(&ui, r5) == 5);
+
+    ui_rect_t zero = { 0, 0, 640, 0 };
+    CHECK(ui_list_visible_rows(&ui, zero) == 1); /* r.h==0でも最低1 */
+
+    ui_rect_t partial = { 0, 0, 640, ui.metrics.line_h * 3 + ui.metrics.line_h / 2 };
+    CHECK(ui_list_visible_rows(&ui, partial) == 3); /* 端数は切り捨て */
+    return 0;
+}
+
+/* ui_draw_list()から抽出したui_list_clamp_scroll()。selectedが常に
+ * 可視範囲に収まるよう*scrollが調整されること(ui_draw_list()の
+ * 挙動そのもの)。 */
+static int test_list_clamp_scroll(void) {
+    ui_t ui = make_ui(640, 480);
+    ui_rect_t r = { 0, 0, 640, ui.metrics.line_h * 5 }; /* visible=5 */
+
+    /* count<=0ならscrollは常に0にリセットされる。 */
+    int scroll = 7;
+    ui_list_clamp_scroll(&ui, r, 0, 0, &scroll);
+    CHECK(scroll == 0);
+
+    /* selectedが可視範囲より下にあれば、selectedが見えるところまで
+     * scrollが進む。 */
+    scroll = 0;
+    ui_list_clamp_scroll(&ui, r, 20, 10, &scroll);
+    CHECK(scroll <= 10 && scroll + 5 > 10);
+
+    /* selectedが可視範囲より上にあれば、selectedの位置までscrollが戻る。 */
+    scroll = 15;
+    ui_list_clamp_scroll(&ui, r, 20, 2, &scroll);
+    CHECK(scroll == 2);
+
+    /* max_scroll(count-visible)を超えない。 */
+    scroll = 100;
+    ui_list_clamp_scroll(&ui, r, 20, 19, &scroll);
+    CHECK(scroll == 20 - 5);
+
+    /* countがvisible以下ならscrollは常に0。 */
+    scroll = 3;
+    ui_list_clamp_scroll(&ui, r, 3, 1, &scroll);
+    CHECK(scroll == 0);
+    return 0;
+}
+
 int main(void) {
     if (test_invariants()) return 1;
     if (test_baseline_640x480()) return 1;
@@ -178,6 +240,8 @@ int main(void) {
     if (test_marquee_holds_at_start()) return 1;
     if (test_marquee_advances_and_wraps()) return 1;
     if (test_marquee_multiple_glyph_sizes()) return 1;
+    if (test_list_visible_rows()) return 1;
+    if (test_list_clamp_scroll()) return 1;
 
     printf("test_ui_metrics: すべて成功\n");
     return 0;
