@@ -104,13 +104,15 @@ Settingsへ入らずにRepeat/Shuffleを変えられる。`S`+`←`/`→` でRep
 Settings 画面は Browser/Player どちらからも Start で開ける。**Length**
 （ながさチェンジ）・**Default length**・**Skip short**（短い曲の
 スキップ）・Repeat・**Shuffle**・Stereo depth・**EQ bass**・
-**EQ treble**・Fade・Show all files・Scroll title・Show battery
-の12項目を編集でき、抜けるときとアプリ終了時に `config.ini` へ自動保存
-する（`sample_rate` はデバイス再オープンが必要なため対象外）。`X`
-（キーボードは `A`）でこれら12項目を一括で既定値に戻す確認ダイアログを
-開ける（`last_path`やコントローラ設定など、Settings画面に出てこない値は
-対象外）。Default length は `config.ini` 上は秒のまま（既定180秒）だが、
-Settings画面では `3 min` のように分単位・1分刻みで編集する。
+**EQ treble**・Fade・Show all files・Scroll title・Show battery・
+**Theme**（カラーテーマ）の13項目を編集でき、抜けるときとアプリ終了時に
+`config.ini` へ自動保存する（`sample_rate` はデバイス再オープンが必要な
+ため対象外）。`X`（キーボードは `A`）でこれら13項目を一括で既定値に戻す
+確認ダイアログを開ける（`last_path`やコントローラ設定など、Settings画面
+に出てこない値は対象外。ただし `Theme` の `custom` パレットはSettings画面
+に出てこないが、`Theme` 自体のリセット対象なので一緒に既定へ戻る）。
+Default length は `config.ini` 上は秒のまま（既定180秒）だが、Settings
+画面では `3 min` のように分単位・1分刻みで編集する。
 
 **Length（ながさチェンジ）**: 既定は `auto`（今までどおり、m3uの曲長や
 実測値があればそれを使い、無い曲だけ Default length へフォールバック
@@ -153,6 +155,15 @@ Settings の `Show battery`（`config.ini` の `[ui] battery_show`）で
 残量5%）を付けて起動すると、`SDL_GetPowerInfo()` の代わりにその値を使う
 （`--screenshot`と同格の非公開の開発用オプション）。
 
+### カラーテーマ
+
+Settings の `Theme`（末尾）で5つのプリセット（`midnight`〈既定〉/
+`gameboy`/`mono`/`amber`/`synthwave`。実機の反射型/低輝度パネル向けに
+すべてダーク系）と `custom` を循環選択できる。`custom` のパレットは
+`config.ini` の `[theme]` セクション（9キー、`RRGGBB` の16進）を手編集
+すると反映される（Settings画面から9色を編集する `Edit theme` サブ画面は
+別Issueで実装予定）。
+
 実機の物理ボタンでの終了は **GUIDEボタン単体、または Start+Select 同時押し**。
 
 文字描画は外部フォントライブラリを使わず、内蔵のビットマップフォントを
@@ -177,9 +188,9 @@ Player 画面にはシークバーの下に簡易オシロスコープを表示�
 ## 設定ファイル (config.ini)
 
 SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`/
-`battery_show`/`last_path` と `[input] gamecontroller_db`/
-`controller_mapping` を持つ。`src/config.c` が読み書きする（外部のINI
-ライブラリは使わない）。
+`battery_show`/`theme`/`last_path`、`[theme]` の9キー（`custom` テーマの
+パレット）、`[input] gamecontroller_db`/`controller_mapping` を持つ。
+`src/config.c` が読み書きする（外部のINIライブラリは使わない）。
 
 - パス解決順: `--config PATH` > 環境変数 `MUCHIP_CONFIG` > `./config.ini`
 - 保存は正規形で書き直す（手書きしたコメントや並び順は保存されない。

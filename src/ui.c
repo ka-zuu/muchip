@@ -149,6 +149,10 @@ static int misaki_find(int cp) {
 
 int ui_init(ui_t *ui, int req_w, int req_h, int fullscreen) {
     memset(ui, 0, sizeof(*ui));
+    /* Issue #27: config読み込みより前(あるいはconfigを渡さないテスト)でも
+     * ui_color()が常に有効な色を返せるよう、既定でmidnightにしておく。
+     * app側は起動時にapp_apply_theme()で実効テーマへ上書きする。 */
+    theme_preset(THEME_MIDNIGHT, &ui->theme);
 
     if (SDL_WasInit(SDL_INIT_VIDEO) == 0) {
         if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
@@ -264,6 +268,16 @@ void ui_draw_rect(ui_t *ui, ui_rect_t r, SDL_Color color) {
     SDL_SetRenderDrawColor(ui->ren, color.r, color.g, color.b, color.a);
     SDL_Rect sr = { r.x, r.y, r.w, r.h };
     SDL_RenderDrawRect(ui->ren, &sr);
+}
+
+void ui_set_theme(ui_t *ui, const theme_t *theme) {
+    ui->theme = *theme;
+}
+
+SDL_Color ui_color(const ui_t *ui, theme_role_t role) {
+    theme_color_t c = theme_role_color(&ui->theme, role);
+    SDL_Color out = { c.r, c.g, c.b, 255 };
+    return out;
 }
 
 int ui_glyph_size_for(float scale, ui_text_size_t size) {
@@ -559,9 +573,16 @@ void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
         *scroll = 0;
     }
 
-    const SDL_Color sel_bg = { 60, 90, 160, 255 };
-    const SDL_Color mark_fg = { 255, 210, 90, 255 };
-    const SDL_Color normal_fg = { 225, 225, 225, 255 };
+    const SDL_Color sel_bg = ui_color(ui, THEME_ROLE_SEL);
+    const SDL_Color mark_fg = ui_color(ui, THEME_ROLE_MARK);
+    const SDL_Color normal_fg = ui_color(ui, THEME_ROLE_FG);
+    /* Issue #27: sel_bgはユーザー編集(custom)でfgと近い値にされうるので、
+     * 選択行の文字だけはコントラストの高い方をtheme_best_on()で選ぶ
+     * (theme.h参照。全画面の自動補正はしない)。 */
+    theme_color_t sel_fg_c = theme_best_on(theme_role_color(&ui->theme, THEME_ROLE_SEL),
+                                            theme_role_color(&ui->theme, THEME_ROLE_FG),
+                                            theme_role_color(&ui->theme, THEME_ROLE_BG));
+    const SDL_Color sel_fg = { sel_fg_c.r, sel_fg_c.g, sel_fg_c.b, 255 };
 
     for (int row = 0; row < visible; row++) {
         int idx = *scroll + row;
@@ -573,7 +594,7 @@ void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
             ui_fill_rect(ui, hi, sel_bg);
         }
 
-        SDL_Color fg = (idx == marked) ? mark_fg : normal_fg;
+        SDL_Color fg = (idx == marked) ? mark_fg : (idx == selected ? sel_fg : normal_fg);
         const char *text = item_fn(ctx, idx);
         ui_text_clipped(ui, r.x + ui->metrics.pad, y + (row_h - ui->metrics.glyph) / 2,
                          r.w - ui->metrics.pad * 2, UI_TEXT_BODY, fg, text);

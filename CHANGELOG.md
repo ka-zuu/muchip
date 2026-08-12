@@ -40,6 +40,17 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
   Browserのファイル名表示、および元ファイル自体のヘッダは対象外
   （詳細は `docs/design-notes.md`「文字コードとフォント」節）
 
+### カラーテーマ
+
+- 画面の配色を切り替えられるようにした（Issue #27）。Settings画面の
+  `Theme` で5つのプリセット（`midnight`〈既定。従来の配色そのもの〉/
+  `gameboy`/`mono`/`amber`/`synthwave`）と `custom` を循環選択できる。
+  `custom` のパレットは `config.ini` の `[theme]` セクション（9キー、
+  16進カラー）を手編集することで変更できる（Settings画面から9色を
+  編集する `Edit theme` サブ画面は別Issueで実装予定）。既存の
+  `config.ini` はそのまま読め、`theme` を指定しなければ既定
+  （`midnight`）になるため見た目は変わらない
+
 ## v1.6.0 - 2026-08-08
 
 ### アプリ名

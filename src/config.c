@@ -33,6 +33,8 @@ typedef enum {
     CFG_REPEAT,
     CFG_BATTERY_SHOW,
     CFG_STR,
+    CFG_THEME,  /* Issue #27: theme_id_t。名前<->enum変換はtheme.cへ委譲する */
+    CFG_COLOR,  /* Issue #27: theme_color_t 1個(RRGGBB 16進)。同上 */
 } config_kind_t;
 
 typedef struct {
@@ -64,7 +66,22 @@ static const config_key_t KEYS[] = {
     { "ui", "show_all_files", CFG_BOOL, offsetof(mugbs_config_t, show_all_files), 0, 0, 0 },
     { "ui", "title_scroll",  CFG_BOOL, offsetof(mugbs_config_t, title_scroll),   0, 0, 0 },
     { "ui", "battery_show",  CFG_BATTERY_SHOW, offsetof(mugbs_config_t, battery_show), 0, 0, 0 },
+    { "ui", "theme",          CFG_THEME, offsetof(mugbs_config_t, theme_id),      0, 0, 0 }, /* Issue #27 */
     { "ui", "last_path",      CFG_STR,  offsetof(mugbs_config_t, last_path),      0, 0, MUGBS_PATH_MAX },
+
+    /* Issue #27: theme=custom のときだけ使うパレット。キー名は
+     * theme.c の THEME_SLOT_KEYS[]・theme_slot_key() と一致させること
+     * (どちらも変更したら両方直す。共有ヘッダにするほどの重複ではない)。
+     * offsetof の配列添字指定(C11で許可)で theme_t 内の1色を直接指す。 */
+    { "theme", "bg",     CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_BG]),     0, 0, 0 },
+    { "theme", "panel",  CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_PANEL]),  0, 0, 0 },
+    { "theme", "fg",     CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_FG]),     0, 0, 0 },
+    { "theme", "dim",    CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_DIM]),    0, 0, 0 },
+    { "theme", "accent", CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_ACCENT]), 0, 0, 0 },
+    { "theme", "sel",    CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_SEL]),    0, 0, 0 },
+    { "theme", "mark",   CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_MARK]),   0, 0, 0 },
+    { "theme", "warn",   CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_WARN]),   0, 0, 0 },
+    { "theme", "ok",     CFG_COLOR, offsetof(mugbs_config_t, theme_custom.slot[THEME_OK]),     0, 0, 0 },
 
     { "input", "gamecontroller_db",  CFG_STR, offsetof(mugbs_config_t, gamecontroller_db),  0, 0, MUGBS_PATH_MAX },
     { "input", "controller_mapping", CFG_STR, offsetof(mugbs_config_t, controller_mapping), 0, 0, MUGBS_MAPPING_MAX },
@@ -81,6 +98,12 @@ static const char *section_comment(const char *section) {
                "; SDLの既定動作に任せる。\n"
                "; controller_mapping はDBに載っていない機種向けの追加マッピング1行\n"
                "; (SDL_GameControllerAddMapping形式)。GUIDは起動時のログに出る。\n";
+    }
+    if (strcmp(section, "theme") == 0) {
+        return "; Issue #27: [ui] theme が \"custom\" のときだけ、ここの9色が実効値になる\n"
+               "; (それ以外のプリセット選択中はここを書き換えても無視される)。値は\n"
+               "; RRGGBB の16進(先頭#無し)。Settings画面の \"Edit theme\" で編集した内容が\n"
+               "; ここへ保存される。\n";
     }
     return NULL;
 }
@@ -196,6 +219,10 @@ void config_set_defaults(mugbs_config_t *c) {
     c->show_all_files = 0;
     c->title_scroll = 1; /* Issue #8: 既定でスライドさせる */
     c->battery_show = BATTERY_SHOW_LOW; /* Issue #7: 既定は減ったときだけ表示 */
+    c->theme_id = THEME_MIDNIGHT; /* Issue #27 */
+    theme_preset(THEME_MIDNIGHT, &c->theme_custom); /* customへ切り替えた瞬間に
+        * 破綻した配色にならないよう、既定値もmidnightのコピーにしておく
+        * (Edit theme画面を一度も開かなくても妥当な色が入っている)。 */
     c->last_path[0] = 0;
 
     c->gamecontroller_db[0] = 0;
@@ -294,6 +321,27 @@ static void apply_value(mugbs_config_t *c, const config_key_t *k, const char *va
             }
             memcpy(dst, value, n);
             dst[n] = 0;
+            return;
+        }
+        case CFG_THEME: {
+            theme_id_t v;
+            if (theme_id_from_name(value, &v) != 0) {
+                LOG_WARN("%s:%d: %s の値が不正です: \"%s\" "
+                         "(midnight|gameboy|mono|amber|synthwave|custom)",
+                         where, lineno, k->key, value);
+                return;
+            }
+            *(theme_id_t *)field = v;
+            return;
+        }
+        case CFG_COLOR: {
+            theme_color_t v;
+            if (theme_color_parse(value, &v) != 0) {
+                LOG_WARN("%s:%d: %s の値が不正な16進カラーです: \"%s\" (例: 1a2b3c)",
+                         where, lineno, k->key, value);
+                return;
+            }
+            *(theme_color_t *)field = v;
             return;
         }
     }
@@ -454,6 +502,15 @@ static int write_config(const mugbs_config_t *c, FILE *f) {
             case CFG_STR: {
                 const char *s = (const char *)field;
                 fprintf(f, "%s = %s\n", k->key, str_value_is_safe(s, k->key) ? s : "");
+                break;
+            }
+            case CFG_THEME:
+                fprintf(f, "%s = %s\n", k->key, theme_id_name(*(const theme_id_t *)field));
+                break;
+            case CFG_COLOR: {
+                char buf[7];
+                theme_color_format(*(const theme_color_t *)field, buf);
+                fprintf(f, "%s = %s\n", k->key, buf);
                 break;
             }
         }

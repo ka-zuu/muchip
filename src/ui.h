@@ -23,6 +23,8 @@
 
 #include <SDL.h>
 
+#include "theme.h"
+
 typedef struct {
     int x, y, w, h;
 } ui_rect_t;
@@ -54,6 +56,10 @@ typedef struct {
                               * 進める(該当文字は '?' フォールバック)。 */
     int screen_w, screen_h;   /* レンダラの実際の出力サイズ(HiDPI考慮後) */
     ui_metrics_t metrics;
+    theme_t theme;   /* Issue #27: 現在の実効テーマ。ポインタでなく値で持つ
+                       * (27バイトでコピーコストは無視できる。ライフタイム管理が
+                       * 要らない)。ui_init()がmidnightで初期化するので、
+                       * config読み込み前でも常に有効な色を返す。 */
 } ui_t;
 
 /* ウィンドウ・レンダラ・フォントアトラスを初期化する。0で成功。
@@ -86,6 +92,14 @@ void ui_present(ui_t *ui);
 
 void ui_fill_rect(ui_t *ui, ui_rect_t r, SDL_Color color);
 void ui_draw_rect(ui_t *ui, ui_rect_t r, SDL_Color color); /* 枠線のみ */
+
+/* Issue #27: 現在の実効テーマを差し替える(値コピー)。呼び出し側
+ * (app_apply_theme())が毎フレーム呼ぶ想定なのでコストは軽く保ってある。 */
+void ui_set_theme(ui_t *ui, const theme_t *theme);
+
+/* ui->theme から role の色を引き、alpha=255 を付けて SDL_Color として返す。
+ * 色の計算そのものはtheme.c(SDL非依存)にあり、ここはSDL型への変換のみ。 */
+SDL_Color ui_color(const ui_t *ui, theme_role_t role);
 
 /* size 段階1つ分のグリフの正方形ピクセルサイズ。 */
 int ui_glyph_size(const ui_t *ui, ui_text_size_t size);
