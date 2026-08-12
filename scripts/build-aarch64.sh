@@ -47,7 +47,7 @@ die() {
 command -v docker >/dev/null 2>&1 ||
 	die "docker が見つかりません。" \
 		"クロスビルドは docker/Dockerfile のイメージ内で行います。" \
-		"詳細は README.md の「実機(muOS)向けクロスビルドについて」を参照してください。"
+		"詳細は docs/development.md の「実機(muOS)向けクロスビルド」を参照してください。"
 
 # sysroot/ には実機から抜いた libc/libSDL2 と SDL2 ヘッダが入る。これが無いと
 # docker build 自体が COPY で失敗するので、先に分かりやすく落とす。

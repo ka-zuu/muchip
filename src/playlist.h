@@ -96,7 +96,7 @@ void playlist_free(playlist_t *pl);
  * ここに集約する(元は player.c 内の static fade_start_ms())。
  *
  * gme_info_t.play_length は曲長不明時に -1 ではなく 150000(既定150秒)を
- * 返してしまう(PLAN.md 記載のSPECとの既知の乖離#1)。そのため
+ * 返してしまう(docs/design-notes.md「libgmeの使い方と既知の乖離」)。そのため
  * length(総曲長)とintro_length+loop_length(ループ構造)の有無で
  * 「本当に既知か」を判定する。
  * out_known に非NULLを渡すと、既知(非0)/不明(0)の別を返す。不明な場合の

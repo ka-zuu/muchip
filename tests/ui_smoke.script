@@ -76,6 +76,6 @@ X       # 再度開く
 A       # 確定。SETTINGS[]の項目が既定値に戻る(app_reset_settings)
 B       # Settings -> Player (ここでconfig_pathがあれば保存される)
 B       # Player -> Browser
-START   # Browser -> Settings (SPEC 6.3からの逸脱。PLAN.md参照)
+START   # Browser -> Settings (SPEC 6.3からの逸脱。docs/design-notes.md参照)
 B       # Settings -> Browser
 QUIT

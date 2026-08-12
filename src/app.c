@@ -450,7 +450,8 @@ static void handle_browser_input(app_t *app, input_action_t a) {
         case INPUT_START:
             /* SPEC 6.3 の表はStartをPlayer画面専用としているが、ファイルを
              * 開くまでSettingsへ入れないのは初回体験として悪いため、
-             * Browserからも開けるようにした(P6での逸脱。PLAN.md参照)。 */
+             * Browserからも開けるようにした
+             * (docs/design-notes.md「設定(config.ini)」に乖離として記録)。 */
             app->settings_return = SCREEN_BROWSER;
             app->settings_sel = 0;
             app->settings_scroll = 0;

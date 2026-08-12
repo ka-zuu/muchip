@@ -2,7 +2,8 @@
  *
  * SPEC 4.2 のモジュール構成表には無い追加モジュール。ui.c を描画
  * プリミティブに徹させ、Browser/Player/TrackList の画面遷移・入力処理・
- * レイアウトのロジックをここに集約する(PLAN.mdに乖離として記録)。
+ * レイアウトのロジックをここに集約する
+ * (docs/design-notes.md「UI・レイアウト」に乖離として記録)。
  */
 #ifndef MUGBS_APP_H
 #define MUGBS_APP_H

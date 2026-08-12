@@ -6,6 +6,7 @@
 	# upstream を指したままだと CI も第三者も submodule を解決できない
 	# (git clone --recurse-submodules が「fetched but did not contain <sha>」で
 	#  失敗する)。フォークは public なので GitHub Actions の既定の
-	# GITHUB_TOKEN だけで取得できる。 (PLAN.md「P13の設計判断」)
+	# GITHUB_TOKEN だけで取得できる。
+	# (docs/design-notes.md「libgmeフォーク運用」「開発基盤」)
 	url = https://github.com/ka-zuu/game-music-emu
 	branch = mugbs

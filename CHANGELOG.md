@@ -1,7 +1,8 @@
 # 変更履歴
 
-muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断・実機検証の詳細は
-[`PLAN.md`](./PLAN.md)、仕様は [`SPEC.md`](./SPEC.md) を参照。
+muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断の詳細は
+[`docs/design-notes.md`](./docs/design-notes.md)、仕様は
+[`SPEC.md`](./SPEC.md) を参照。
 
 ## 書式について
 
@@ -37,7 +38,7 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
   同梱して日本語を描画できるようにした。ASCIIの見た目・レイアウトは
   変わらない。バイナリサイズは `.muxapp` で約74KB増（292KB→366KB）。
   Browserのファイル名表示、および元ファイル自体のヘッダは対象外
-  （詳細は `PLAN.md`「Issue #29」節）
+  （詳細は `docs/design-notes.md`「文字コードとフォント」節）
 
 ## v1.6.0 - 2026-08-08
 
@@ -53,7 +54,7 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
   `/run/muos/storage/application/muGBS/` から `.../muChip/` へ変わるため、
   既存ユーザーは新パッケージを別アプリとしてインストールした上で、
   旧 `application/muGBS/` を手動で削除すること（設定の自動移行は行わない。
-  詳細は `PLAN.md`「Issue #13」節）
+  詳細は `docs/history/plan-archive.md`「Issue #13」節）
 
 ## v1.5.0 - 2026-08-08
 
