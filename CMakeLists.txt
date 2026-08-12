@@ -76,6 +76,7 @@ target_include_directories(miniz PUBLIC vendor/miniz)
 add_executable(muchip
     src/main.c
     src/config.c
+    src/theme.c
     src/battery.c
     src/eq.c
     src/audio.c

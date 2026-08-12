@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <stddef.h>
 
+#include "theme.h"
+
 #define MUGBS_PATH_MAX     1024
 #define MUGBS_MAPPING_MAX   512
 
@@ -61,6 +63,14 @@ typedef struct {
     int title_scroll; /* Issue #8: Player画面の曲名を横スクロール(マーキー)させるか。
                         * 既定on。offなら従来どおり ui_text_clipped() で "..." 省略。 */
     battery_show_t battery_show; /* Issue #7: 画面右上のバッテリー残量ゲージの表示条件。既定low */
+    theme_id_t theme_id; /* Issue #27: カラーテーマ。custom のとき theme_custom を使う */
+
+    /* [theme] Issue #27。theme_id==THEME_CUSTOM のときだけ実効値になる
+     * 9スロットのパレット(Edit theme画面が編集する)。それ以外のプリセット
+     * 選択中は無視される(theme_resolve()参照)。config.iniには常に9キー
+     * 書く(config.c冒頭コメントの「KEYS[]が読み書き両方を駆動する」
+     * 不変条件を保つため。docs/design-notes.md「カラーテーマ」参照)。 */
+    theme_t theme_custom;
 
     /* [input]
      * muOS実機の物理ボタンは、SDLのゲームコントローラDBが読み込まれていれば

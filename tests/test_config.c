@@ -46,6 +46,10 @@ static int test_defaults(void) {
     CHECK(c.show_all_files == 0);
     CHECK(c.title_scroll == 1);
     CHECK(c.battery_show == BATTERY_SHOW_LOW);
+    CHECK(c.theme_id == THEME_MIDNIGHT); /* Issue #27 */
+    theme_t midnight;
+    theme_preset(THEME_MIDNIGHT, &midnight);
+    CHECK(memcmp(&c.theme_custom, &midnight, sizeof(theme_t)) == 0);
     CHECK(c.last_path[0] == 0);
     CHECK(c.gamecontroller_db[0] == 0);
     CHECK(c.controller_mapping[0] == 0);
@@ -74,7 +78,19 @@ static int test_spec_sample(void) {
         "show_all_files = false\n"
         "title_scroll   = true   ; 曲名が見切れるとき横スクロールさせる (Issue #8)\n"
         "battery_show   = low    ; off | low | always (Issue #7)\n"
-        "last_path      = /mnt/mmc/MUSIC\n";
+        "theme          = midnight ; カラーテーマ (Issue #27)\n"
+        "last_path      = /mnt/mmc/MUSIC\n"
+        "\n"
+        "[theme]\n"
+        "bg = 12121a\n"
+        "panel = 1e1e2a\n"
+        "fg = e6e6e6\n"
+        "dim = 9696a0\n"
+        "accent = 78b4ff\n"
+        "sel = 3c5aa0\n"
+        "mark = ffd25a\n"
+        "warn = ff785a\n"
+        "ok = 78dc8c\n";
 
     mugbs_config_t c;
     config_set_defaults(&c);
@@ -88,6 +104,8 @@ static int test_spec_sample(void) {
     c.show_all_files = 1;
     c.title_scroll = 0;
     c.battery_show = BATTERY_SHOW_OFF;
+    c.theme_id = THEME_CUSTOM;
+    c.theme_custom.slot[THEME_BG] = (theme_color_t){ 1, 2, 3 };
 
     CHECK(load_str(&c, sample) == 0);
 
@@ -103,6 +121,10 @@ static int test_spec_sample(void) {
     CHECK(c.show_all_files == 0);
     CHECK(c.title_scroll == 1);
     CHECK(c.battery_show == BATTERY_SHOW_LOW);
+    CHECK(c.theme_id == THEME_MIDNIGHT);
+    theme_t midnight;
+    theme_preset(THEME_MIDNIGHT, &midnight);
+    CHECK(memcmp(&c.theme_custom, &midnight, sizeof(theme_t)) == 0);
     CHECK_STREQ(c.last_path, "/mnt/mmc/MUSIC");
     return 0;
 }
@@ -403,6 +425,57 @@ static int test_input_section(void) {
     return 0;
 }
 
+/* --- Issue #27: [ui] theme / [theme] ------------------------------------ */
+
+static int test_theme_keys(void) {
+    mugbs_config_t c;
+
+    /* [ui] theme の全6値・大小混在。 */
+    static const struct { const char *token; theme_id_t id; } names[] = {
+        { "midnight", THEME_MIDNIGHT }, { "GameBoy", THEME_GAMEBOY },
+        { "MONO", THEME_MONO },         { "amber", THEME_AMBER },
+        { "SynthWave", THEME_SYNTHWAVE }, { "custom", THEME_CUSTOM },
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[ui]\ntheme = %s\n", names[i].token);
+        config_set_defaults(&c);
+        CHECK(load_str(&c, buf) == 0);
+        CHECK(c.theme_id == names[i].id);
+    }
+
+    /* 不正な値は直前の値(=既定値)を維持する。 */
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[ui]\ntheme = sideways\n") == 0);
+    CHECK(c.theme_id == THEME_MIDNIGHT);
+
+    /* [theme] の1色。#付き・大文字・桁数違い・非16進。 */
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[theme]\nbg = 1a2b3c\n") == 0);
+    theme_color_t bg = c.theme_custom.slot[THEME_BG];
+    CHECK(bg.r == 0x1a && bg.g == 0x2b && bg.b == 0x3c);
+
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[theme]\nfg = #FF00AA\n") == 0);
+    theme_color_t fg = c.theme_custom.slot[THEME_FG];
+    CHECK(fg.r == 0xff && fg.g == 0x00 && fg.b == 0xaa);
+
+    /* 不正な値は既定値(=そのスロットの直前の値)を維持する。 */
+    config_set_defaults(&c);
+    theme_color_t before = c.theme_custom.slot[THEME_ACCENT];
+    CHECK(load_str(&c, "[theme]\naccent = zzzzzz\n") == 0);
+    theme_color_t after = c.theme_custom.slot[THEME_ACCENT];
+    CHECK(before.r == after.r && before.g == after.g && before.b == after.b);
+
+    config_set_defaults(&c);
+    before = c.theme_custom.slot[THEME_WARN];
+    CHECK(load_str(&c, "[theme]\nwarn = abc\n") == 0); /* 桁数不足 */
+    after = c.theme_custom.slot[THEME_WARN];
+    CHECK(before.r == after.r && before.g == after.g && before.b == after.b);
+
+    return 0;
+}
+
 /* --- ラウンドトリップ (save -> load で全フィールドが一致すること) -------- */
 
 static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
@@ -420,6 +493,11 @@ static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
     CHECK(a->show_all_files == b->show_all_files);
     CHECK(a->title_scroll == b->title_scroll);
     CHECK(a->battery_show == b->battery_show);
+    CHECK(a->theme_id == b->theme_id); /* Issue #27 */
+    /* theme_t.slot[] は unsigned char 3個の配列でpaddingを持たないので
+     * memcmpしてよい(他フィールドをmemcmpしない理由=構造体全体の
+     * paddingとは別の話。theme_color_tは3バイトぴったりで境界を跨がない)。 */
+    CHECK(memcmp(&a->theme_custom, &b->theme_custom, sizeof(theme_t)) == 0);
     CHECK_STREQ(a->last_path, b->last_path);
     CHECK_STREQ(a->gamecontroller_db, b->gamecontroller_db);
     CHECK_STREQ(a->controller_mapping, b->controller_mapping);
@@ -460,6 +538,19 @@ static int test_roundtrip_mutated(void) {
     c.show_all_files = 1;
     c.title_scroll = 0;
     c.battery_show = BATTERY_SHOW_ALWAYS;
+    c.theme_id = THEME_SYNTHWAVE;
+    /* Issue #27: 9スロット全部を既定(=synthwaveプリセット)とは違う値に
+     * ばらけさせる(theme=customでなくても[theme]は常に書く契約なので、
+     * このラウンドトリップ経路もCFG_COLOR全9キーを通す)。 */
+    c.theme_custom.slot[THEME_BG]     = (theme_color_t){ 1,   2,   3 };
+    c.theme_custom.slot[THEME_PANEL]  = (theme_color_t){ 4,   5,   6 };
+    c.theme_custom.slot[THEME_FG]     = (theme_color_t){ 7,   8,   9 };
+    c.theme_custom.slot[THEME_DIM]    = (theme_color_t){ 10,  11,  12 };
+    c.theme_custom.slot[THEME_ACCENT] = (theme_color_t){ 13,  14,  15 };
+    c.theme_custom.slot[THEME_SEL]    = (theme_color_t){ 16,  17,  18 };
+    c.theme_custom.slot[THEME_MARK]   = (theme_color_t){ 19,  20,  21 };
+    c.theme_custom.slot[THEME_WARN]   = (theme_color_t){ 22,  23,  24 };
+    c.theme_custom.slot[THEME_OK]     = (theme_color_t){ 25,  26,  27 };
     snprintf(c.last_path, sizeof(c.last_path), "/mnt/mmc/MUSIC/Game.gbs");
     snprintf(c.gamecontroller_db, sizeof(c.gamecontroller_db), "/usr/lib/gamecontrollerdb.txt");
     snprintf(c.controller_mapping, sizeof(c.controller_mapping),
@@ -493,6 +584,7 @@ int main(void) {
     if (test_length_override_sec()) return 1;
     if (test_skip_short_sec()) return 1;
     if (test_input_section()) return 1;
+    if (test_theme_keys()) return 1;
     if (test_roundtrip_defaults()) return 1;
     if (test_roundtrip_mutated()) return 1;
     if (test_save_failure()) return 1;

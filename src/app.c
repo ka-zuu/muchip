@@ -249,6 +249,18 @@ static void app_update_battery(app_t *app) {
     app->battery_visible = battery_should_show(app->cfg->battery_show, st, app->battery_low_pct);
 }
 
+/* Issue #27: 実効テーマ(プリセットまたはcustom)を確定してui_tへ反映する。
+ * app_update_scope()/app_update_battery()と同じく1フレームに1回、描画
+ * dispatchの直前で無条件に呼ぶ。Settings画面での変更・Edit theme画面での
+ * ライブプレビュー・起動直後の反映のすべてをこの1箇所に集約できる
+ * (呼び出し箇所ごとに反映を忘れる事故を構造的に防ぐ。コストはswitch1回+
+ * 27バイトコピーで無視できる)。 */
+static void app_apply_theme(app_t *app) {
+    theme_t t;
+    theme_resolve(app->cfg->theme_id, &app->cfg->theme_custom, &t);
+    ui_set_theme(&app->ui, &t);
+}
+
 static void set_status(app_t *app, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -669,6 +681,14 @@ static const char *const REPEAT_MODE_NAMES[] = { "none", "one", "all" };
  * 一致しなくてよい。setting_get/setting_set が扱うのは添字だけで、
  * 順序さえ config.h の battery_show_t と一致していればよい。 */
 static const char *const BATTERY_SHOW_NAMES[] = { "off", "when low", "always" };
+/* Issue #27。theme.cのTHEME_ID_LABELS[]と表示文字列は同じにしてある
+ * (config.iniのトークン(theme_id_name())は小文字・空白無しで別。
+ * BATTERY_SHOW_NAMESと同じ「表示名とトークンは字面が違ってよい」方針)。
+ * theme.cの配列を直接使わないのは、SETTINGS[]がstatic constの
+ * const char*const*配列を要求するため(関数呼び出しは初期化子にできない)。 */
+static const char *const THEME_NAMES[] = {
+    "Midnight", "Game Boy", "Mono", "Amber", "Synthwave", "Custom",
+};
 
 /* Default length/Fade が「次のトラックから反映される」ことを示す
  * フッタの "(next track)" 注記はP10で削除した(ユーザー判断。
@@ -692,6 +712,10 @@ static const setting_def_t SETTINGS[] = {
     { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0 },
     { "Scroll title",           SET_BOOL,   offsetof(mugbs_config_t, title_scroll),     0,     1,   1, NULL, 0 },
     { "Show battery",           SET_ENUM,   offsetof(mugbs_config_t, battery_show),     0,     2,   1, BATTERY_SHOW_NAMES, 3 },
+    /* Issue #27: 末尾に追加(既存のtests/ui_smoke.scriptの並びを崩さず
+     * 追記だけで済ませるため)。customも循環に含める
+     * (含めないとadjust_setting()の%nから抜けられない片道になる)。 */
+    { "Theme",                  SET_ENUM,   offsetof(mugbs_config_t, theme_id),         0,     5,   1, THEME_NAMES, 6 },
 };
 #define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
 
@@ -702,6 +726,7 @@ static const setting_def_t SETTINGS[] = {
  * 崩れたらビルドを止める。 */
 _Static_assert(sizeof(repeat_mode_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
 _Static_assert(sizeof(battery_show_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
+_Static_assert(sizeof(theme_id_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
 
 static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
     const void *field = (const char *)cfg + s->offset;
@@ -830,7 +855,11 @@ static void app_leave_settings(app_t *app) {
  * last_path/gamecontroller_db/controller_mapping/sample_rateはSettings画面に
  * 出てこない値なので対象外にする(ユーザーの操作履歴やコントローラ設定を
  * 巻き込んで消してしまわないため)。config_set_defaults()で作った一時値から
- * SETTINGS[]に載っている分だけコピーする。 */
+ * SETTINGS[]に載っている分だけコピーする。
+ * Issue #27: theme_customはSETTINGS[]に無い(Edit theme画面からしか
+ * 触れない)が、Themeそのものが「全項目を既定値に戻す」対象である以上、
+ * リセット後にThemeがcustomへ戻ったときだけ編集済みパレットが復活するのは
+ * 驚きになる。ここで明示的にmidnightのコピーへ戻す。 */
 static void app_reset_settings(app_t *app) {
     mugbs_config_t defaults;
     config_set_defaults(&defaults);
@@ -838,6 +867,7 @@ static void app_reset_settings(app_t *app) {
         const setting_def_t *s = &SETTINGS[i];
         setting_set(app->cfg, s, setting_get(&defaults, s));
     }
+    app->cfg->theme_custom = defaults.theme_custom;
     app_apply_settings(app);
     /* show_all_filesも既定値に戻り得るので、adjust_setting()と同様に
      * Browser/Player一覧を作り直す。頻繁な操作ではないので、実際に
@@ -957,9 +987,9 @@ static int draw_battery(app_t *app, int right_x, int row_y, int row_h) {
     int gauge_w = g * 2;
     if (gauge_w > ui->screen_w / 4) return 0;
 
-    const SDL_Color c_ok  = { 150, 150, 160, 255 }; /* 通常。他画面のdimと同色 */
-    const SDL_Color c_low = { 255, 120, 90, 255 };  /* 低下。他画面のerrと同色 */
-    const SDL_Color c_chg = { 120, 220, 140, 255 }; /* 充電中 */
+    const SDL_Color c_ok  = ui_color(ui, THEME_ROLE_DIM);  /* 通常。他画面のdimと同ロール */
+    const SDL_Color c_low = ui_color(ui, THEME_ROLE_WARN); /* 低下。他画面のwarnと同ロール */
+    const SDL_Color c_chg = ui_color(ui, THEME_ROLE_OK);   /* 充電中 */
     SDL_Color c = app->battery_status.charging ? c_chg
                  : battery_is_low(&app->battery_status, app->battery_low_pct) ? c_low
                  : c_ok;
@@ -980,11 +1010,11 @@ static int draw_battery(app_t *app, int right_x, int row_y, int row_h) {
 
 static void draw_browser(app_t *app) {
     ui_t *ui = &app->ui;
-    const SDL_Color bg = { 18, 18, 26, 255 };
-    const SDL_Color bar_bg = { 30, 30, 42, 255 };
-    const SDL_Color fg = { 230, 230, 230, 255 };
-    const SDL_Color dim = { 150, 150, 160, 255 };
-    const SDL_Color err = { 255, 120, 90, 255 };
+    const SDL_Color bg = ui_color(ui, THEME_ROLE_BG);
+    const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_PANEL);
+    const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
+    const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
+    const SDL_Color err = ui_color(ui, THEME_ROLE_WARN);
 
     ui_clear(ui, bg);
 
@@ -1013,11 +1043,11 @@ static void draw_browser(app_t *app) {
 
 static void draw_player(app_t *app) {
     ui_t *ui = &app->ui;
-    const SDL_Color bg = { 18, 18, 26, 255 };
-    const SDL_Color fg = { 230, 230, 230, 255 };
-    const SDL_Color dim = { 150, 150, 160, 255 };
-    const SDL_Color accent = { 120, 180, 255, 255 };
-    const SDL_Color err = { 255, 120, 90, 255 };
+    const SDL_Color bg = ui_color(ui, THEME_ROLE_BG);
+    const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
+    const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
+    const SDL_Color accent = ui_color(ui, THEME_ROLE_ACCENT);
+    const SDL_Color err = ui_color(ui, THEME_ROLE_WARN);
 
     ui_clear(ui, bg);
 
@@ -1094,7 +1124,7 @@ static void draw_player(app_t *app) {
      * (SPEC 6.2)。 */
     int time_glyph = ui_glyph_size(ui, UI_TEXT_BODY);
     int bar_h = ui->metrics.pad * 2;
-    const SDL_Color bar_bg = { 50, 50, 60, 255 };
+    const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_GUTTER);
 
     if (dur_ms <= 0) {
         /* Issue #15: 長さが無いのでバーは描かず、時間表示だけの1行にする。 */
@@ -1178,7 +1208,7 @@ static void draw_player(app_t *app) {
         /* ui_draw_list() は r.h==0 でも visible を1へ切り上げて1行描いてしまう
          * ので、行数0のときは絶対に呼ばないこと。 */
         ui_rect_t list = { x, y, content_w, list_rows * row_h };
-        const SDL_Color list_bg = { 26, 26, 36, 255 };
+        const SDL_Color list_bg = ui_color(ui, THEME_ROLE_RAISED);
         ui_fill_rect(ui, list, list_bg);
 
         int first = app->player_list_first_file;
@@ -1195,7 +1225,7 @@ static void draw_player(app_t *app) {
      * 近くまで広げた。 */
     if (wave_rows > 0) {
         ui_rect_t wave = { x, y, content_w, wave_rows * row_h };
-        const SDL_Color wave_bg = { 12, 12, 20, 255 };
+        const SDL_Color wave_bg = ui_color(ui, THEME_ROLE_SUNKEN);
         ui_draw_waveform(ui, wave, app->scope, app->scope_len, accent, wave_bg);
     }
 
@@ -1205,7 +1235,7 @@ static void draw_player(app_t *app) {
     if (app->status[0] && SDL_GetTicks() < app->status_until) {
         ui_rect_t msg_bg_rect = { x, (ui->screen_h - ui->metrics.footer_h) - row_h,
                                    content_w, row_h };
-        const SDL_Color msg_bg = { 30, 30, 42, 255 };
+        const SDL_Color msg_bg = ui_color(ui, THEME_ROLE_PANEL);
         ui_fill_rect(ui, msg_bg_rect, msg_bg);
         int msg_y = msg_bg_rect.y + (row_h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2;
         ui_text_clipped(ui, x, msg_y, content_w, UI_TEXT_BODY, err, app->status);
@@ -1222,10 +1252,10 @@ static void draw_player(app_t *app) {
 
 static void draw_tracklist(app_t *app) {
     ui_t *ui = &app->ui;
-    const SDL_Color bg = { 18, 18, 26, 255 };
-    const SDL_Color bar_bg = { 30, 30, 42, 255 };
-    const SDL_Color fg = { 230, 230, 230, 255 };
-    const SDL_Color dim = { 150, 150, 160, 255 };
+    const SDL_Color bg = ui_color(ui, THEME_ROLE_BG);
+    const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_PANEL);
+    const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
+    const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
 
     ui_clear(ui, bg);
 
@@ -1323,10 +1353,10 @@ static const char *settings_item_text(void *ctx, int index) {
  * リスト/フッタの上に重ねて描く。 */
 static void draw_settings_confirm_reset(app_t *app) {
     ui_t *ui = &app->ui;
-    const SDL_Color box_bg = { 40, 22, 22, 255 };
-    const SDL_Color box_border = { 220, 90, 90, 255 };
-    const SDL_Color fg = { 230, 230, 230, 255 };
-    const SDL_Color dim = { 150, 150, 160, 255 };
+    const SDL_Color box_bg = ui_color(ui, THEME_ROLE_BOX_BG);
+    const SDL_Color box_border = ui_color(ui, THEME_ROLE_WARN);
+    const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
+    const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
     const char *line1 = "Reset all settings to defaults?";
     const char *line2 = "A: Yes      B: No";
 
@@ -1349,11 +1379,11 @@ static void draw_settings_confirm_reset(app_t *app) {
 
 static void draw_settings(app_t *app) {
     ui_t *ui = &app->ui;
-    const SDL_Color bg = { 18, 18, 26, 255 };
-    const SDL_Color bar_bg = { 30, 30, 42, 255 };
-    const SDL_Color fg = { 230, 230, 230, 255 };
-    const SDL_Color dim = { 150, 150, 160, 255 };
-    const SDL_Color err = { 255, 120, 90, 255 };
+    const SDL_Color bg = ui_color(ui, THEME_ROLE_BG);
+    const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_PANEL);
+    const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
+    const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
+    const SDL_Color err = ui_color(ui, THEME_ROLE_WARN);
 
     ui_clear(ui, bg);
 
@@ -1518,6 +1548,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
 
         app_update_scope(&app); /* F-14: 1フレーム1回だけ取り込む */
         app_update_battery(&app); /* Issue #7: 同上。実際のsysfs読みは内部で2秒に1回 */
+        app_apply_theme(&app); /* Issue #27: 同上 */
 
         switch (app.screen) {
             case SCREEN_BROWSER:   draw_browser(&app); break;

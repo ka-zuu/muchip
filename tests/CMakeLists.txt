@@ -7,9 +7,15 @@ target_include_directories(test_m3u PRIVATE . ../src)
 add_test(NAME test_m3u COMMAND test_m3u)
 
 # P6で追加したconfig.c(INIパーサ)の単体テスト。SDLに依存しない純libc。
-add_executable(test_config test_config.c ../src/config.c)
+add_executable(test_config test_config.c ../src/config.c ../src/theme.c)
 target_include_directories(test_config PRIVATE . ../src)
 add_test(NAME test_config COMMAND test_config)
+
+# Issue #27で追加したtheme.c(カラーテーマの色計算・プリセット)の単体テスト。
+# config.c/eq.c と同じくSDLにもlibgmeにも依存しない純libc。
+add_executable(test_theme test_theme.c ../src/theme.c)
+target_include_directories(test_theme PRIVATE . ../src)
+add_test(NAME test_theme COMMAND test_theme)
 
 # Issue #29で追加したtext.c(メタデータ文字列のCP932->UTF-8正規化)の
 # 単体テスト。config.c/eq.c と同じくSDLにもlibgmeにも依存しない純libc。
@@ -18,7 +24,7 @@ target_include_directories(test_text PRIVATE . ../src)
 add_test(NAME test_text COMMAND test_text)
 
 add_executable(test_playlist test_playlist.c ../src/playlist.c ../src/m3u.c ../src/archive.c
-                              ../src/config.c ../src/text.c)
+                              ../src/config.c ../src/theme.c ../src/text.c)
 target_include_directories(test_playlist PRIVATE . ../src)
 target_link_libraries(test_playlist PRIVATE gme_static miniz)
 set_target_properties(test_playlist PROPERTIES LINKER_LANGUAGE CXX)
@@ -69,7 +75,7 @@ add_test(NAME test_browser COMMAND test_browser)
 # 一度も呼ばない。SDL2の解決方法はルートCMakeLists.txtのmuchip本体と同じ
 # (find_package はそちらで既に呼ばれておりTARGET SDL2::SDL2/SDL2_LIBRARIES は
 # このサブディレクトリからも見える)。
-add_executable(test_ui_metrics test_ui_metrics.c ../src/ui.c)
+add_executable(test_ui_metrics test_ui_metrics.c ../src/ui.c ../src/theme.c)
 target_include_directories(test_ui_metrics PRIVATE . ../src)
 if(TARGET SDL2::SDL2)
     target_link_libraries(test_ui_metrics PRIVATE SDL2::SDL2)
@@ -83,7 +89,7 @@ add_test(NAME test_ui_metrics COMMAND test_ui_metrics)
 # 判定用の純関数(battery_should_poll/battery_is_low/battery_should_show/
 # battery_low_threshold_from_env)はSDL_Initを一度も呼ばない
 # (test_ui_metricsと同じ方針)。battery.cはconfig.h(battery_show_t)に依存する。
-add_executable(test_battery test_battery.c ../src/battery.c ../src/config.c)
+add_executable(test_battery test_battery.c ../src/battery.c ../src/config.c ../src/theme.c)
 target_include_directories(test_battery PRIVATE . ../src)
 if(TARGET SDL2::SDL2)
     target_link_libraries(test_battery PRIVATE SDL2::SDL2)

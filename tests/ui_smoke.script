@@ -70,6 +70,16 @@ RIGHT   # title_scroll を切り替える
 DOWN    # Scroll title -> Show battery (Issue #7)
 RIGHT   # off -> low
 RIGHT   # low -> always (ENUMの循環を1周ぶん踏む)
+DOWN    # Show battery -> Theme (Issue #27。SETTINGS[]の末尾)
+RIGHT   # midnight -> gameboy (app_apply_theme()経由でui->themeが変わる
+        # 経路を、再生中(SELECTで再開済み)の状態で通す)
+RIGHT   # gameboy -> mono
+RIGHT   # mono -> amber
+RIGHT   # amber -> synthwave
+RIGHT   # synthwave -> custom (config_set_defaults()時点のtheme_custom
+        # =midnightのコピーが実効になる経路を通す)
+RIGHT   # custom -> midnight (6値を1周してENUMの循環がcustomを跨いで
+        # 戻ることを確認する)
 X       # リセット確認ダイアログを開く(P10)
 B       # キャンセル(変更はそのまま残る)
 X       # 再度開く
