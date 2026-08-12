@@ -1,8 +1,8 @@
 # SPEC.md — muChip: muOS向け chiptune (GBS/NSF) プレーヤー
 
-> このドキュメントは Claude Code に実装を依頼するための仕様書です。
-> 実装者（Claude Code）は、まず本仕様を読んだ上で `PLAN.md` を作成し、
-> フェーズ単位で実装・ビルド・コミットしてください。
+> このドキュメントは muChip の仕様書です。実装は完了済み（v1.0.0〜）。
+> 「なぜこの仕様になっているか」は [`docs/design-notes.md`](./docs/design-notes.md)、
+> 作業規約は [`CLAUDE.md`](./CLAUDE.md) を参照してください。
 
 ---
 
@@ -33,7 +33,7 @@
   正式サポートする（F-27, Issue #2）。GBS 用に組んだ「単体ファイル＋同名
   サイドカーm3u／m3u直接／zip」の枠組みがそのまま形式非依存で動くこと、
   および libgme の NSF/NSFE デコーダが元々静的リンクされていたことから、
-  対応コストが低い（詳細は PLAN.md「Issue #2」参照）
+  対応コストが低い（詳細は `docs/design-notes.md`「libgmeフォーク運用」参照）
 - ネットワーク機能、オンラインDB連携
 - 楽曲のエンコード／エクスポート
 
@@ -282,7 +282,7 @@ Game.gbs::GBS,2,Battle,1:45
 > `vendor/game-music-emu/gme/Gbs_Emu.cpp` の **GBS形式(`gme_gbs_type_`)にのみ**
 > 適用して修正した(GBSヘッダの`first_track`フィールドはlibgme内で一切
 > 参照されておらず、native表現が0始まりであることとも整合する)。詳細は
-> PLAN.mdの「P12」を参照。
+> `docs/design-notes.md`「libgmeフォーク運用」を参照。
 >
 > 一方、実機で使う **NSF用**m3u・NSFファイル自体のヘッダ(`first_song`)は
 > いずれも10進のsong番号が1始まり(`NSF,1,...`が1曲目)であり、これは
@@ -418,9 +418,10 @@ UTF-8で統一しているため、`playlist.c` が上記フィールドを複�
 > （Issue #8）の可用幅がゲージ分だけ縮む。読み取れない値（デスクトップ等
 > バッテリーの無い環境）は常に非表示。
 
-> P8で実装したチャンネルミュート(F-10)はユーザー判断により削除済み。
+> チャンネルミュート(F-10)はユーザー判断により削除済み。
 > 音量調整も同様の理由（本体ハードウェア音量と非連動で紛らわしい）で
-> 廃止し、常に最大出力で `gme_play()` する（P9。詳細はPLAN.md）。
+> 廃止し、常に最大出力で `gme_play()` する（詳細は
+> `docs/design-notes.md`「削除した機能とその理由」）。
 
 ### 6.2 レイアウト規則（解像度非依存）
 
@@ -516,8 +517,8 @@ battery_show   = low    ; off | low | always。バッテリー残量ゲージ (F
 last_path      = /mnt/mmc/MUSIC
 ```
 
-> 音量調整機能はP9で廃止した（常に最大出力。PLAN.md参照）ため
-> `[audio] volume` キーは存在しない。チャンネルミュート(F-10)はP8で
+> 音量調整機能は廃止した（常に最大出力。`docs/design-notes.md`参照）ため
+> `[audio] volume` キーは存在しない。チャンネルミュート(F-10)も
 > 実装後に削除したため `[voices]` セクションも存在しない。
 
 ---
@@ -750,7 +751,7 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 - ヘッドレスUIスモークは `SDL_VIDEODRIVER=dummy` / `SDL_AUDIODRIVER=dummy`
   で走るのでランナーに X も音声デバイスも要らない
 - **CI でクロスビルドはしない**（9.5 参照）。実機検証は人手で行い、結果は
-  `PLAN.md` に記録する
+  PR 本文に記録する
 - シェルスクリプトの静的解析は専用ジョブを作らず `tests/test_package.sh`
   に集約する（検査対象リストを二重管理しないため）
 - `-fno-sanitize-recover=all` は必須。これが無いと UBSan は診断を出すだけで
@@ -760,78 +761,21 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 
 ## 11. 実装フェーズ
 
-Claude Code は以下の順で実装し、各フェーズ末尾でビルドが通ることを確認してからコミットする。
-
-| Phase | 内容 | 完了条件 |
-|---|---|---|
-| **P0** | リポジトリ初期化、CMake、libgme submodule、Docker | ホスト側で空ウィンドウが出る |
-| **P1** | libgme連携＋SDL2音声出力 | CLI引数で渡した `.gbs` の1トラック目が鳴る |
-| **P2** | 再生状態機械、トラック送り、フェード | 全トラックを自動で順に再生できる（T-01, T-08, T-09） |
-| **P3** | m3u対応（`gme_load_m3u` + 自前プリパーサ） | T-02〜T-05 が通る |
-| **P4** | zip対応（miniz） | T-06, T-07 が通る |
-| **P5** | UI（Browser / Player / TrackList） | ホスト上でキーボード操作で完結する |
-| **P6** | 入力抽象化、解像度非依存化、設定ファイル | 複数解像度でレイアウトが破綻しない |
-| **P7** | クロスコンパイル、muxappパッケージング | 実機で起動・再生できる |
-| **P8** | ビジュアライザ、EQ（チャンネルミュートは実装後ユーザー判断で削除） | SHOULD/NICE要件 |
-| **P9** | 実機フィードバック対応（zip複数m3uマージ、音量調整の廃止、カーソル折り返し、Player入力再割当、Playerへのファイル一覧追加） | T-14が通り、各項目が実機で確認できる |
-| **P10** | 実機フィードバック対応・第2弾（シャッフル再生 F-25 ほか） | 各項目が実機で確認できる |
-| **P11** | Player画面から Repeat/Shuffle を直接変える Yコンボ | 実機で物理ボタンだけで切り替えられる |
-| **P12** | m3uの10進トラック番号が0始まりであることに対応 | zophar.net 配布パックで宣言通りのトラックが鳴る |
-| **P13** | GitHub の PR 運用・CI・リリース自動化 | PR で CI が回り、`scripts/release.sh` でタグと Release が作れる |
+実装は完了済み（P0〜P13、v1.0.0〜v1.7.0）。当時のフェーズ計画・進捗は
+[`docs/history/plan-archive.md`](./docs/history/plan-archive.md)（凍結・
+参考資料）を参照。
 
 ---
 
 ## 12. コーディング規約
 
-- 言語: **C11**（libgme連携部のみ C++ でも可だが、極力Cで完結させる）
-- 命名: `snake_case`。モジュール名をプレフィックスに（`player_next_track()`）
-- エラー処理: 戻り値でエラーを返す。`assert` に頼らない
-- **メモリ**: 全ての `malloc` に対応する `free` を明示。zip展開バッファの所有権を
-  コメントで明記する
-- **絶対パスのハードコード禁止**（`/mnt/mmc` 等）
-- ログ: `LOG_INFO` / `LOG_WARN` / `LOG_ERR` マクロを用意し、stderr に出す
-- 依存追加は事前に相談すること（バイナリサイズと実機の glibc 互換性に直結するため）。
-  ただし **shellcheck のような開発ツールはこの制限の対象外**（成果物に入らないため）。
-  無い環境でもテストは通ること
-- シェルスクリプトは **POSIX sh**。`shellcheck -s sh -S warning` が通ること
-  （`mux_launch.sh` は実機の busybox ash で動くので bashism = SC3xxx は致命的）
-- シェルスクリプトを追加したら `tests/test_package.sh` の `SHELL_SCRIPTS` に
-  必ず加える（`sh -n` と shellcheck の対象がそこで一元管理されている）
-- **main へは直接コミット・push しない。** ブランチを切って PR を出す
-  （P13。`git config core.hooksPath .githooks` で `.githooks/pre-push` を
-  有効にしておくこと）
+[`CLAUDE.md`](./CLAUDE.md)「コーディング規約」節へ移設した。
 
 ---
 
 ## 13. 既知の落とし穴チェックリスト
 
-実装完了前に以下を確認すること。
-
-- [ ] `gme_play()` の count はバイト数でもフレーム数でもなく **int16の個数**（偶数）
-- [ ] `-static-libstdc++ -static-libgcc` を付けたか
-- [ ] SDL2 は**実機から抜いたもの**に対してリンクしたか
-- [ ] `emu` へのアクセスを `SDL_LockAudioDevice()` で保護したか
-- [ ] `gme_open_data()` に渡したバッファを `gme_delete()` 前に free していないか
-- [ ] `gme_free_info()` を呼んでいるか（`gme_track_info` はヒープを返す）
-- [ ] `mux_launch.sh` の `func.sh` 読み込みを消していないか
-- [ ] `/mnt/mmc` をハードコードしていないか
-- [ ] 実行ファイルに実行権限が付いた状態で zip 化しているか
-- [ ] 画面座標を 640x480 決め打ちしていないか
-- [ ] ボタン番号を決め打ちしていないか
-- [ ] zip内に `.m3u` が複数ある場合、最初の1つだけでなく**全て**処理して
-      マージしたか（曲ごとに1ファイルの配布形式が実在する。5.3参照）
-- [ ] submodule の gitlink が**公開リモートから取得できる**コミットを
-      指しているか（P13 で実際に壊れていた。upstream に無い独自パッチを
-      当てたまま upstream の url を指していると、開発機以外では
-      `git clone --recurse-submodules` が失敗し CI が一切動かない。
-      `scripts/release.sh` がリリース前にこれを検査する）
-- [ ] UBSan を掛けたビルドで `-fno-sanitize-recover=all` を付けたか
-      （既定では診断を出しても終了コードが 0 のままで、テストが偽の緑になる）
-- [ ] シェルスクリプトを追加したとき `tests/test_package.sh` の
-      `SHELL_SCRIPTS` に加えたか
-- [ ] `SDL_GetPowerInfo()` を毎フレーム呼んでいないか（Linuxバックエンドは
-      `/sys/class/power_supply` を毎回読み直すため、`battery_poll()` の
-      throttle（`BATTERY_POLL_INTERVAL_MS`）を経由すること。F-26, Issue #7）
+[`CLAUDE.md`](./CLAUDE.md)「既知の落とし穴チェックリスト」節へ移設した。
 
 ### public 化するときの TODO
 
