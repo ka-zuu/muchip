@@ -2580,6 +2580,101 @@ Settings画面で`Length`を`auto`→`5 min`に変えた直後の表示が`5 min
 削除し、`.muxapp`は他バージョンと同様`/mnt/mmc/ARCHIVE/`に残した
 （インストール済みバイナリ`1.4.0`自体は意図的にそのまま残置）。
 
+## Issue #24: ながさチェンジが指定時間より短い曲を延長してしまう問題
+
+Issue本文・コメントは空でタイトルのみ（「ながさチェンジのとき、指定時間
+よりも短い曲のとき、ながさチェンジで指定した時間が表示される」）。着手前に
+コードを読んで原因を特定した。
+
+### 原因
+
+Issue #19で実装した`playlist_resolve_length_ms()`は、`length_override_sec`が
+非0なら**既知/不明を問わず全トラックを強制する**設計だった(F-28)。これは
+「ループするBGMを長く聴きたい」という当初の想定(実機検証も
+`Tetris (World) (Rev 1) [BGM].gbs`のループ曲で行った)では正しいが、
+**ループ構造を持たない曲**(m3uの曲長欄はあるが実際には途中で終わる曲)にも
+同じ強制をかけていたため、表示上の合計時間と実際に鳴る長さが食い違って
+いた。実際の音は自然に終わり、libgmeの無音自動終了
+(`vendor/game-music-emu/gme/Music_Emu.cpp:22`の`silence_max = 6`秒。
+フェードとは独立した仕組み。既にPLAN.md 2358行目で存在は把握していたが、
+F-28実装時にこのケースへの影響を見落としていた)が働いて数秒後に次へ
+進むため、ユーザーからは「指定時間が表示される(のに実際はもっと短い)」と
+見える。
+
+### 検討した代替案とその却下理由
+
+当初「ループ情報が無い曲はながさチェンジの対象外にする」という単純な案を
+検討したが、libgmeの各エミュレータ実装(`vendor/game-music-emu/gme/`)を
+調べたところ却下した。`intro_length`/`loop_length`が設定されるのは
+GYM/VGM/SPC(フォーマット自体がループ情報を持つ)と拡張m3uのループ欄
+だけで、**GBS/NSFのヘッダにはループ情報も曲長も一切無い**
+(`Gbs_Emu.cpp:64-68`/`Nsf_Emu.cpp:112-116`はgame/author/copyrightしか
+コピーしない)。ループ情報を唯一のゲートにすると、m3uの無い素のGBS/NSF
+(実機検証で使ったTetrisがまさにこのケース)全部でながさチェンジが無効化
+され、F-28が実質死んでしまう。しかもこのケースは今も正しく動いている
+(エミュレータ上で本当に鳴り続けるので、延長しても問題ない)。
+
+### 採用した方式(3区分)
+
+ユーザー確認済みの決定事項:
+
+| トラックの種類 | 判定 | 理由 |
+|---|---|---|
+| ループ構造あり(`loop_length > 0`) | 上書きを適用(延長) | 鳴り続けるので指定時間まで確実に持つ |
+| 曲長不明(`length_known == 0`) | 上書きを適用(延長、現状維持) | 判断材料が無い。素のGBS/NSFの現行動作を保つ |
+| 曲長既知かつ非ループ | `min(上書き値, natural_ms)` | 実際に途中で終わる曲。延長はしないが短縮方向は従来どおり効く |
+
+ループ判定には`playlist_natural_length_ms()`が使う
+`intro_length > 0 && loop_length > 0`ではなく、新設した
+`playlist_track_loops()`で`loop_length > 0`単独を使う。前者は狭すぎて、
+m3uの`,-`(全体がループ。`intro`は`-1`のまま)や`,0:30`(先頭からループ。
+`intro`は`0`)のような実在するループ表現を取りこぼすため
+(`vendor/game-music-emu/gme/M3u_Playlist.cpp:296-317`)。
+`playlist_natural_length_ms()`自体(乖離#1判定)は変更していない。
+
+`playlist_entry_t`に`int loops`を追加し、スキャン時
+(`playlist.c`の`pl_scan_source()`)に`playlist_track_loops(info)`で
+確定させ、`playlist_resolve_length_ms()`へ引数として渡す。
+`playlist_effective_length_ms()`(player.cの`start_track_at()`が使う
+薄いラッパ)は内部で`gme_info_t`から`playlist_track_loops()`を呼ぶので、
+呼び出し元(player.c)の変更は不要。
+
+Issue #21(短い曲のスキップ)への影響は無い: `playlist_is_short()`は
+`natural_ms`のみを見る設計で、もともと「上書きの影響を受けない」ことが
+仕様(F-29)だったため。
+
+### 検証
+
+- ホスト: 通常ビルド + ASan/UBSanビルドの両方で`ctest`が全件パス。
+  `tests/test_playlist.c`に新規テスト2件
+  (`test_length_override_extends_looping_track`:
+  m3uループ欄付き曲が延長されること、
+  `test_length_override_applies_to_unknown_length`: sidecar m3u無しの
+  素のGBSが従来どおり延長されること=回帰防止)を追加し、既存の
+  `test_length_override_applies_and_reverts`(ループ欄の無いm3u曲長
+  フィクスチャ)は旧(バグ)挙動を固定していたアサーションを実測値基準へ
+  修正した。
+- `--cli`ログでの機械的確認: `tests/fixtures/make_gbs.py`で生成した合成GBS
+  3種(m3uでループ欄を付けた曲/ループ欄無しで3秒とm3u指定した曲/m3u無し
+  の曲)を`--length`で上書きして実行し、`トラック終端検出`が出るまでの
+  実時間を計測した。ループ曲と曲長不明の曲は指定値どおり(`--length 5
+  --fade-ms 1000`で約6.5秒)、ループしない既知曲(m3uで`0:03`指定、
+  `--length 30`)は実測値でキャップされ約4.5秒(30秒まで待たない)で
+  終端検出されることを確認した。
+- 表示の目視確認: `--window 640x480 --ui-script`+`--screenshot`で、
+  キャップされたトラックの合計時間が`0:04`(実測3秒+既定フェード1秒)と
+  表示され、`--length 30`の値に引きずられていないことを確認した。
+
+### スコープ外(Issue #28)
+
+同時に報告された Issue #28(GBSの曲長不明フォールバックでも同様の表示
+乖離が起きる)は、ユーザー判断で今回は見送った。GBS/NSFは曲長を持てる
+メタデータが無いため事前の判定材料が無く、無音検出できた実測値を
+セッション中も記憶しない方針だと、実効的な改善がTrackList表示程度に
+限られる(今鳴っている曲の表示グリッチ自体は既に無い。
+`player_is_track_ended()`→`player_next_track()`は`draw_*()`より前の
+同一フレームで行われるため)ためIssueとしてはクローズせずに残す。
+
 ## Issue #22: 既定ブランチを master から main へ
 
 Issue本文は `git branch -m master main` の一行のみ。着手前に調べた前提:

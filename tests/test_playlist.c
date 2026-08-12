@@ -429,34 +429,48 @@ static int test_zip_single_m3u(void) {
     return 0;
 }
 
-/* Issue #19: playlist_resolve_length_ms() は length_override_sec のみを
- * 見る純関数。SDLもlibgmeの初期化も要らない。 */
+/* Issue #19/#24: playlist_resolve_length_ms() は length_override_sec の
+ * みを見る純関数(loopsも引数で渡すだけ)。SDLもlibgmeの初期化も要らない。 */
 static int test_resolve_length_ms(void) {
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
     cfg.default_length_sec = 180;
 
-    /* auto(0): 既知ならnatural_msをそのまま、不明ならdefault_length_secへ */
+    /* auto(0): 既知ならnatural_msをそのまま、不明ならdefault_length_secへ
+     * (loopsの値には左右されない) */
     cfg.length_override_sec = 0;
-    CHECK(playlist_resolve_length_ms(32000, 1, &cfg) == 32000);
-    CHECK(playlist_resolve_length_ms(0, 0, &cfg) == 180000);
+    CHECK(playlist_resolve_length_ms(32000, 1, 0, &cfg) == 32000);
+    CHECK(playlist_resolve_length_ms(32000, 1, 1, &cfg) == 32000);
+    CHECK(playlist_resolve_length_ms(0, 0, 0, &cfg) == 180000);
 
-    /* 上書き中(900秒=15分): 既知/不明を問わず強制される (F-28) */
+    /* 上書き中(900秒=15分):
+     * - ループする曲(loops!=0)は既知/不明を問わず強制される (F-28) */
     cfg.length_override_sec = 900;
-    CHECK(playlist_resolve_length_ms(32000, 1, &cfg) == 900000);
-    CHECK(playlist_resolve_length_ms(0, 0, &cfg) == 900000);
+    CHECK(playlist_resolve_length_ms(32000, 1, 1, &cfg) == 900000);
+    CHECK(playlist_resolve_length_ms(0, 0, 1, &cfg) == 900000);
+    /* - 曲長不明(known=0)は loops=0 でも強制される(判断材料が無いため。
+     *   素のGBS/NSFの現行動作を保つ) */
+    CHECK(playlist_resolve_length_ms(0, 0, 0, &cfg) == 900000);
+    /* - Issue #24: 曲長既知(known=1)かつループしない(loops=0)曲は、
+     *   延長されず min(override, natural_ms) にキャップされる */
+    CHECK(playlist_resolve_length_ms(32000, 1, 0, &cfg) == 32000);
+    /* - 同条件でも、natural_msの方が上書き値より長ければ短縮方向は効く
+     *   (このケースは60分相当のnatural_msなので900秒側が勝つ) */
+    CHECK(playlist_resolve_length_ms(3600000, 1, 0, &cfg) == 900000);
 
     /* autoへ戻すと、渡したnatural_msがそのまま復元される
      * (=呼び出し側がnatural_msを保持しておけば情報が失われない) */
     cfg.length_override_sec = 0;
-    CHECK(playlist_resolve_length_ms(32000, 1, &cfg) == 32000);
+    CHECK(playlist_resolve_length_ms(32000, 1, 0, &cfg) == 32000);
 
     return 0;
 }
 
-/* Issue #19: playlist_open()でスキャンした直後は上書きが効いていること、
- * playlist_apply_config()でauto(0)へ戻すとm3u由来の実測値
- * (natural_ms)へ復元されること(=情報が失われていないこと)を確認する。
+/* Issue #19/#24: これらのトラックはm3uの曲長欄だけを持ちループ欄が無い
+ * (=loops==0)、つまり実際には途中で終わる曲。ながさチェンジ中でも
+ * duration_msがnatural_msを超えて延長されないこと(Issue #24)、
+ * playlist_apply_config()でauto(0)へ戻しても引き続きnatural_msのまま
+ * であること(=情報が失われていないこと)を確認する。
  * test_sidecar_m3u()と同じ合成フィクスチャ・m3u構文(拡張M3Uの曲長
  * フィールド)を使う。 */
 static int test_length_override_applies_and_reverts(void) {
@@ -475,10 +489,14 @@ static int test_length_override_applies_and_reverts(void) {
     CHECK(playlist_open(gbs, &cfg, &pl) == 0);
     CHECK(pl->entry_count == 3);
 
-    /* スキャン時点から、m3uの曲長ではなく上書き値が使われていること。 */
+    /* Issue #24: ループしない曲(loops==0)なので、上書き中でも
+     * duration_msはm3uの実測値のまま(15分へ延長されない)。 */
+    CHECK(pl->entries[0].duration_ms == 32000);
+    CHECK(pl->entries[1].duration_ms == 154000);
+    CHECK(pl->entries[2].duration_ms == 105000);
     for (int i = 0; i < pl->entry_count; i++) {
-        CHECK(pl->entries[i].duration_ms == 900000);
         CHECK(pl->entries[i].length_known); /* 実測できたこと自体は変わらない */
+        CHECK(!pl->entries[i].loops);
     }
     /* 実測値がnatural_msに残っていること(上書きに巻き込まれて消えていない)。 */
     CHECK(pl->entries[0].natural_ms == 32000);
@@ -486,18 +504,73 @@ static int test_length_override_applies_and_reverts(void) {
     CHECK(pl->entries[2].natural_ms == 105000);
 
     /* autoへ戻す(Settings画面でLengthをautoに操作したときと同じ経路)。
-     * ファイルを開き直さずに m3u 由来の実測値へ復元されること。 */
+     * ファイルを開き直さずに m3u 由来の実測値へ復元されること
+     * (この場合、上書き中と同じ値になる)。 */
     cfg.length_override_sec = 0;
     playlist_apply_config(pl, &cfg, -1, -1);
     CHECK(pl->entries[0].duration_ms == 32000);
     CHECK(pl->entries[1].duration_ms == 154000);
     CHECK(pl->entries[2].duration_ms == 105000);
 
-    /* もう一度上書きへ戻しても正しく効くこと(往復できること)。 */
+    /* もう一度上書きへ戻しても、ループしない曲は引き続き延長されないこと
+     * (往復できること)。300秒(5分)は各曲の実測値より長いので、
+     * ここでもduration_msは実測値のまま。 */
     cfg.length_override_sec = 300;
     playlist_apply_config(pl, &cfg, -1, -1);
+    CHECK(pl->entries[0].duration_ms == 32000);
+    CHECK(pl->entries[1].duration_ms == 154000);
+    CHECK(pl->entries[2].duration_ms == 105000);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #24: m3uのループ欄付き("Overworld,2:34,-" = 全体がループする曲。
+ * M3u_Playlist.cpp: parse_line() の trailing '-' 記法)なトラックは、
+ * ながさチェンジ中に上書き値まで延長されること(F-28本来の挙動)を確認する。 */
+static int test_length_override_extends_looping_track(void) {
+    char *gbs = path_in("length_override_loop.gbs");
+    write_synthetic_gbs(gbs, 1);
+    write_text_file(path_in("length_override_loop.m3u"),
+        "length_override_loop.gbs::GBS,0,Overworld,2:34,-\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.length_override_sec = 900; /* 15分 */
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK(pl->entries[0].loops);
+    CHECK(pl->entries[0].length_known);
+    CHECK(pl->entries[0].natural_ms == 154000); /* 2:34。上書きの影響を受けない */
+    CHECK(pl->entries[0].duration_ms == 900000); /* 延長される */
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #24: sidecar m3uが無い素のGBS(曲長情報を一切持たない
+ * Tetris等と同条件)は、ながさチェンジ中も現状どおり上書き値へ
+ * 強制されること(=回帰防止)。判断材料が無いトラックまで
+ * キャップしてしまうと、実在の合成音楽が短く切られてしまう。 */
+static int test_length_override_applies_to_unknown_length(void) {
+    char *gbs = path_in("length_override_unknown.gbs");
+    write_synthetic_gbs(gbs, 2);
+    /* m3uを書かない: gme_track_info() が length/intro/loop すべて
+     * -1 を返す素のGBSと同じ状態になる。 */
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    cfg.length_override_sec = 900; /* 15分 */
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 2);
     for (int i = 0; i < pl->entry_count; i++) {
-        CHECK(pl->entries[i].duration_ms == 300000);
+        CHECK(!pl->entries[i].length_known);
+        CHECK(!pl->entries[i].loops);
+        CHECK(pl->entries[i].duration_ms == 900000);
     }
 
     playlist_free(pl);
@@ -594,7 +667,9 @@ static int test_skip_short_keeps_unknown_length(void) {
 /* Issue #21: Length(length_override_sec)で全曲の見かけの長さを上書き中でも、
  * スキップ判定は常に実測長(natural_ms)で行われること。上書きで曲長不明の
  * トラックまで「見かけ上15分」になっても、それだけでskip_short_secの対象には
- * ならない(length_knownが0のままなので)。 */
+ * ならない(length_knownが0のままなので)。
+ * BattleとJingleはどちらもm3uにループ欄が無い(loops==0)ので、Issue #24
+ * により上書き自体は「延長しない」側で効く(min(override, natural_ms))。 */
 static int test_skip_short_ignores_length_override(void) {
     char *gbs = path_in("skip_short_override.gbs");
     write_synthetic_gbs(gbs, 2);
@@ -605,14 +680,14 @@ static int test_skip_short_ignores_length_override(void) {
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
     cfg.skip_short_sec = 5;
-    cfg.length_override_sec = 900; /* 全曲を15分に見せかける (F-28) */
+    cfg.length_override_sec = 900; /* 15分(Battleの実測1:45より長い) */
 
     playlist_t *pl = NULL;
     CHECK(playlist_open(gbs, &cfg, &pl) == 0);
-    /* 見かけの長さは900000msでも、中身が3秒のJingleは隠れる。 */
+    /* 上書き中でも、中身が3秒のJingleは隠れる。 */
     CHECK(pl->entry_count == 1);
     CHECK_STREQ(pl->entries[0].title, "Battle");
-    CHECK(pl->entries[0].duration_ms == 900000); /* 上書き自体は効いている */
+    CHECK(pl->entries[0].duration_ms == 105000); /* Issue #24: 延長されない */
 
     playlist_free(pl);
     return 0;
@@ -745,6 +820,8 @@ int main(void) {
     if (test_fade_start_ms()) return 1;
     if (test_resolve_length_ms()) return 1;
     if (test_length_override_applies_and_reverts()) return 1;
+    if (test_length_override_extends_looping_track()) return 1;
+    if (test_length_override_applies_to_unknown_length()) return 1;
     if (test_skip_short_hides_and_boundary()) return 1;
     if (test_skip_short_off_keeps_all()) return 1;
     if (test_skip_short_keeps_unknown_length()) return 1;
