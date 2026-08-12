@@ -10,7 +10,7 @@
 # ステータス: 【実機 (muOS 2601.0 JACARANDA, RG35XX系) で検証済み】
 # tools/sdl_probe.c をこの方式でビルドし、実機で映像(mali driver)・
 # 音声(alsa経由pipewire)とも正常動作を確認済み。詳細な調査経緯は
-# PLAN.md の「P7: SDL2の扱いに関する調査」節を参照。
+# docs/design-notes.md の「クロスビルドとmuOSパッケージング」節を参照。
 #
 # --- CMAKE_SYSROOT を使わない理由（重要） -------------------------------
 # 素直に CMAKE_SYSROOT でsysroot/を指定しても機能しない。Debianの

@@ -100,7 +100,8 @@ static int read_file(const char *path, char **out_buf, size_t *out_len) {
 }
 
 /* gme_info_t.play_length は曲長不明時に -1 ではなく 150000(既定150秒)を
- * 返してしまう(PLAN.md 記載の乖離#1)ため、これだけでは「本当に不明か」を
+ * 返してしまう(docs/design-notes.md「libgmeの使い方と既知の乖離」)ため、
+ * これだけでは「本当に不明か」を
  * 判定できない。length(総曲長)/intro_length+loop_length(ループ構造)の
  * 有無で判定する。playlist.c(スキャン時)と player.c(再生開始時)の
  * 双方が同じ判定を必要とするため、ここに一本化する

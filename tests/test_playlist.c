@@ -172,7 +172,7 @@ static int test_nsf_no_m3u_auto_naming(void) {
  * remap後ではなくm3uファイル上の位置からそのまま採用されるため、この
  * テストだけでは「実際に鳴る物理トラックが正しい」ことまでは証明できない
  * (物理トラックの検証は実機で実際のNSFリップを再生して確認する。
- * PLAN.md参照)。ここでは「1始まりの宣言がエラーにならず期待通りの
+ * docs/design-notes.md「libgmeフォーク運用」参照)。ここでは「1始まりの宣言がエラーにならず期待通りの
  * entry_count/titleになる」ことのスモークテストとして残す。 */
 static int test_nsf_sidecar_m3u_is_one_based(void) {
     char *nsf = path_in("nsf_sidecar.nsf");
@@ -222,7 +222,8 @@ static int test_nsf_sidecar_m3u_is_one_based(void) {
  * 確認済み)。ここでは「宣言0がクラッシュ/エラーにならず
  * entry_countやtitleが崩れない」という限定的なスモークテストとして
  * 残す。**物理トラックの選択が正しいことの検証は、実機で実際に
- * Parodius (EMU).zopharパックを聴いて確認する(PLAN.md参照)。** */
+ * Parodius (EMU).zopharパックを聴いて確認する
+ * (docs/design-notes.md「libgmeフォーク運用」参照)。** */
 static int test_decimal_track_number_is_zero_based(void) {
     char *gbs = path_in("zerobased.gbs");
     write_synthetic_gbs(gbs, 3);

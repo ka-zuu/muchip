@@ -6,7 +6,7 @@
 # 抜いた sysroot/ (実機の libc.so.6 と libSDL2 の実体) が必要で、これは実機
 # 由来のバイナリなのでリポジトリに含めない方針だから。実機向けの .muxapp は
 # 開発機で scripts/release.sh が作り、GitHub Release へアップロードする。
-# 詳細は PLAN.md の「P13の設計判断」を参照。
+# 詳細は docs/design-notes.md の「開発基盤(CI・リリース・サニタイザ)」を参照。
 #
 # workflow_call を持たせてあるのは release-guard.yml から丸ごと再利用するため。
 name: CI

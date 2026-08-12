@@ -2,7 +2,8 @@
 # scripts/fetch-sysroot.sh
 #
 # muOS実機からクロスビルドに必要な libc/SDL2 一式を取得し、
-# リポジトリ直下の sysroot/ を構成する。 (SPEC 8.3, PLAN.md 「P7: SDL2の扱いに関する調査」)
+# リポジトリ直下の sysroot/ を構成する。
+# (SPEC 8.3, docs/design-notes.md「クロスビルドとmuOSパッケージング」)
 #
 # 実機のSDL2は標準ディストリのものと大きく異なる(独自の malifb ビデオ
 # ドライバを内蔵し、依存ライブラリも libc/libm のみと極めてミニマル)ため、
@@ -21,7 +22,7 @@
 # upstream SDL2 (libsdl-org/SDL) のヘッダをそのタグから取得する
 # (実機にはヘッダが同梱されていないため)。malifb等の内部ドライバ差分は
 # 公開APIのヘッダには影響しないという前提に立つ
-# (実機での動作確認で裏付け済み。PLAN.md参照)。
+# (実機での動作確認で裏付け済み。docs/design-notes.md参照)。
 
 set -e
 
