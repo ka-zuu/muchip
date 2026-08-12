@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "../vendor/font8x8/font8x8_basic.h"
+#include "../vendor/misaki/misaki_gothic.h"
 #include "log.h"
 
 #define GLYPH_PX 8
@@ -12,10 +13,16 @@
 #define FONT_ROWS 8
 #define FONT_GLYPHS 128 /* font8x8_basic は U+0000-U+007F のみ */
 
+/* 非ASCII(美咲フォント)アトラスのレイアウト。128列に固定し、
+ * MISAKI_GLYPH_COUNT に応じて必要な行数だけ確保する。 */
+#define CJK_COLS 128
+#define CJK_ROWS ((MISAKI_GLYPH_COUNT + CJK_COLS - 1) / CJK_COLS)
+
 /* UTF-8の1文字を読み、コードポイントを返してバイト数を返す。
- * basic latin(U+0000-U+007F)以外・壊れたシーケンスは '?' に落とす
- * (ui.h のコメント参照。実行時依存を増やさないための割り切り)。
- * *out_len==0 は文字列終端。 */
+ * 壊れたシーケンスは '?' に落とす(*out_cp='?', 読んだ分だけ進める)。
+ * デコードそのものはbasic latin以外(日本語含む)も正しく扱う
+ * (実際にどのグリフで描画できるかはui_text()側のアトラス検索次第。
+ * ui.h のコメント参照)。*out_len==0 は文字列終端。 */
 static int utf8_next(const char *s, int *out_cp) {
     unsigned char c0 = (unsigned char)s[0];
     if (c0 == 0) { *out_cp = 0; return 0; }
@@ -76,6 +83,68 @@ static int build_font_atlas(ui_t *ui) {
     SDL_SetTextureBlendMode(ui->font_atlas, SDL_BLENDMODE_BLEND);
     free(pixels);
     return 0;
+}
+
+/* build_font_atlas() の非ASCII版。美咲フォント(vendor/misaki)の
+ * MISAKI_GLYPH_COUNT個のグリフを CJK_COLS 列のアトラスへ並べる。
+ * 配列の添字がそのままアトラス上のスロット番号になる(別途マップ不要)。
+ *
+ * 失敗しても ui_init() 自体は失敗させない(呼び出し側で戻り値を見て
+ * ui->cjk_atlas = NULL のまま続行する。メモリの厳しい環境で日本語
+ * メタデータが理由でアプリごと起動しなくなる事態を避けるため)。 */
+static int build_cjk_atlas(ui_t *ui) {
+    int atlas_w = CJK_COLS * GLYPH_PX;
+    int atlas_h = CJK_ROWS * GLYPH_PX;
+    Uint32 *pixels = calloc((size_t)atlas_w * (size_t)atlas_h, sizeof(Uint32));
+    if (!pixels) {
+        LOG_WARN("日本語フォントアトラス用のメモリ確保に失敗しました。非ASCII文字は'?'で表示します");
+        return -1;
+    }
+
+    for (int c = 0; c < MISAKI_GLYPH_COUNT; c++) {
+        int cx = (c % CJK_COLS) * GLYPH_PX;
+        int cy = (c / CJK_COLS) * GLYPH_PX;
+        for (int row = 0; row < GLYPH_PX; row++) {
+            unsigned char bits = misaki_glyphs[c].bits[row];
+            for (int col = 0; col < GLYPH_PX; col++) {
+                /* misaki_glyphs もfont8x8_basicと同じく「ビット0=左端の桁」
+                 * (tools/make_misaki_font.py が生成時に揃えている)。 */
+                Uint32 px = (bits & (1u << col)) ? 0xFFFFFFFFu : 0x00000000u;
+                pixels[(cy + row) * atlas_w + (cx + col)] = px;
+            }
+        }
+    }
+
+    ui->cjk_atlas = SDL_CreateTexture(ui->ren, SDL_PIXELFORMAT_RGBA32,
+                                       SDL_TEXTUREACCESS_STATIC, atlas_w, atlas_h);
+    if (!ui->cjk_atlas) {
+        LOG_WARN("SDL_CreateTexture(cjk atlas) failed: %s。非ASCII文字は'?'で表示します",
+                  SDL_GetError());
+        free(pixels);
+        return -1;
+    }
+    SDL_UpdateTexture(ui->cjk_atlas, NULL, pixels, atlas_w * (int)sizeof(Uint32));
+    SDL_SetTextureBlendMode(ui->cjk_atlas, SDL_BLENDMODE_BLEND);
+    free(pixels);
+    return 0;
+}
+
+/* misaki_glyphs から cp を二分探索する(配列はコードポイント昇順。
+ * tools/make_misaki_font.py が保証する)。見つかればアトラス上のスロット
+ * 番号(=配列の添字)を、無ければ-1を返す。
+ * misaki_glyphs[].cp は unsigned short なので、範囲外(BMP超)は
+ * 打ち切って誤ヒットを防ぐ。 */
+static int misaki_find(int cp) {
+    if (cp < 0 || cp > 0xFFFF) return -1;
+    unsigned short target = (unsigned short)cp;
+    int lo = 0, hi = MISAKI_GLYPH_COUNT - 1;
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        unsigned short mcp = misaki_glyphs[mid].cp;
+        if (mcp == target) return mid;
+        if (mcp < target) lo = mid + 1; else hi = mid - 1;
+    }
+    return -1;
 }
 
 int ui_init(ui_t *ui, int req_w, int req_h, int fullscreen) {
@@ -147,6 +216,7 @@ int ui_init(ui_t *ui, int req_w, int req_h, int fullscreen) {
         ui->win = NULL;
         return -1;
     }
+    build_cjk_atlas(ui); /* 失敗しても致命的にしない(コメント参照。'?'フォールバック) */
 
     /* SPEC 6.2: 640x480 を基準にスケールする。フォントサイズ・余白・行高
      * すべてをこの scale から導出し、以降どこにも座標を決め打ちしない。 */
@@ -169,6 +239,7 @@ void ui_shutdown(ui_t *ui) {
     /* SDL_Quit()自体は呼び出し側(main.c)の責務。ここではui_init()で
      * 確保したリソースだけを解放する(audio.c/player.cと同じ役割分担)。 */
     if (ui->font_atlas) SDL_DestroyTexture(ui->font_atlas);
+    if (ui->cjk_atlas) SDL_DestroyTexture(ui->cjk_atlas);
     if (ui->ren) SDL_DestroyRenderer(ui->ren);
     if (ui->win) SDL_DestroyWindow(ui->win);
     memset(ui, 0, sizeof(*ui));
@@ -253,6 +324,10 @@ void ui_text(ui_t *ui, int x, int y, ui_text_size_t size, SDL_Color color, const
     int px = ui_glyph_size(ui, size);
     SDL_SetTextureColorMod(ui->font_atlas, color.r, color.g, color.b);
     SDL_SetTextureAlphaMod(ui->font_atlas, color.a);
+    if (ui->cjk_atlas) {
+        SDL_SetTextureColorMod(ui->cjk_atlas, color.r, color.g, color.b);
+        SDL_SetTextureAlphaMod(ui->cjk_atlas, color.a);
+    }
 
     int cx = x;
     const char *p = s;
@@ -262,11 +337,31 @@ void ui_text(ui_t *ui, int x, int y, ui_text_size_t size, SDL_Color color, const
         if (adv <= 0) break;
         p += adv;
 
-        int glyph = (cp >= 0 && cp < FONT_GLYPHS) ? cp : '?';
-        SDL_Rect src = { (glyph % FONT_COLS) * GLYPH_PX, (glyph / FONT_COLS) * GLYPH_PX,
+        /* ASCII(U+0000-U+007F)は font_atlas、それ以外は cjk_atlas から
+         * 引く(Issue #29)。どちらにも無いコードポイントは '?' に
+         * フォールバックする(ui.h のコメント参照)。 */
+        SDL_Texture *atlas = ui->font_atlas;
+        int glyph;
+        int cols;
+        if (cp >= 0 && cp < FONT_GLYPHS) {
+            glyph = cp;
+            cols = FONT_COLS;
+        } else {
+            int slot = ui->cjk_atlas ? misaki_find(cp) : -1;
+            if (slot >= 0) {
+                atlas = ui->cjk_atlas;
+                glyph = slot;
+                cols = CJK_COLS;
+            } else {
+                atlas = ui->font_atlas;
+                glyph = '?';
+                cols = FONT_COLS;
+            }
+        }
+        SDL_Rect src = { (glyph % cols) * GLYPH_PX, (glyph / cols) * GLYPH_PX,
                           GLYPH_PX, GLYPH_PX };
         SDL_Rect dst = { cx, y, px, px };
-        SDL_RenderCopy(ui->ren, ui->font_atlas, &src, &dst);
+        SDL_RenderCopy(ui->ren, atlas, &src, &dst);
         cx += px;
     }
 }
