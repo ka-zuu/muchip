@@ -5,13 +5,19 @@
  * 実機の解像度に応じて一貫してスケールするための ui_metrics_t だけ。
  *
  * フォントは外部ライブラリ(SDL2_ttf等)を使わず、内蔵のビットマップ
- * フォント(vendor/font8x8, パブリックドメイン)を起動時に1枚のテクスチャへ
- * 展開して使う。実機の sysroot には libSDL2 しか無く、SDL2_ttf の有無が
- * 保証できないため、新規の実行時依存を増やさない選択をしている。
- * UI文言は英語、GBSのメタデータもほぼASCIIのため、basic latin
- * (U+0000-U+007F) のみのカバレッジで実用上十分。それ以外の文字は '?' に
- * フォールバックする。
- */
+ * フォントを起動時にテクスチャへ展開して使う。実機の sysroot には
+ * libSDL2 しか無く、SDL2_ttf の有無が保証できないため、新規の実行時
+ * 依存を増やさない選択をしている。
+ *
+ * グリフは2枚のアトラスに分かれる(Issue #29):
+ *   - font_atlas: ASCII(U+0000-U+007F, vendor/font8x8, パブリックドメイン)
+ *   - cjk_atlas:  非ASCII(vendor/misaki, 8x8のJIS第1・第2水準相当。
+ *                 フリーソフトウェア。vendor/misaki/README.md 参照)
+ * NSF/GBSのヘッダがShift_JIS(CP932)の日本語だった実例があり
+ * (src/text.c で取り込み時にUTF-8へ正規化している)、それを描画するために
+ * 追加した。全角も1セル8px幅で描く(font8x8_basicと同じセルサイズにして
+ * ui_text_width()等の等幅前提を崩さないため)。cjk_atlasに無いコード
+ * ポイントは '?' にフォールバックする。 */
 #ifndef MUGBS_UI_H
 #define MUGBS_UI_H
 
@@ -43,6 +49,9 @@ typedef struct {
     SDL_Window *win;
     SDL_Renderer *ren;
     SDL_Texture *font_atlas; /* 128グリフ(U+0000-U+007F)を並べた1枚のテクスチャ */
+    SDL_Texture *cjk_atlas;  /* 非ASCII(美咲フォント)のグリフアトラス。
+                              * 確保に失敗しても致命的にはせずNULLのまま
+                              * 進める(該当文字は '?' フォールバック)。 */
     int screen_w, screen_h;   /* レンダラの実際の出力サイズ(HiDPI考慮後) */
     ui_metrics_t metrics;
 } ui_t;

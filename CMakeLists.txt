@@ -22,7 +22,11 @@ cmake_minimum_required(VERSION 3.13)
 # 無いが、ユーザー向けの新機能のためminorバンプ。
 # 1.6.0 = アプリ名を muGBS から muChip へ改めた(Issue #13)。パッケージ名・
 # 実行ファイル名・環境変数が変わる利用者向けの変更のためminorバンプ。
-project(muchip VERSION 1.6.0 LANGUAGES C CXX)
+# 1.7.0 = NSF/GBSヘッダがShift_JIS(CP932)の日本語だった場合に文字化けしていた
+# のを解消した(Issue #29)。メタデータをUTF-8へ自動正規化し、美咲フォント
+# (8x8, JIS第1・第2水準)を同梱して日本語を描画できるようにした。
+# ユーザー向けの新機能のためminorバンプ。
+project(muchip VERSION 1.7.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -80,6 +84,7 @@ add_executable(muchip
     src/m3u.c
     src/playlist.c
     src/archive.c
+    src/text.c
     src/ui.c
     src/browser.c
     src/input.c

@@ -27,7 +27,8 @@ sudo apt update && sudo apt install -y \
     pkg-config libsdl2-dev cmake build-essential git
 ```
 
-SDL2_ttf は不要（フォントは `vendor/font8x8` をコンパイル時に埋め込んでいる）。
+SDL2_ttf は不要（フォントは `vendor/font8x8`/`vendor/misaki` をコンパイル時に
+埋め込んでいる）。
 `ctest` を完全な形で回すには追加で `zip` `unzip` `shellcheck` があるとよい
 （無い場合、`.muxapp` の構造検証はスキップされ、シェルスクリプトの静的解析は
 飛ばされる。CI は3つとも入れる）。
@@ -191,11 +192,15 @@ Settings の `Show battery`（`config.ini` の `[ui] battery_show`）で
 （SPEC 6.3「Menu長押し=終了」の代替。GUIDEがmuOS側のオーバーレイに
 吸われて届かない場合の保険として両方実装してある）。
 
-文字描画は外部フォントライブラリを使わず、内蔵のビットマップフォント
-(`vendor/font8x8`) を使う。実機の `sysroot/` には SDL2 の `.so` しか
-含まれておらず、SDL2_ttf が実機に存在するか未確認のため、新規の実行時
-依存を増やさない選択をしている。UI文言は英語のみ対応（GBS/NSF等の
-メタデータは basic latin 以外は `?` にフォールバックする）。
+文字描画は外部フォントライブラリを使わず、内蔵のビットマップフォントを
+使う。実機の `sysroot/` には SDL2 の `.so` しか含まれておらず、
+SDL2_ttf が実機に存在するか未確認のため、新規の実行時依存を増やさない
+選択をしている。UI文言は英語のみ対応。GBS/NSF/M3Uのメタデータ
+（曲名・ゲーム名・作者・著作権）はASCII用(`vendor/font8x8`)と非ASCII用
+(`vendor/misaki`、8x8のJIS第1・第2水準相当)の2枚のフォントアトラスで
+描画し、Shift_JIS(CP932)で書かれた日本語のメタデータも自動判定して
+UTF-8へ正規化してから表示する（Issue #29。`src/text.c`）。どちらの
+アトラスにも無い文字は `?` にフォールバックする。
 
 ### ビジュアライザ (F-14)
 
@@ -491,11 +496,16 @@ scp muChip-x.y.z.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
   `git -C vendor/game-music-emu fetch upstream` から行う。
 - `vendor/miniz`: MIT ライセンス。zip 展開に使用（P4 以降）。
   https://github.com/richgel999/miniz より split-file ソースを vendoring。
-- `vendor/font8x8`: パブリックドメイン。UI (P5) の文字描画に使用。
+- `vendor/font8x8`: パブリックドメイン。UI (P5) の文字描画（ASCII）に使用。
   https://github.com/dhepper/font8x8 より `font8x8_basic.h`
   （basic latin, U+0000-U+007F）のみを vendoring。
   オリジナルは Marcel Sondaar / IBM の public domain VGA フォントを
   Daniel Hepper が整理したもの。
+- `vendor/misaki`: フリーソフトウェア（改変・商用利用・再配布可、無保証。
+  詳細は `vendor/misaki/README.md`）。UI の文字描画（非ASCII、Issue #29）
+  に使用。https://littlelimit.net/misaki.htm の美咲ゴシック BDF版から
+  `tools/make_misaki_font.py` で `misaki_gothic.h` を生成して vendoring。
+  Num Kadoma 氏によるフォント。
 
 ## 依存関係とアーキテクチャ上の注意
 

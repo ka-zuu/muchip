@@ -11,6 +11,7 @@
 #include "archive.h"
 #include "log.h"
 #include "m3u.h"
+#include "text.h"
 #include "util.h"
 
 /* ---- 小さな文字列/パスヘルパ ------------------------------------------ */
@@ -21,6 +22,15 @@ static char *dup_str(const char *s) {
     char *r = malloc(n);
     memcpy(r, s, n);
     return r;
+}
+
+/* gme_track_info() 由来のメタデータ複製用。Shift_JIS(CP932)で書かれた
+ * ヘッダを持つNSFが実在するため(Issue参照)、text_dup_utf8() で
+ * UTF-8へ正規化してから複製する。malloc失敗時は("" と同じく)以降の
+ * [0] 参照が落ちないよう空文字列にフォールバックする。 */
+static char *dup_meta(const char *s) {
+    char *r = text_dup_utf8(s);
+    return r ? r : dup_str("");
 }
 
 static char *dup_len(const char *s, size_t n) {
@@ -271,7 +281,7 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
          * playlist_apply_config() が all[] から作る。 */
         pl->all = realloc(pl->all, sizeof(*pl->all) * (size_t)(pl->all_count + 1));
         playlist_entry_t *e = &pl->all[pl->all_count];
-        e->title = dup_str(title);
+        e->title = dup_meta(title);
         e->source_index = source_index;
         e->track_index = i;
         if (info) {
@@ -289,22 +299,22 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
         if (info) {
             if ((!pl->game || !pl->game[0]) && info->game[0]) {
                 free(pl->game);
-                pl->game = dup_str(info->game);
+                pl->game = dup_meta(info->game);
             }
             /* ソース単位のメタデータ(SPEC 6.1)は最初に取得できたトラックの
              * ものを採用する。GBSの著作権・作者はファイル全体で共通なのが
              * 通例のため、トラックごとに上書きし続ける必要はない。 */
             if (!src->author[0] && info->author[0]) {
                 free(src->author);
-                src->author = dup_str(info->author);
+                src->author = dup_meta(info->author);
             }
             if (!src->copyright[0] && info->copyright[0]) {
                 free(src->copyright);
-                src->copyright = dup_str(info->copyright);
+                src->copyright = dup_meta(info->copyright);
             }
             if (!src->system[0] && info->system[0]) {
                 free(src->system);
-                src->system = dup_str(info->system);
+                src->system = dup_meta(info->system);
             }
         }
 

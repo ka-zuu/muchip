@@ -11,8 +11,14 @@ add_executable(test_config test_config.c ../src/config.c)
 target_include_directories(test_config PRIVATE . ../src)
 add_test(NAME test_config COMMAND test_config)
 
+# Issue #29で追加したtext.c(メタデータ文字列のCP932->UTF-8正規化)の
+# 単体テスト。config.c/eq.c と同じくSDLにもlibgmeにも依存しない純libc。
+add_executable(test_text test_text.c ../src/text.c)
+target_include_directories(test_text PRIVATE . ../src)
+add_test(NAME test_text COMMAND test_text)
+
 add_executable(test_playlist test_playlist.c ../src/playlist.c ../src/m3u.c ../src/archive.c
-                              ../src/config.c)
+                              ../src/config.c ../src/text.c)
 target_include_directories(test_playlist PRIVATE . ../src)
 target_link_libraries(test_playlist PRIVATE gme_static miniz)
 set_target_properties(test_playlist PROPERTIES LINKER_LANGUAGE CXX)
