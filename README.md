@@ -252,27 +252,10 @@ scp muChip-<version>.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
 `.muxapp` をビルドする手順・実機検証の詳しい手順は
 [`docs/development.md`](./docs/development.md) を参照。
 
-## ライセンス / 同梱ソースについて
+## ライセンス
 
-- `vendor/game-music-emu`（libgme）: git submodule。LGPL/GPL（同梱の
-  `license.txt` / `license.gpl2.txt` を参照）。GBS デコードと拡張M3U解析を
-  委譲している。自前で GB APU は実装していない。
-
-  **upstream ではなくフォーク https://github.com/ka-zuu/game-music-emu の
-  `mugbs` ブランチを参照している。** GBSのm3uトラック番号を0始まりとして
-  扱う独自パッチを当てているため（詳細は
-  [`docs/design-notes.md`](./docs/design-notes.md)「libgmeフォーク運用」
-  参照）。upstream への追従は `git -C vendor/game-music-emu fetch upstream`
-  から行う。
-- `vendor/miniz`: MIT ライセンス。zip 展開に使用。
-  https://github.com/richgel999/miniz より split-file ソースを vendoring。
-- `vendor/font8x8`: パブリックドメイン。UI の文字描画（ASCII）に使用。
-  https://github.com/dhepper/font8x8 より `font8x8_basic.h`
-  （basic latin, U+0000-U+007F）のみを vendoring。
-  オリジナルは Marcel Sondaar / IBM の public domain VGA フォントを
-  Daniel Hepper が整理したもの。
-- `vendor/misaki`: フリーソフトウェア（改変・商用利用・再配布可、無保証。
-  詳細は `vendor/misaki/README.md`）。UI の文字描画（非ASCII）に使用。
-  https://littlelimit.net/misaki.htm の美咲ゴシック BDF版から
-  `tools/make_misaki_font.py` で `misaki_gothic.h` を生成して vendoring。
-  Num Kadoma 氏によるフォント。
+muChip 自体は **MITライセンス**（[`LICENSE`](./LICENSE)）。同梱・リンク
+しているサードパーティ製ソフトウェア（libgme、miniz、font8x8、美咲フォント
+等）の一覧とライセンス条件、および LGPL-2.1 の libgme を静的リンクした
+`.muxapp` を再リンク可能にする手順は [`THIRD-PARTY.md`](./THIRD-PARTY.md)
+を参照。

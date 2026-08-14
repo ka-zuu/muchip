@@ -825,20 +825,6 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 
 [`CLAUDE.md`](./CLAUDE.md)「既知の落とし穴チェックリスト」節へ移設した。
 
-### public 化するときの TODO
-
-現在このリポジトリは private。public にする場合は追加で以下が要る。
-
-- [ ] `LICENSE` を置く。`.muxapp` は libgme（LGPL-2.1）を静的リンクして
-      いるので、再リンク可能な形の提供かライセンス選択で条件を満たすこと
-- [ ] libgme の独自パッチは既に public フォーク
-      （ka-zuu/game-music-emu の `mugbs` ブランチ）にあるので、
-      リリース本文からそこへリンクする
-- [ ] branch protection / ruleset を有効にする（public なら無料で使える。
-      private + 無料プランでは API が 403 を返すため `.githooks/pre-push`
-      で代用している）
-- [ ] README に CI バッジを付ける（private では未認証だと表示されない）
-
 ---
 
 ## 14. 参考
@@ -847,20 +833,4 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 - muOS Application Runner: https://community.muos.dev/t/application-runner/1282
 - miniz: https://github.com/richgel999/miniz
 - GBS形式仕様: https://www.tauwasser.eu/wiki/GBS
-
----
-
-## 付録A: プランB（本プロジェクトを作らない場合）
-
-自宅サーバ（Ubuntu）上で `gbsplay` を使い、トラック単位で opus/flac に
-事前レンダリングしてタグ付けすれば、既存の音楽プレーヤーで再生できる。
-
-```sh
-gbsplay -o stdout -E l -r 44100 -t 150 Game.gbs 1 1 | \
-  ffmpeg -f s16le -ar 44100 -ac 2 -i - -c:a libopus -b:a 128k out.opus
-```
-
-メリット: 実装コストゼロ、バッテリー消費が少ない
-デメリット: 曲長を事前に決め打ちする必要がある、ファイルが増える、
-`.gbs` をそのまま持ち歩けない
 

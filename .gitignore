@@ -12,3 +12,8 @@ config.ini.tmp
 *.a
 compile_commands.json
 .cache/
+# Claude Code のセッションローカル設定・ロックファイル。追跡不要
+# (settings.local.json はユーザー固有、scheduled_tasks.lock はセッションUUID
+# とPIDを含む)。~/.config/git/ignore 等のマシンローカル除外はクローンに
+# 付いてこないため、ここに明示する。
+.claude/

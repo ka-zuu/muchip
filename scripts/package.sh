@@ -107,7 +107,7 @@ else
 fi
 
 PKG="$STAGE/$PKG_NAME"
-mkdir -p "$PKG/bin" "$PKG/glyph" "$PKG/grid"
+mkdir -p "$PKG/bin" "$PKG/glyph" "$PKG/grid" "$PKG/licenses"
 
 # packaging/muChip/ の中身は zip 内の muChip/ と1:1に対応している。
 cp "$SRC_DIR/mux_launch.sh" "$PKG/"
@@ -118,6 +118,14 @@ cp "$SRC_DIR/grid/muchip.png" "$PKG/grid/"
 # build-aarch64/ が(古い環境で)root所有でも、cp した先はホストユーザー所有に
 # なるので以降の chmod / strip が通る。
 cp "$BIN" "$PKG/bin/muchip"
+
+# ライセンス表記。packaging/muChip/ ではなくリポジトリルートから直接引く
+# (LICENSE/THIRD-PARTY.md の本文をここへ複製すると内容がドリフトするため、
+# 常に単一の情報源から取る)。libgme(LGPL-2.1) を静的リンクしているため、
+# 配布物にライセンス全文と告知を同梱する義務がある(THIRD-PARTY.md 参照)。
+cp LICENSE "$PKG/LICENSE"
+cp THIRD-PARTY.md "$PKG/THIRD-PARTY.md"
+cp licenses/LGPL-2.1.txt "$PKG/licenses/LGPL-2.1.txt"
 
 # lib/ と assets/ は同梱しない (SPEC 9.1 からの逸脱)。
 #   lib/    … SDL2 だけが実機の動的ライブラリで、libgme/miniz は静的リンク、
@@ -164,7 +172,8 @@ fi
 # external file attributes に保存し、muOS の unzip (Info-ZIP) が復元するので、
 # ここで立てておけば実機まで保たれる。
 chmod 755 "$PKG/mux_launch.sh" "$PKG/bin/muchip"
-chmod 644 "$PKG/mux_lang.ini" "$PKG/config.ini" "$PKG/glyph/muchip.png" "$PKG/grid/muchip.png"
+chmod 644 "$PKG/mux_lang.ini" "$PKG/config.ini" "$PKG/glyph/muchip.png" "$PKG/grid/muchip.png" \
+	"$PKG/LICENSE" "$PKG/THIRD-PARTY.md" "$PKG/licenses/LGPL-2.1.txt"
 
 rm -f "$OUT_ABS"
 # -X で uid/gid と拡張タイムスタンプを落とす(モードは保たれる)。

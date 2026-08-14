@@ -163,15 +163,13 @@ git config core.hooksPath .githooks
 `.git/config` に入る設定なので、リポジトリに置いてあるだけでは有効にならない。
 
 本来これは GitHub 側の branch protection / ruleset でやりたいところだが、
-無料プラン + private リポジトリでは該当 API がどちらも 403
-（`Upgrade to GitHub Pro or make this repository public to enable this feature.`）
-を返すため使えない。フックはあくまで自衛で、`git push --no-verify` や
-`MUCHIP_ALLOW_PUSH_MAIN=1` で抜けられる。本当の強制が要るようになったら
-(a) リポジトリを public にする（ruleset が無料で使える）か
-(b) GitHub Pro にする、のどちらか。
+ruleset はサーバ側の設定でありクローン直後には効かないため、フックを
+多重防御として併用している。フックはあくまで自衛で、`git push --no-verify`
+や `MUCHIP_ALLOW_PUSH_MAIN=1` で抜けられる。本当の強制が要るときは
+GitHub 側の branch protection / ruleset を有効にすること。
 
 ドキュメントだけの変更で CI を回したくないときは、コミットメッセージに
-`[skip ci]` を入れる（private リポジトリの Actions 無料枠は 2000 分/月）。
+`[skip ci]` を入れる。
 
 ## 機能追加のフロー（Issue駆動）
 

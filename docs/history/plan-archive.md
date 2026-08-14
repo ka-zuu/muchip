@@ -193,7 +193,7 @@
       `vendor/game-music-emu/gme/Gbs_Emu.cpp`に1行のパッチ(KSSと同じ
       `flags_ |= 0x02`)を当てて修正した。詳細は下記
       「P12: m3uトラック番号の0始まり/1始まり問題」を参照。
-      **実機の実データ(Parodius (EMU).zophar)を使い、SDLのdiskオーディオ
+      **実機の実データ(<テストGBSパックA>)を使い、SDLのdiskオーディオ
       ドライバでPCMを書き出してFFTピーク周波数を比較し、修正前は
       「宣言0」が本来「宣言1」の音(441Hz)ではなく別の不正な音(329Hz。
       不正index -1 由来)を再生していたこと、修正後は「宣言0」が
@@ -260,7 +260,7 @@
   `test_ui_smoke`（`SDL_VIDEODRIVER=dummy`/`SDL_AUDIODRIVER=dummy`下で
   `--ui-script`を使い、Browser→ファイルを開く→TrackList→ジャンプ→
   Player→Browserの一巡を毎ビルドで回帰確認する）を追加した。
-  その後、実機（muOS 2601.0 JACARANDA、192.168.0.20）にSSHでアクセスでき
+  その後、実機（muOS 2601.0 JACARANDA、<実機のIP>）にSSHでアクセスでき
   たため、P7で確立済みの`fetch-sysroot.sh`→クロスビルド→転送手順で
   実際にBrowser/Player画面を`/dev/fb0`のダンプ経由でスクリーンショット
   撮影し、見た目を確認した（下記「実機確認で発見したバグ」参照）。
@@ -396,7 +396,7 @@ Show all files の6項目のみを実装した(`sample_rate`はデバイス再�
 
 ## P6実機確認の結果
 
-実機(muOS 2601.0 JACARANDA、192.168.0.20)にSSH(root/root)で接続し、
+実機(muOS 2601.0 JACARANDA、<実機のIP>)にSSHで接続し、
 以下を確認した。
 
 **gamecontrollerdb.txtの実在確認**: `/usr/lib/gamecontrollerdb.txt`は
@@ -651,7 +651,7 @@ P8)が未実装のため。**P8完了に伴い1.0.0へ上げた**(下記「P8の
 
 ### P7実機検証の結果(すべて確認済み)
 
-実機(muOS 2601.0 JACARANDA、192.168.0.20)で以下を確認した。
+実機(muOS 2601.0 JACARANDA、<実機のIP>)で以下を確認した。
 
 **インストール**: `.muxapp`を`/mnt/mmc/ARCHIVE/`に置き、muOS本番の
 `/opt/muos/script/mux/extract.sh`(Archive Managerが内部で呼ぶのと同じ
@@ -870,7 +870,7 @@ LeakSanitizer で失敗する。いずれもテストハーネス自身の `path
 
 ### D-pad長押しリピートを追加した(実機検証で発覚したUX課題)
 
-.muxapp を実機(muOS 2601.0 JACARANDA、192.168.0.20)へインストールし、
+.muxapp を実機(muOS 2601.0 JACARANDA、<実機のIP>)へインストールし、
 アプリ一覧から物理ボタンで起動して Player→SELECT無反応確認→Settings→EQ
 変更、という一連の操作をユーザーに試してもらったところ、
 「十字キー押しっぱなしで値を変えたりカーソル移動できないのがしんどい」
@@ -917,10 +917,10 @@ v1.0.0を実機で使い込んだユーザーから5件のフィードバック�
 `.m3u` が複数あった場合「最初の1つだけ使い、残りは警告して捨てる」実装に
 なっている。ところが zophar.net 配布パックには**1曲ごとに個別の`.m3u`を
 同梱する形式**が実在する。実機の
-`Downtown Special - ... (EMU).zophar.zip` を `unzip -l` で確認したところ:
+`<テストGBSパックB>.zip` を `unzip -l` で確認したところ:
 
 ```
-DMG-JXJ.gbs
+<テストGBSパックB>.gbs
 01 BGM #01.m3u   (163 bytes、1トラックだけを指す)
 02 BGM #02.m3u
 ...
@@ -928,7 +928,7 @@ DMG-JXJ.gbs
 ```
 
 のように **18個の単曲m3u** が入っており、内容は
-`DMG-JXJ.gbs::GBS,0,BGM #01 - ...,0:39,,10` のように1エントリだけ。
+`<テストGBSパックB>.gbs::GBS,0,BGM #01 - ...,0:39,,10` のように1エントリだけ。
 現状の実装は `01 BGM #01.m3u` だけを採用するため `[1/1]` としか
 再生できない(実機ログの `再生: [1/1] "BGM #01 - ..."` で確認済み)。
 
@@ -1179,12 +1179,12 @@ Settingsは`SETTINGS_COUNT`がコンパイル時定数なのでガード不要�
 
 ## P9の実機検証（完了）
 
-`.muxapp`(muGBS-1.0.0)を実機(muOS 2601.0 JACARANDA、192.168.0.20)へ
+`.muxapp`(muGBS-1.0.0)を実機(muOS 2601.0 JACARANDA、<実機のIP>)へ
 `scp`+`extract.sh`で投入し、以下6項目をユーザーに確認してもらい、
 「動作確認OK」との回答を得た(詳細な項目別の当たり外れは聞いていないが、
 全体としてP9の変更が実機で問題なく動くことを確認済み):
 
-1. zophar.netの複数m3u入りzip(`Downtown Special … (EMU).zophar.zip`)を開き、
+1. zophar.netの複数m3u入りzip(`<テストGBSパックB>.zip`)を開き、
    `Track 1/18`と表示され18曲すべて再生できること
 2. Settingsに Volume が無く、終了後の`config.ini`に`[audio] volume`が
    書かれないこと
@@ -1301,7 +1301,7 @@ ASanでmugbs本体を`ui_smoke.script`経由(LeakSanitizer有効のまま)走ら
 
 ## P10の実機検証（完了）
 
-`.muxapp`(muGBS-1.0.0、P10反映版)を実機(192.168.0.20)へ再転送・上書き
+`.muxapp`(muGBS-1.0.0、P10反映版)を実機(<実機のIP>)へ再転送・上書き
 インストールし、ユーザーに動作確認してもらい「動作は確認できました」との
 回答を得た。確認済み項目:
 
@@ -1422,25 +1422,25 @@ if ( e.track >= 0 )
 適用されない。GBS(`gme/Gbs_Emu.cpp`)にはこのビットが立っておらず、
 常に10進トラック番号から-1される。
 
-実機の実データ(muOS機、`/mnt/sdcard/ROMS/VGM/GBS/Parodius (EMU).zophar/`)を
+実機の実データ(muOS機、`/mnt/sdcard/ROMS/VGM/GBS/<テストGBSパックA>/`)を
 SSHで確認したところ、各m3uの10進トラック番号は**0始まり**だった:
 
 ```
-01 Parodius Ondo.m3u        → DMG-PVJ.gbs::GBS,0,Parodius Ondo...
-02 Hello.m3u                 → DMG-PVJ.gbs::GBS,1,Hello...
-03 Theme of Vic Viper.m3u   → DMG-PVJ.gbs::GBS,2,...
+01 Track Ondo.m3u        → <テストGBSパックA>.gbs::GBS,0,Track Ondo...
+02 Hello.m3u                 → <テストGBSパックA>.gbs::GBS,1,Hello...
+03 Theme Track.m3u   → <テストGBSパックA>.gbs::GBS,2,...
 ...
-28 Game Over!!.m3u            → DMG-PVJ.gbs::GBS,23,Game Over!!...
+28 Game Over!!.m3u            → <テストGBSパックA>.gbs::GBS,23,Game Over!!...
 ```
 
 (zophar.net配布のGBSパックに共通の慣習。P9で複数m3uzip対応を入れたときの
-`Downtown Special...zophar.zip`も同じく`GBS,0,...`だった。)
+`<テストGBSパックB>.zip`も同じく`GBS,0,...`だった。)
 
 libgmeの「10進は1始まり」という前提とこの実際の慣習が食い違うため:
 - 宣言「1」(`02 Hello.m3u`)は 1-1=0 されて、本来「宣言0」
-  (`01 Parodius Ondo.m3u`)が指すはずの物理トラックを再生してしまう
+  (`01 Track Ondo.m3u`)が指すはずの物理トラックを再生してしまう
   (ユーザー報告の「2曲目→1曲目」はこれ)
-- 宣言「0」(`01 Parodius Ondo.m3u`)は 0-1=-1 という不正な索引になる。
+- 宣言「0」(`01 Track Ondo.m3u`)は 0-1=-1 という不正な索引になる。
   `remap_track_()`の範囲チェックは`*track_io >= raw_track_count_`だけで
   **負の値を弾かない**ため、エラーにはならず不正な索引のまま
   `Gbs_Emu::start_track_()`の`cpu::r.a = track;`まで届く(8bitレジスタへの
@@ -1491,7 +1491,7 @@ libgmeパッチの有無に関わらず成功することを確認済み)理由�
 ### 検証方法(実データでのA/Bテスト)
 
 ユニットテストでは検出できないため、実機のSDカードから実際の
-`DMG-PVJ.gbs`と`01 Parodius Ondo.m3u`/`02 Hello.m3u`をSSH経由で
+`<テストGBSパックA>.gbs`と`01 Track Ondo.m3u`/`02 Hello.m3u`をSSH経由で
 ローカルへコピーし、`SDL_AUDIODRIVER=disk`(SDLの組み込み機能。
 実デバイスの代わりにPCMをファイルへ書き出す)を使って
 `--cli --repeat none --track 1`でレンダリングし、Pythonで
@@ -1523,15 +1523,15 @@ FFTピーク周波数とRMSを比較した:
 
 ## P12の実機検証（完了）
 
-`.muxapp`(muGBS-1.0.0、P12反映版)を実機(192.168.0.20)へ再転送・上書き
+`.muxapp`(muGBS-1.0.0、P12反映版)を実機(<実機のIP>)へ再転送・上書き
 インストールし(md5一致でバイナリの取り違え無しを確認済み)、ユーザーに
 以下を確認してもらい「OKでした」との回答を得た:
 
-1. `Parodius (EMU).zophar`パック(またはユーザーが実際に使っている他の
+1. `<テストGBSパックA>`パック(またはユーザーが実際に使っている他の
    zophar.net配布パック)を開き、`01`から`28`まで順に再生して、
    曲名(m3uファイル名)と実際に鳴る曲が対応していること
    (「2曲目を再生すると1曲目が鳴る」というズレが解消されていること)
-2. P9で扱った複数m3uzip(`Downtown Special...zophar.zip`)も、
+2. P9で扱った複数m3uzip(`<テストGBSパックB>.zip`)も、
    `GBS,0,...`始まりの実データだったため、このパッチの影響を受ける。
    18曲が正しい順・正しい曲で再生されること
 3. 16進トラック番号を使うm3u(あれば)がこれまでどおり正しく再生されること
@@ -1826,7 +1826,7 @@ Player 画面を `--ui-script` + `--screenshot` で撮り、はみ出し・重�
 
 ### 実機検証（完了）
 
-実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、192.168.0.20）へ
+実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、<実機のIP>）へ
 `./scripts/build-aarch64.sh` → `./scripts/package.sh` で作った
 `.muxapp` を `/opt/muos/script/mux/extract.sh`（Archive Managerが内部で
 呼ぶのと同じスクリプト、P7で確立した手順）経由でインストールした。
@@ -1933,7 +1933,7 @@ offにすると Issue #3 以前と同じ `ui_text_clipped()` の `"..."` 省略�
 
 ### 実機検証（完了）
 
-実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、192.168.0.20）へ
+実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、<実機のIP>）へ
 `./scripts/build-aarch64.sh` → `./scripts/package.sh` で作った
 `.muxapp` を `/opt/muos/script/mux/extract.sh`（Archive Managerが内部で
 呼ぶのと同じスクリプト、P7で確立した手順）経由でインストールした。
@@ -1941,9 +1941,8 @@ offにすると Issue #3 以前と同じ `ui_text_clipped()` の `"..."` 省略�
 含まれていることを確認済み。
 
 ユーザーが実機の物理ボタンで `Apps > muGBS プレーヤー` を起動し、
-`/mnt/sdcard/ROMS/VGM/GBS/Parodius (EMU).zophar.zip`（P12で使った実データ。
-28個の`.m3u`が連結され、どの曲名も `"<曲名> - Akiko Ito, Shigeru
-Fukutake, Hidehiro Funauchi - Parodius - ©1991-04-05 Konami"` という
+`/mnt/sdcard/ROMS/VGM/GBS/<テストGBSパックA>.zip`（P12で使った実データ。
+28個の`.m3u`が連結され、どの曲名も `"<曲名> - Composer A, Composer B, Composer C - <ゲームA> - ©1991-04-05 <パブリッシャーA>"` という
 90文字超の長さで実機640x480(TITLE=24px)では確実に画面幅を超える）を開いて
 Player画面まで進めた。Claude側はSSH越しに`/dev/fb0`を1秒間隔で連続ダンプし
 （`dd if=/dev/fb0` → 32bit `BGRA` として `numpy`/`PIL`でPNG化。実機の
@@ -1957,8 +1956,7 @@ Player画面まで進めた。Claude側はSSH越しに`/dev/fb0`を1秒間隔で
   スクリーンショットで確認した。曲送り（`repeat:all`によるトラック終端の
   自動遷移）でも崩れなかった
 - **3（曲名の横スクロール）**: 1秒間隔の連続キャプチャで、長い曲名
-  （例:`"Theme of Vic Viper - Akiko Ito, Shigeru Fukutake, Hidehiro
-  Funauchi - Parodius - ©1991-04-05 Konami"`）が実際に左へ滑らかに流れ、
+  （例:`"Theme Track - Composer A, Composer B, Composer C - <ゲームA> - ©1991-04-05 <パブリッシャーA>"`）が実際に左へ滑らかに流れ、
   数秒〜十数秒で一周して読める速度であることを目視確認した。文字の
   重なり・ちらつき・クリップ境界からのはみ出しは無かった。ファイル一覧・
   波形ビジュアライザとも正常に描画され続けた
@@ -2079,7 +2077,7 @@ CIでもゲージの描画経路(縮退分岐含む)をASan/UBSan下で実行さ
 
 ### 実機検証（完了）
 
-実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、192.168.0.20）へSSH(鍵認証)
+実機（RG35XX PRO相当、muOS 2601.0 JACARANDA、<実機のIP>）へSSH(鍵認証)
 で接続して確認した。`./scripts/build-aarch64.sh`でクロスビルドした
 `mugbs`をscpで転送し、`mux_launch.sh`と同じ環境構築（`func.sh`読み込み→
 `SETUP_APP`→`SDL_GAMECONTROLLERCONFIG_FILE`保証）を再現したうえで
@@ -2143,7 +2141,7 @@ CIでもゲージの描画経路(縮退分岐含む)をASan/UBSan下で実行さ
 PR #10マージ後、v1.1.0としてリリースする際に実機への正式インストールを
 確認した。`./scripts/release.sh`でクロスビルド・`.muxapp`生成・タグ
 push・下書きReleaseまで行った後、`scp muGBS-1.1.0.muxapp
-root@192.168.0.20:/mnt/mmc/ARCHIVE/`で転送し、`/opt/muos/script/mux/extract.sh`
+root@<実機のIP>:/mnt/mmc/ARCHIVE/`で転送し、`/opt/muos/script/mux/extract.sh`
 （Archive Managerが内部で呼ぶのと同一スクリプト）で展開した。
 
 **確認できたこと:**
@@ -2262,9 +2260,9 @@ UIスモークテスト(`tests/gen_fixture_gbs.c`)は**GBSのままにした**�
 
 ### (d) 実機検証（完了）
 
-実機（muOS 2601.0 JACARANDA、192.168.0.20）で確認した。テスト素材は
+実機（muOS 2601.0 JACARANDA、<実機のIP>）で確認した。テスト素材は
 著作権上リポジトリには含めないが、開発機のローカルに手持ちであった
-実在のNSF3本（`Downtown Special...`(17トラック)・`Super Mario Bros. 3`
+実在のNSF3本（`<テストNSF>`(17トラック)・`Super Mario Bros. 3`
 (25トラック)・`Tenkaichi Bushi...`(4トラック)。いずれも拡張チップ無し
 [`chip_flags`(オフセット0x7B)がいずれも`0x00`]）と、libgme本体が
 リポジトリに同梱しているテスト素材`vendor/game-music-emu/test.nsf`+
@@ -2391,7 +2389,7 @@ upstreamのデフォルト=1始まりのまま動くこと。上記(c)節参照�
 ### 実機検証（完了）
 
 `./scripts/build-aarch64.sh`→`./scripts/package.sh`→
-`scp muGBS-1.3.0.muxapp root@192.168.0.20:/mnt/mmc/ARCHIVE/`→
+`scp muGBS-1.3.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/`→
 `/opt/muos/script/mux/extract.sh`（Archive Managerが内部で呼ぶのと
 同一スクリプト）で実機へ導入し、`bin/mugbs --version`が`muGBS 1.3.0`を
 報告することを確認した。
@@ -2401,7 +2399,7 @@ upstreamのデフォルト=1始まりのまま動くこと。上記(c)節参照�
 「フェード完了→次トラックへ」のログが出るか出ないかという二値の
 確認なので、これが最も確実）:
 
-- 対象は実機の実在ライブラリにあった `Tetris (World) (Rev 1) [BGM].gbs`
+- 対象は実機の実在ライブラリにあった `<テストGBSパックC>.gbs`
   トラック1（有名なBGMで、途中で切れず鳴り続ける実物のループ曲）。
 - **対照実験（fixが効いていない場合の基準動作）**: `--repeat none
   --duration 4 --fade-ms 1000`で実行したところ、再生開始から**約5.0秒
@@ -2418,7 +2416,7 @@ upstreamのデフォルト=1始まりのまま動くこと。上記(c)節参照�
 **UIの見た目（`--:--`・シークバー非表示・Default lengthの並び）は、
 実機のSDLレンダラ経由の`--screenshot`で目視確認した**（ソフトウェア
 レンダラのホストではなく、実機の実際の描画パスを通した状態）。
-同じ`Tetris (World) (Rev 1) [BGM].gbs`を`--window 640x480`のGUIモードで
+同じ`<テストGBSパックC>.gbs`を`--window 640x480`のGUIモードで
 開き、`--ui-script`でYコンボを注入して`--screenshot`で最終フレームを
 書き出した:
 
@@ -2551,13 +2549,13 @@ lengthが生きる（＝m3u優先のまま）なら実質ながさチェンジ�
 ### 実機検証（完了）
 
 `./scripts/build-aarch64.sh` → `./scripts/package.sh` →
-`scp muGBS-1.4.0.muxapp root@192.168.0.20:/mnt/mmc/ARCHIVE/` →
+`scp muGBS-1.4.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/` →
 `/opt/muos/script/mux/extract.sh`（Archive Managerが内部で呼ぶのと同一
 スクリプト）で実機へ導入し、`bin/mugbs --version`が`muGBS 1.4.0`を
 報告することを確認した。
 
 **「上書きが効く」ことと「`one`が優先する」ことの両方を、実在の
-ループ曲（Issue #15と同じ`Tetris (World) (Rev 1) [BGM].gbs`。同名m3uは
+ループ曲（Issue #15と同じ`<テストGBSパックC>.gbs`。同名m3uは
 無いので全17トラックとも`length_known==0`＝Default lengthフォールバック
 対象）に対する`--cli`のログだけで機械的に確認した**（目視ではなく、
 「フェード完了→次トラックへ」のログが出るか出ないかという二値の確認。
@@ -2603,7 +2601,7 @@ Issue本文・コメントは空でタイトルのみ（「ながさチェンジ
 Issue #19で実装した`playlist_resolve_length_ms()`は、`length_override_sec`が
 非0なら**既知/不明を問わず全トラックを強制する**設計だった(F-28)。これは
 「ループするBGMを長く聴きたい」という当初の想定(実機検証も
-`Tetris (World) (Rev 1) [BGM].gbs`のループ曲で行った)では正しいが、
+`<テストGBSパックC>.gbs`のループ曲で行った)では正しいが、
 **ループ構造を持たない曲**(m3uの曲長欄はあるが実際には途中で終わる曲)にも
 同じ強制をかけていたため、表示上の合計時間と実際に鳴る長さが食い違って
 いた。実際の音は自然に終わり、libgmeの無音自動終了
@@ -2839,7 +2837,7 @@ Issueの本文は「短い再生時間（3秒や5秒）はスキップする機�
 ### 実機検証（完了）
 
 `./scripts/build-aarch64.sh` → `./scripts/package.sh` →
-`scp muGBS-1.5.0.muxapp root@192.168.0.20:/mnt/mmc/ARCHIVE/` →
+`scp muGBS-1.5.0.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/` →
 `/opt/muos/script/mux/extract.sh`（Archive Managerが内部で呼ぶのと同一
 スクリプト）で実機へ導入し、`bin/mugbs --version`が`muGBS 1.5.0`を
 報告することを確認した。
@@ -2986,7 +2984,7 @@ SSH越しに直接叩いて起動すると`muxfrontend`側のフォアグラウ�
 
 ## Issue #29: NSFヘッダのShift_JIS対応（美咲フォント同梱、v1.7.0）
 
-ユーザーが実際に持っていたNSF（`Downtown Special - 国士くん（くにおくん）
+ユーザーが実際に持っていたNSF（`<テストNSF>
 のジダイゲキだよ全員集合BGM`）を再生すると、曲名・著作権表示が化ける
 という報告から着手した。ユーザー自身「他のNSF対応プレーヤーでも同様に
 化けるので実装の問題ではなく元ファイルの問題だと思う」と見立てていたが、

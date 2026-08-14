@@ -60,6 +60,11 @@ set(USE_GME_GBS ON CACHE BOOL "" FORCE)
 # upstreamが既定を変えたときに黙って壊れるため明示する。
 set(USE_GME_NSF ON CACHE BOOL "" FORCE)
 set(USE_GME_NSFE ON CACHE BOOL "" FORCE)
+# YM2612エミュレータの選択。"Nuked"/"GENS"はLGPLv2.1+だが"MAME"はGPLv2+。
+# 暗黙の既定値(現状は"Nuked")に頼るとupstreamが既定を変えたときに出荷バイナリの
+# ライセンスが黙ってGPLv2+へ変わってしまうため、ライセンス上の理由で明示する
+# (THIRD-PARTY.md参照)。
+set(GME_YM2612_EMU "Nuked" CACHE STRING "" FORCE)
 
 add_subdirectory(vendor/game-music-emu EXCLUDE_FROM_ALL)
 
