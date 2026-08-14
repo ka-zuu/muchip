@@ -435,9 +435,9 @@ CDは「タグを打ったらCIが成果物を作る」形ではなく、「開�
 （タグ・バージョン・CHANGELOGの整合性＋クリーンなチェックアウトでの
 フルCI）だけをする」形にしている（Release Guardワークフロー）。
 
-**`main`直push禁止**は`.githooks/pre-push`で自衛している（無料プラン+
-privateリポジトリではbranch protection/rulesetのAPIが403を返すため。
-publicにするか GitHub Pro にすれば本来のサーバ側強制が使える）。
+**`main`直push禁止**は`.githooks/pre-push`で自衛している。GitHub側の
+branch protection/rulesetと併用する多重防御で、ruleset はサーバ側の
+設定でありクローン直後には効かないためフックで補っている。
 `git config core.hooksPath .githooks` をクローンごとに1回実行する必要が
 ある。
 

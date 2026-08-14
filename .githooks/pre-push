@@ -3,10 +3,10 @@
 #
 # main への直接 push を拒否する。 (P13)
 #
-# 本来は GitHub 側の branch protection / ruleset で強制したいが、無料プラン
-# かつ private リポジトリでは該当 API がどちらも 403 を返す
-# ("Upgrade to GitHub Pro or make this repository public to enable this
-#  feature.")。そこでリポジトリに追跡されるフックで代用する。
+# 本来は GitHub 側の branch protection / ruleset で強制すべきだが、
+# ruleset はサーバ側の設定でありクローン直後には効かない
+# (有効化を忘れる・API/UI操作を誰かが戻す、といった事故がありうる)。
+# そこでリポジトリに追跡されるフックを多重防御として併用する。
 #
 # 有効化 (クローンごとに1回必要):
 #
@@ -17,9 +17,7 @@
 #
 # 制約: これは自衛であって強制ではない。git push --no-verify や
 # 環境変数 MUCHIP_ALLOW_PUSH_MAIN=1 で意図的に抜けられる。本当の強制が
-# 要るようになったら次のどちらかを行うこと:
-#   a) リポジトリを public にする (ruleset が無料で使える)
-#   b) GitHub Pro にする
+# 要るときは GitHub 側の branch protection / ruleset を有効にすること。
 #
 # タグの push は素通しする。scripts/release.sh が v<version> タグを
 # push するため。

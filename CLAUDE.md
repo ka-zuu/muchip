@@ -13,6 +13,7 @@ muChip（muOS向け chiptune プレーヤー、GBS/NSF対応）のリポジト�
 | 書く内容 | 置き場所 |
 |---|---|
 | 何のアプリか・使い方・インストール | [`README.md`](./README.md) |
+| サードパーティ・同梱ソースのライセンス一覧 | [`THIRD-PARTY.md`](./THIRD-PARTY.md) |
 | 仕様（F-xx要件・UI規則・config.iniキー・T-xxテストケース） | [`SPEC.md`](./SPEC.md) |
 | ビルド・クロスビルド・リリース・CI・PR運用の手順 | [`docs/development.md`](./docs/development.md) |
 | 「なぜこうなっているか」＝いま有効な設計判断 | [`docs/design-notes.md`](./docs/design-notes.md) |

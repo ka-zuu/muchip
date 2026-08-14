@@ -109,9 +109,11 @@ printf '%s\n' "$entries" | grep -qv '^muChip/' &&
 printf '%s\n' "$entries" | grep -Eq '^/|(^|/)\.\.(/|$)' &&
 	fail "$OUT" "C-2 絶対パスまたは '..' を含む(Archive Manager に拒否される)"
 
-# C-3: 必須エントリ。
+# C-3: 必須エントリ。LICENSE/THIRD-PARTY.md/licenses/LGPL-2.1.txt は
+#      libgme(LGPL-2.1)を静的リンクしているための同梱義務(THIRD-PARTY.md参照)。
 for e in muChip/mux_launch.sh muChip/mux_lang.ini muChip/config.ini \
-	muChip/bin/muchip muChip/glyph/muchip.png muChip/grid/muchip.png; do
+	muChip/bin/muchip muChip/glyph/muchip.png muChip/grid/muchip.png \
+	muChip/LICENSE muChip/THIRD-PARTY.md muChip/licenses/LGPL-2.1.txt; do
 	printf '%s\n' "$entries" | grep -qx "$e" || fail "$OUT" "C-3 $e が無い"
 done
 
