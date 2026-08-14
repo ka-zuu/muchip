@@ -18,7 +18,7 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
 `## vX.Y.Z - YYYY-MM-DD` へ書き換える。`CMakeLists.txt` の
 `project(muchip VERSION ...)` の更新と同じコミットで行うこと。
 
-## Unreleased
+## v1.7.0 - 2026-08-14
 
 ### ながさチェンジ
 
