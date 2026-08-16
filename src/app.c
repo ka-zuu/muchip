@@ -16,6 +16,13 @@
 #include "playlist.h"
 #include "ui.h"
 
+/* main.c と同じ既定値付きフォールバック(CMakeLists.txt の project() が
+ * 唯一のバージョン情報源。tests/ から app.c を単体ビルドすることは
+ * 無いが保険として持たせておく)。Settingsのヘッダサブタイトルに使う。 */
+#ifndef MUCHIP_VERSION
+#define MUCHIP_VERSION "0.0.0-dev"
+#endif
+
 typedef enum {
     SCREEN_BROWSER,
     SCREEN_PLAYER,
@@ -221,6 +228,24 @@ static int list_visible_rows(app_t *app) {
     ui_rect_t r = list_rect(app);
     int rows = r.h / app->ui.metrics.line_h;
     return rows < 1 ? 1 : rows;
+}
+
+/* Issue #41: パスの末尾要素(フォルダ名/ファイル名)をヘッダのタイトルに
+ * 使うためのヘルパ。フルパスはサブタイトル側に出すので、ここでは
+ * ディレクトリ区切りの最後だけ返す。戻り値は path 内を指すポインタ
+ * (所有権を持たない)。browser.c の parent_dir()/join_path() が作る
+ * cwd は末尾に'/'を付けない(ルート"/"だけの例外)ので、末尾スラッシュの
+ * トリムはルート判定にだけ使い、それ以外は素直に最後の'/'の次から
+ * 文字列終端まで返す。 */
+static const char *path_leaf(const char *path) {
+    if (!path || !path[0]) return "";
+    size_t len = strlen(path);
+    size_t end = len;
+    while (end > 0 && path[end - 1] == '/') end--;
+    if (end == 0) return "/";
+    size_t start = end;
+    while (start > 0 && path[start - 1] != '/') start--;
+    return path + start;
 }
 
 /* ---- ビジュアライザ (F-14) ---------------------------------------------
@@ -1151,31 +1176,43 @@ static void draw_browser(app_t *app) {
     const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_PANEL);
     const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
     const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
+    const SDL_Color accent = ui_color(ui, THEME_ROLE_ACCENT);
     const SDL_Color err = ui_color(ui, THEME_ROLE_WARN);
 
     ui_clear(ui, bg);
 
-    ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
-    ui_fill_rect(ui, header, bar_bg);
-    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, header.y, header.h);
-    int hy = (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2;
-    int cwd_max_w = ui->screen_w - ui->metrics.pad * 2 - (bat_w ? bat_w + ui->metrics.pad : 0);
-    ui_text_clipped(ui, ui->metrics.pad, hy, cwd_max_w,
-                     UI_TEXT_BODY, fg, app->browser.cwd ? app->browser.cwd : "");
+    ui_rect_t title_row = ui_header_title_row(ui);
+    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, title_row.y, title_row.h);
+
+    char counter[32];
+    if (app->browser.count > 0) {
+        snprintf(counter, sizeof(counter), "%d / %d", app->browser.selected + 1, app->browser.count);
+    } else {
+        counter[0] = 0;
+    }
+    ui_header_t hdr = {
+        .title = app->browser.cwd ? path_leaf(app->browser.cwd) : "",
+        .subtitle = app->browser.cwd ? app->browser.cwd : "",
+        .counter = counter,
+        .right_reserve = bat_w,
+        .title_color = fg, .sub_color = dim, .counter_color = accent, .bar_color = bar_bg,
+    };
+    ui_draw_header(ui, &hdr);
 
     ui_rect_t list = list_rect(app);
     ui_draw_list(ui, list, app->browser.count, app->browser.selected, -1,
                  &app->browser.scroll, browser_item_text, app);
 
-    ui_rect_t footer = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
-    ui_fill_rect(ui, footer, bar_bg);
-    int fy = footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
+    ui_footer_t ftr = {
+        .line1 = "A:Open  B:Up  Start:Menu",
+        .line2 = "<>:Page  Start+Select:Quit",
+        .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
+    };
     if (app->status[0] && SDL_GetTicks() < app->status_until) {
-        ui_text_clipped(ui, ui->metrics.pad, fy, ui->screen_w - ui->metrics.pad * 2,
-                         UI_TEXT_SMALL, err, app->status);
-    } else {
-        ui_text(ui, ui->metrics.pad, fy, UI_TEXT_SMALL, dim, "A:Open  B:Up  Start:Menu  Start+Select:Quit");
+        ftr.line1 = app->status;
+        ftr.line1_color = err;
     }
+    ui_draw_footer(ui, &ftr);
 }
 
 static void draw_player(app_t *app) {
@@ -1309,11 +1346,6 @@ static void draw_player(app_t *app) {
     ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, status_line);
     y += ui->metrics.line_h;
 
-    /* フッタはSMALLのままなので、縦センタリングもSMALLのグリフで測る
-     * (metrics.glyph は BODY 相当。以前はこれを使っていて数px下にずれていた)。 */
-    int footer_y = ui->screen_h - ui->metrics.footer_h
-                    + (ui->metrics.footer_h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
-
     /* ステータス行の下からフッタ帯の上までを
      *   [同一ディレクトリのファイル一覧(P9)] -> [ビジュアライザ(F-14)]
      * で分け合う。一覧は操作に必要なので優先し(最大PLAYER_LIST_MAX_ROWS行)、
@@ -1378,13 +1410,21 @@ static void draw_player(app_t *app) {
         ui_text_clipped(ui, x, msg_y, content_w, UI_TEXT_BODY, err, app->status);
     }
 
-    /* 終了操作(SPEC 6.3「Menu長押し=終了」+ P6で追加したStart+Select代替)を
-     * 常に見えるようにする。GUIDEボタンはmuOS側のオーバーレイに吸われて
-     * 効かない可能性があるため、Start+Selectの方をここに明記する。 */
-    char footer_text[512];
-    snprintf(footer_text, sizeof(footer_text), "Start+Select:Quit  %s",
+    /* Issue #41: 他4画面と同じ2行フッタへ揃える。終了操作
+     * (SPEC 6.3「Menu長押し=終了」+ P6で追加したStart+Select代替)は
+     * GUIDEボタンがmuOS側のオーバーレイに吸われて効かない可能性がある
+     * ため、常に見える2行目に明記する(以前は1行に相乗りさせていた
+     * display_pathとの共存で、狭い解像度だと後ろのpathだけが削れて
+     * いたが、専用の行になったことでどちらも収まりやすくなった)。 */
+    char footer_line2[512];
+    snprintf(footer_line2, sizeof(footer_line2), "Start+Select:Quit  %s",
              src ? src->display_path : "");
-    ui_text_clipped(ui, x, footer_y, content_w, UI_TEXT_SMALL, dim, footer_text);
+    ui_footer_t ftr = {
+        .line1 = "A:Play  X:Tracks  Select:Pause  Start:Settings",
+        .line2 = footer_line2,
+        .line1_color = fg, .line2_color = accent, .bar_color = ui_color(ui, THEME_ROLE_PANEL),
+    };
+    ui_draw_footer(ui, &ftr);
 }
 
 static void draw_tracklist(app_t *app) {
@@ -1393,17 +1433,34 @@ static void draw_tracklist(app_t *app) {
     const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_PANEL);
     const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
     const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
+    const SDL_Color accent = ui_color(ui, THEME_ROLE_ACCENT);
 
     ui_clear(ui, bg);
 
-    ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
-    ui_fill_rect(ui, header, bar_bg);
-    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, header.y, header.h);
-    char hdr[64];
-    snprintf(hdr, sizeof(hdr), "Tracks (%d)", app->pl ? app->pl->entry_count : 0);
-    int hdr_max_w = ui->screen_w - ui->metrics.pad * 2 - (bat_w ? bat_w + ui->metrics.pad : 0);
-    ui_text_clipped(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
-                     hdr_max_w, UI_TEXT_BODY, fg, hdr);
+    ui_rect_t title_row = ui_header_title_row(ui);
+    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, title_row.y, title_row.h);
+
+    const char *title = "Tracks";
+    const char *subtitle = "";
+    if (app->pl) {
+        if (app->pl->game && app->pl->game[0]) {
+            title = app->pl->game;
+        } else if (app->pl->source_count > 0) {
+            title = path_leaf(app->pl->sources[0].display_path);
+        }
+        if (app->pl->source_count > 0) subtitle = app->pl->sources[0].display_path;
+    }
+    char counter[32];
+    if (app->pl && app->pl->entry_count > 0) {
+        snprintf(counter, sizeof(counter), "%d / %d", app->tracklist_sel + 1, app->pl->entry_count);
+    } else {
+        counter[0] = 0;
+    }
+    ui_header_t hdr = {
+        .title = title, .subtitle = subtitle, .counter = counter, .right_reserve = bat_w,
+        .title_color = fg, .sub_color = dim, .counter_color = accent, .bar_color = bar_bg,
+    };
+    ui_draw_header(ui, &hdr);
 
     if (app->pl) {
         ui_rect_t list = list_rect(app);
@@ -1412,10 +1469,11 @@ static void draw_tracklist(app_t *app) {
                      tracklist_item_text, app);
     }
 
-    ui_rect_t footer = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
-    ui_fill_rect(ui, footer, bar_bg);
-    ui_text(ui, ui->metrics.pad, footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2,
-            UI_TEXT_SMALL, dim, "A:Play  B/X:Back");
+    ui_footer_t ftr = {
+        .line1 = "A:Play  B/X:Back", .line2 = "Start+Select:Quit",
+        .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
+    };
+    ui_draw_footer(ui, &ftr);
 }
 
 static const char *settings_item_text(void *ctx, int index) {
@@ -1524,36 +1582,41 @@ static void draw_settings(app_t *app) {
     const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_PANEL);
     const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
     const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
+    const SDL_Color accent = ui_color(ui, THEME_ROLE_ACCENT);
     const SDL_Color err = ui_color(ui, THEME_ROLE_WARN);
 
     ui_clear(ui, bg);
 
-    ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
-    ui_fill_rect(ui, header, bar_bg);
-    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, header.y, header.h);
-    int hdr_max_w = ui->screen_w - ui->metrics.pad * 2 - (bat_w ? bat_w + ui->metrics.pad : 0);
-    ui_text_clipped(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
-                     hdr_max_w, UI_TEXT_BODY, fg, "Settings");
+    ui_rect_t title_row = ui_header_title_row(ui);
+    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, title_row.y, title_row.h);
+
+    char subtitle[32];
+    snprintf(subtitle, sizeof(subtitle), "muChip %s", MUCHIP_VERSION);
+    char counter[32];
+    snprintf(counter, sizeof(counter), "%d / %d", app->settings_sel + 1, SETTINGS_COUNT);
+    ui_header_t hdr = {
+        .title = "Settings", .subtitle = subtitle, .counter = counter, .right_reserve = bat_w,
+        .title_color = fg, .sub_color = dim, .counter_color = accent, .bar_color = bar_bg,
+    };
+    ui_draw_header(ui, &hdr);
 
     ui_rect_t list = list_rect(app);
     ui_draw_list(ui, list, SETTINGS_COUNT, app->settings_sel, -1,
                  &app->settings_scroll, settings_item_text, app);
 
-    ui_rect_t footer = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
-    ui_fill_rect(ui, footer, bar_bg);
-    int footer_y = footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2;
+    /* Issue #27: SET_ACTION行(Edit theme)ではLEFT/RIGHTが無反応なので
+     * "L/R:Adjust" は誤解を招く。選択行に応じてフッタを差し替える。 */
+    ui_footer_t ftr = {
+        .line1 = (SETTINGS[app->settings_sel].kind == SET_ACTION)
+                     ? "A:Open  B/START:Back" : "L/R:Adjust  B/START:Back",
+        .line2 = "X:Reset all",
+        .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
+    };
     if (app->status[0] && SDL_GetTicks() < app->status_until) {
-        ui_text_clipped(ui, ui->metrics.pad, footer_y, ui->screen_w - ui->metrics.pad * 2,
-                         UI_TEXT_SMALL, err, app->status);
-    } else if (SETTINGS[app->settings_sel].kind == SET_ACTION) {
-        /* Issue #27: SET_ACTION行(Edit theme)ではLEFT/RIGHTが無反応なので
-         * "L/R:Adjust" は誤解を招く。選択行に応じてフッタを差し替える。 */
-        ui_text(ui, ui->metrics.pad, footer_y, UI_TEXT_SMALL, dim,
-                "A:Open  B/START:Back  X:Reset");
-    } else {
-        ui_text(ui, ui->metrics.pad, footer_y, UI_TEXT_SMALL, dim,
-                "L/R:Adjust  B/START:Back  X:Reset");
+        ftr.line1 = app->status;
+        ftr.line1_color = err;
     }
+    ui_draw_footer(ui, &ftr);
 
     if (app->settings_confirm_reset) {
         draw_settings_confirm_reset(app);
@@ -1582,10 +1645,13 @@ static void draw_theme_edit(app_t *app) {
 
     ui_clear(ui, bg);
 
-    ui_rect_t header = { 0, 0, ui->screen_w, ui->metrics.header_h };
-    ui_fill_rect(ui, header, panel);
-    ui_text_clipped(ui, ui->metrics.pad, (header.h - ui_glyph_size(ui, UI_TEXT_BODY)) / 2,
-                     ui->screen_w - ui->metrics.pad * 2, UI_TEXT_BODY, safe_fg, "Edit theme");
+    char counter[32];
+    snprintf(counter, sizeof(counter), "%d / %d", app->theme_edit_slot + 1, THEME_SLOT_COUNT);
+    ui_header_t hdr = {
+        .title = "Edit theme", .subtitle = "custom palette", .counter = counter, .right_reserve = 0,
+        .title_color = safe_fg, .sub_color = safe_fg, .counter_color = safe_fg, .bar_color = panel,
+    };
+    ui_draw_header(ui, &hdr);
 
     ui_rect_t list = list_rect(app);
     int visible = ui_list_visible_rows(ui, list);
@@ -1632,10 +1698,11 @@ static void draw_theme_edit(app_t *app) {
         ui_draw_rect(ui, swatch, swatch_border);
     }
 
-    ui_rect_t footer = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
-    ui_fill_rect(ui, footer, panel);
-    ui_text(ui, ui->metrics.pad, footer.y + (footer.h - ui_glyph_size(ui, UI_TEXT_SMALL)) / 2,
-            UI_TEXT_SMALL, safe_fg, "L/R:Channel  <>:Adjust  X:Revert  B:Back");
+    ui_footer_t ftr = {
+        .line1 = "<>:Adjust  L/R:Channel", .line2 = "X:Revert  B:Back",
+        .line1_color = safe_fg, .line2_color = safe_fg, .bar_color = panel,
+    };
+    ui_draw_footer(ui, &ftr);
 }
 
 /* ---- 起動時のBrowser開始位置 (F-13) ------------------------------------- */

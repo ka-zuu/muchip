@@ -157,6 +157,44 @@ int ui_list_visible_rows(const ui_t *ui, ui_rect_t r);
  * 内部計算そのもの)。count<=0 なら *scroll=0。 */
 void ui_list_clamp_scroll(const ui_t *ui, ui_rect_t r, int count, int selected, int *scroll);
 
+/* ヘッダ帯(タイトル+サブタイトルの2段組+右端カウンタ)。Issue #41:
+ * 参考にしたランチャーUIの文字階層に合わせ、パス等の1行だけだった
+ * ヘッダへ「いまどの画面のどこにいるか」を出す。文字列・色は呼び出し側
+ * (app.c)が決める(ここには「何を出すか」のロジックは置かない、という
+ * ui.h の方針どおり)。title/subtitle/counter はいずれもNULL/""で
+ * 省略できる。right_reserve はタイトル行の右端に確保済みの幅
+ * (バッテリーゲージ等。draw_battery()の戻り値をそのまま渡す想定)。 */
+typedef struct {
+    const char *title;
+    const char *subtitle;
+    const char *counter;
+    int right_reserve;
+    SDL_Color title_color;
+    SDL_Color sub_color;
+    SDL_Color counter_color;
+    SDL_Color bar_color;
+} ui_header_t;
+void ui_draw_header(ui_t *ui, const ui_header_t *h);
+
+/* フッタ帯(操作ヒント2行)。line1が主要操作、line2が補助操作。
+ * line2 はNULLで1行のみにできる。 */
+typedef struct {
+    const char *line1;
+    const char *line2;
+    SDL_Color line1_color;
+    SDL_Color line2_color;
+    SDL_Color bar_color;
+} ui_footer_t;
+void ui_draw_footer(ui_t *ui, const ui_footer_t *f);
+
+/* ヘッダ/フッタ帯そのものの矩形と、ヘッダのタイトル行(1段目)の矩形。
+ * バッテリーゲージの縦センタリングやPlayerのステータスオーバーレイの
+ * 位置合わせに、帯の高さの内訳を再計算せず使えるようにするための
+ * 純関数(ui_metrics_tから導出するだけでSDL_Initは不要)。 */
+ui_rect_t ui_header_rect(const ui_t *ui);
+ui_rect_t ui_header_title_row(const ui_t *ui);
+ui_rect_t ui_footer_rect(const ui_t *ui);
+
 /* Browser/TrackList で共有するスクロール付きリスト描画。
  * item_fn(ctx, index) は行の表示文字列を返す(呼び出し中のみ有効な
  * ポインタでよい。内部で即座に描画する)。

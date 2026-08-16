@@ -305,9 +305,19 @@ void ui_metrics_compute(int screen_w, int screen_h, ui_metrics_t *out) {
     out->pad = (int)(4.0f * scale + 0.5f);
     if (out->pad < 2) out->pad = 2;
 
-    out->line_h = out->glyph + out->pad;
-    out->header_h = out->line_h + out->pad * 2;
-    out->footer_h = out->line_h + out->pad * 2;
+    /* リスト行は行間を広げて読みやすくする(参考にしたランチャーUIの
+     * 文字バランスに合わせた変更。Issue #41)。以前は glyph+pad で
+     * 詰まっていた。 */
+    out->line_h = out->glyph + out->pad * 2;
+
+    /* ヘッダ/フッタは line_h からの導出をやめ、実際に載せる文字サイズ
+     * 段階の合計から直接組む。ヘッダはタイトル(TITLE)+サブタイトル
+     * (SMALL)の2段組、フッタは操作ヒント2行(SMALL x2)。
+     * pad|行|pad|行|pad の3等分にする(上下と行間を同じ幅で揃える)。 */
+    int title_px = ui_glyph_size_for(scale, UI_TEXT_TITLE);
+    int small_px = ui_glyph_size_for(scale, UI_TEXT_SMALL);
+    out->header_h = title_px + small_px + out->pad * 3;
+    out->footer_h = small_px * 2 + out->pad * 3;
 
     /* header_h+footer_h が screen_h 以上になると、app.c の list_rect() が
      * 負の高さを返してしまう(極端に低い解像度で発生し得る)。
@@ -484,6 +494,79 @@ void ui_draw_progress(ui_t *ui, ui_rect_t r, float ratio, SDL_Color fg, SDL_Colo
     if (inner.w > 0) ui_fill_rect(ui, inner, fg);
 }
 
+ui_rect_t ui_header_rect(const ui_t *ui) {
+    ui_rect_t r = { 0, 0, ui->screen_w, ui->metrics.header_h };
+    return r;
+}
+
+ui_rect_t ui_header_title_row(const ui_t *ui) {
+    int pad = ui->metrics.pad;
+    int title_px = ui_glyph_size_for(ui->metrics.scale, UI_TEXT_TITLE);
+    ui_rect_t r = { pad, pad, ui->screen_w - pad * 2, title_px };
+    if (r.w < 0) r.w = 0;
+    return r;
+}
+
+ui_rect_t ui_footer_rect(const ui_t *ui) {
+    ui_rect_t r = { 0, ui->screen_h - ui->metrics.footer_h, ui->screen_w, ui->metrics.footer_h };
+    return r;
+}
+
+/* Issue #41: ヘッダをタイトル(TITLE)+サブタイトル/カウンタ(SMALL)の
+ * 2段組で描く。帯の高さの内訳は ui_metrics_compute() の
+ * header_h = title_px + small_px + pad*3 と対応させてある
+ * (pad|タイトル行|pad|サブ行|pad)。right_reserve はバッテリー等、
+ * タイトル行の右端に既に確保済みの幅(SPEC 6.2の「右詰め要素を先に
+ * 確保してから本文を縮める」規則に従い、呼び出し側が
+ * draw_battery() 等の戻り値をそのまま渡す)。 */
+void ui_draw_header(ui_t *ui, const ui_header_t *h) {
+    ui_rect_t bar = ui_header_rect(ui);
+    ui_fill_rect(ui, bar, h->bar_color);
+
+    int pad = ui->metrics.pad;
+    ui_rect_t title_row = ui_header_title_row(ui);
+    if (h->title && h->title[0]) {
+        int title_max_w = title_row.w - (h->right_reserve > 0 ? h->right_reserve + pad : 0);
+        if (title_max_w < 0) title_max_w = 0;
+        ui_text_clipped(ui, title_row.x, title_row.y, title_max_w,
+                         UI_TEXT_TITLE, h->title_color, h->title);
+    }
+
+    int sub_y = title_row.y + title_row.h + pad;
+
+    int counter_w = 0;
+    if (h->counter && h->counter[0]) {
+        counter_w = ui_text_width(ui, UI_TEXT_SMALL, h->counter);
+        ui_text(ui, ui->screen_w - pad - counter_w, sub_y, UI_TEXT_SMALL,
+                h->counter_color, h->counter);
+    }
+    if (h->subtitle && h->subtitle[0]) {
+        int sub_max_w = ui->screen_w - pad * 2 - (counter_w > 0 ? counter_w + pad : 0);
+        if (sub_max_w < 0) sub_max_w = 0;
+        ui_text_clipped(ui, pad, sub_y, sub_max_w, UI_TEXT_SMALL, h->sub_color, h->subtitle);
+    }
+}
+
+/* Issue #41: フッタを操作ヒント2行(主要=line1/補助=line2)で描く。
+ * line2 が NULL/"" なら1行目だけ描く(帯の高さ自体は変えない。
+ * ui_metrics_compute() 側は常に2行ぶんを確保している)。 */
+void ui_draw_footer(ui_t *ui, const ui_footer_t *f) {
+    ui_rect_t bar = ui_footer_rect(ui);
+    ui_fill_rect(ui, bar, f->bar_color);
+
+    int pad = ui->metrics.pad;
+    int small_px = ui_glyph_size_for(ui->metrics.scale, UI_TEXT_SMALL);
+    int max_w = ui->screen_w - pad * 2;
+
+    if (f->line1 && f->line1[0]) {
+        ui_text_clipped(ui, pad, bar.y + pad, max_w, UI_TEXT_SMALL, f->line1_color, f->line1);
+    }
+    if (f->line2 && f->line2[0]) {
+        ui_text_clipped(ui, pad, bar.y + pad * 2 + small_px, max_w,
+                         UI_TEXT_SMALL, f->line2_color, f->line2);
+    }
+}
+
 void ui_draw_waveform(ui_t *ui, ui_rect_t r, const short *samples, int count,
                        SDL_Color fg, SDL_Color bg) {
     if (r.w <= 1 || r.h <= 1) return;
@@ -594,6 +677,7 @@ void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
     ui_list_clamp_scroll(ui, r, count, selected, scroll);
 
     const SDL_Color sel_bg = ui_color(ui, THEME_ROLE_SEL);
+    const SDL_Color sel_edge = ui_color(ui, THEME_ROLE_ACCENT);
     const SDL_Color mark_fg = ui_color(ui, THEME_ROLE_MARK);
     const SDL_Color normal_fg = ui_color(ui, THEME_ROLE_FG);
     /* Issue #27: sel_bgはユーザー編集(custom)でfgと近い値にされうるので、
@@ -612,6 +696,15 @@ void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
         if (idx == selected) {
             ui_rect_t hi = { r.x, y, r.w, row_h };
             ui_fill_rect(ui, hi, sel_bg);
+
+            /* Issue #41: 選択行の左端に明るいアクセントバーを添える
+             * (参考にしたランチャーUIの「行の始まりが立っている」印象を
+             * 塗りつぶしだけの旧デザインへ足す)。文字は変わらず r.x+pad
+             * から描くので、bar_w<pad なら重ならない。 */
+            int bar_w = ui->metrics.pad / 2;
+            if (bar_w < 2) bar_w = 2;
+            ui_rect_t edge = { r.x, y, bar_w, row_h };
+            ui_fill_rect(ui, edge, sel_edge);
         }
 
         SDL_Color fg = (idx == marked) ? mark_fg : (idx == selected ? sel_fg : normal_fg);
