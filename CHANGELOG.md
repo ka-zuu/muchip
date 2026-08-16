@@ -18,6 +18,16 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
 `## vX.Y.Z - YYYY-MM-DD` へ書き換える。`CMakeLists.txt` の
 `project(muchip VERSION ...)` の更新と同じコミットで行うこと。
 
+## Unreleased
+
+### UI
+
+- Browser・TrackList・Settings・Theme Editorのヘッダを、タイトル・
+  サブタイトル・件数カウンタ(`選択位置 / 総数`)の2段組にした。フッタも
+  操作ヒントを2行(主要操作/補助操作)に分け、Playerを含む5画面すべてに
+  適用した。リスト行は行間を広げ、選択行の左端にアクセント色の縦バーを
+  添えた(Issue #41)。
+
 ## v1.7.0 - 2026-08-14
 
 ### ながさチェンジ

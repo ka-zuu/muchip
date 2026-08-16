@@ -55,6 +55,15 @@ static int test_invariants(void) {
         CHECK(m.pad >= 2);
         CHECK(m.line_h > m.glyph); /* pad分の余白があること */
 
+        /* Issue #41: ヘッダはタイトル(TITLE)+サブ(SMALL)の2段、フッタは
+         * 操作ヒント2行(SMALL x2)が物理的に載ること。line_h も
+         * glyph+pad*2 まで広げた行間を保つこと。 */
+        int title_px = ui_glyph_size_for(m.scale, UI_TEXT_TITLE);
+        int small_px = ui_glyph_size_for(m.scale, UI_TEXT_SMALL);
+        CHECK(m.header_h >= title_px + small_px);
+        CHECK(m.footer_h >= small_px * 2);
+        CHECK(m.line_h >= m.glyph + m.pad * 2);
+
         /* app.c の list_rect() が負の高さを返さないための不変条件。 */
         CHECK(m.header_h + m.footer_h < h);
 
@@ -71,6 +80,11 @@ static int test_baseline_640x480(void) {
     ui_metrics_compute(640, 480, &m);
     CHECK(m.scale > 0.999f && m.scale < 1.001f);
     CHECK(m.glyph == 16); /* UI_TEXT_BODY(=2) * 8px * scale(1.0) */
+    /* Issue #41: line_h=glyph+pad*2, header_h=title_px+small_px+pad*3,
+     * footer_h=small_px*2+pad*3。pad=4, title_px=24, small_px=8。 */
+    CHECK(m.line_h == 24);
+    CHECK(m.header_h == 44);
+    CHECK(m.footer_h == 28);
     return 0;
 }
 
