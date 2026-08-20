@@ -20,6 +20,7 @@ static char *dup_str(const char *s) {
 static int has_music_ext(const char *name) {
     return ends_with_ci(name, ".gbs") || ends_with_ci(name, ".gb") ||
            ends_with_ci(name, ".nsf") || ends_with_ci(name, ".nsfe") ||
+           ends_with_ci(name, ".spc") ||
            ends_with_ci(name, ".m3u") || ends_with_ci(name, ".zip");
 }
 

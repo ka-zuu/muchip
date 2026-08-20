@@ -43,6 +43,21 @@ SPEC の記述と食い違う点がいくつかある。
   無効化ではないので混同しないこと。
 - `Music_Emu.cpp` の無音自動終了（`silence_max = 6` 秒）はフェードとは
   独立した仕組みで、ループ情報もm3uも無い素のGBS/NSFで機能する。
+- **`Spc_Emu`（SPC, Issue #43）はEQ（F-20）とステレオ深度（F-21）が完全に
+  無効**。`Spc_Emu` は `Classic_Emu` を継承せず `Music_Emu` を直接継承する
+  ため `set_equalizer_()` が空実装（`Music_Emu.h` の `Gme_Info_`/基底の
+  デフォルト）で、`gme_set_stereo_depth()`（`gme.cpp`）が使う
+  `effects_buffer` も `NULL` のまま（`Classic_Emu` がコンストラクタで
+  確保するメンバのため）。値を送っても黙って無視されるだけでエラーには
+  ならない。UI側はこれを隠さず、Settings画面の `Stereo depth`/`EQ bass`/
+  `EQ treble` の3行を `playlist_source_t.effects_supported`
+  （`gme_type(emu) != gme_spc_type` で判定、`src/playlist.c`）を見て
+  グレーアウトする（`src/app.c` の `settings_item_dim()` を
+  `ui_draw_list()` の `dim_fn` へ渡す。`THEME_ROLE_DIM` で描く）。
+  カーソルを合わせた選択中も淡色を優先する（`src/ui.c`。選択した瞬間
+  こそ「効かない」と伝わってほしいため、通常の選択色より優先する設計）。
+  値の編集自体は禁止しない（GBS/NSFへ戻れば効くグローバル設定のため、
+  無効化する意味が薄い）。
 
 ## libgme フォーク運用（m3u トラック番号の0始まり問題）
 
@@ -63,6 +78,11 @@ GBSも16進と同様デコーダの生索引をそのまま使うようにした
 `first_song`（1始まり）を持ち、実在のNSF用m3uも1始まりで書かれるため、
 upstream のデフォルト動作（10進を1始まりとみなし-1する）とそのまま
 一致する。`gme_nsf_type_`（`Nsf_Emu.cpp`）には手を入れていない。
+
+**SPC（Issue #43）も NSF と同じ理由でパッチ不要**。SPCは1ファイル=1
+トラック固定なので実用上ずれが問題になる場面自体が乏しいが、
+`gme_spc_type_`（`Spc_Emu.cpp`）も `flags_` を触っていないデフォルトの
+まま = upstreamの「10進は1始まり」がそのまま適用される。
 
 submodule は SHA でピン留めされた独自コミットを指すため、**public な
 フォーク**に置いている（private フォークだと Actions の既定
@@ -110,6 +130,15 @@ known, cfg)` が config の上書き設定（Length・ながさチェンジ）�
 GYM/VGM/SPCと拡張m3uのループ欄だけで、**GBS/NSFのヘッダにはループ情報も
 曲長も一切無い**ため、これをゲートにすると素のGBS/NSF全部でながさ
 チェンジが死ぬ（採らなかった代替案）。
+
+**SPC（Issue #43）はID666タグに曲長（秒）を持つ**ため
+（`Spc_Emu::track_info_()` が `header.len_secs` をそのまま
+`info->length` へ入れる）、素のGBS/NSFと違い `length_known` が立った
+状態でスキャンされる（`loop_length` はSPCのヘッダには無いので
+`loops` 自体は0のまま = 上表の「曲長既知かつ非ループ」区分に入る
+ことが多い）。ながさチェンジ・Skip shortの挙動がGBS/NSFの「曲長不明」
+前提のトラックとは異なる経路を通ることになる（`tests/test_playlist.c`
+の `test_spc_id666_length_known()` 参照）。
 
 `REPEAT_ONE` はながさチェンジより優先し、`playlist_fade_start_ms()` が
 常に `-1`（フェード無効）を返してエンドレス再生になる。設定変更は

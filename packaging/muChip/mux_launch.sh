@@ -15,7 +15,7 @@
 #   ICON: glyph/<ICON>.png と grid/<ICON>.png を引くためのキー
 #   GRID: グリッド表示時の短い名前
 
-# HELP: A chiptune music player (GBS/NSF) with full sub-track and M3U support.
+# HELP: A chiptune music player (GBS/NSF/SPC) with full sub-track and M3U support.
 # ICON: muchip
 # GRID: muChip
 
@@ -131,7 +131,7 @@ MOUNTS=""
 # MUSIC/Music は同じものにマッチするが、ext4 の SD を使う人のために両方書く。
 # 将来「メディアライブラリのディレクトリ指定」を実装したら、この一覧は
 # config.ini 側へ移す。
-SEARCH_SUBDIRS="MUSIC Music ROMS/GBS ROMS/MUSIC ROMS/Music ROMS"
+SEARCH_SUBDIRS="MUSIC Music ROMS/GBS ROMS/SPC ROMS/MUSIC ROMS/Music ROMS"
 
 START_DIR=""
 for M in $MOUNTS; do

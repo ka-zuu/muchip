@@ -207,6 +207,11 @@ int playlist_find_entry(const playlist_t *pl, int source_index, int track_index)
     return -1;
 }
 
+int playlist_effects_supported(const playlist_t *pl, int source_index) {
+    if (!pl || source_index < 0 || source_index >= pl->source_count) return 1;
+    return pl->sources[source_index].effects_supported;
+}
+
 int playlist_fade_start_ms(int length_ms, const mugbs_config_t *cfg) {
     return cfg->repeat_mode == REPEAT_ONE ? -1 : length_ms;
 }
@@ -227,6 +232,7 @@ static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path, char
     s->author = dup_str("");
     s->copyright = dup_str("");
     s->system = dup_str("");
+    s->effects_supported = 1; /* Issue #43: pl_scan_source()がSPCなら0へ差し替える */
     return pl->source_count++;
 }
 
@@ -268,6 +274,10 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
             return -1;
         }
     }
+
+    /* Issue #43: SPCはEQ/ステレオ深度が効かない(playlist.hのeffects_supported
+     * コメント参照)。Settings画面向けにここで一度だけ判定して焼き込む。 */
+    src->effects_supported = (gme_type(emu) != gme_spc_type);
 
     if (src->m3u_text) {
         err = gme_load_m3u_data(emu, src->m3u_text, (long)src->m3u_len);

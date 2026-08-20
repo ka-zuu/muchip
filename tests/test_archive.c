@@ -45,13 +45,14 @@ static void write_test_zip(const char *zip_path, const char *const *names,
 
 static int test_list_and_classify(void) {
     char *zip_path = path_in("game.zip");
-    /* Song.nsf はIssue #2 (NSF対応): k_music_exts[] が既に ".nsf" を含むこと、
-     * つまり zip 内の .nsf も .gbs と同じく音楽ファイルとして分類されることを
-     * 確認する。 */
+    /* Song.nsf はIssue #2 (NSF対応)、Song.spc はIssue #43 (SPC対応):
+     * k_music_exts[] が既に ".nsf"/".spc" を含むこと、つまり zip 内の
+     * それらも .gbs と同じく音楽ファイルとして分類されることを確認する。 */
     const char *names[] = {"Game.gbs", "Game.m3u", "readme.txt", "sub/Other.GBS",
-                            "Song.nsf"};
-    const char *contents[] = {"gbsdata", "m3udata", "text", "otherdata", "nsfdata"};
-    write_test_zip(zip_path, names, contents, 5);
+                            "Song.nsf", "Song.spc"};
+    const char *contents[] = {"gbsdata", "m3udata", "text", "otherdata", "nsfdata",
+                               "spcdata"};
+    write_test_zip(zip_path, names, contents, 6);
 
     archive_t *ar = NULL;
     CHECK(archive_open(zip_path, &ar) == 0);
@@ -59,15 +60,15 @@ static int test_list_and_classify(void) {
     archive_entry_t *entries = NULL;
     int count = 0;
     CHECK(archive_list(ar, &entries, &count) == 0);
-    /* readme.txt は対象外拡張子なので列挙されない -> 4件 */
-    CHECK(count == 4);
+    /* readme.txt は対象外拡張子なので列挙されない -> 5件 */
+    CHECK(count == 5);
 
     int music = 0, m3u = 0;
     for (int i = 0; i < count; i++) {
         if (entries[i].is_music) music++;
         if (entries[i].is_m3u) m3u++;
     }
-    CHECK(music == 3); /* Game.gbs, sub/Other.GBS, Song.nsf */
+    CHECK(music == 4); /* Game.gbs, sub/Other.GBS, Song.nsf, Song.spc */
     CHECK(m3u == 1);
 
     archive_free_entries(entries, count);

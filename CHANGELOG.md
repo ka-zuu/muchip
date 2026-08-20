@@ -20,6 +20,17 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
 
 ## Unreleased
 
+### 対応フォーマット
+
+- `.spc`（SPC, SNES SPC700 Sound File）をGBS/NSFと同格の一級市民として
+  対応した（F-32, Issue #43）。単体ファイル・同名サイドカーm3u・m3u直接・
+  zip同梱のいずれの経路でも開ける。SPCは1ファイル=1トラック固定のため、
+  フォルダ内の複数`.spc`をまたぐ自動連続再生はしない（アルバムはzip/m3uで
+  まとめる運用）。ID666タグの曲名・曲長・Shift_JIS(CP932)メタデータにも
+  対応する。libgmeの実装上EQとステレオ深度がSPCには効かないため、
+  Settings画面はSPC再生中、該当する3項目をグレーアウトして示す
+  （値の編集自体は禁止しない）
+
 ### UI
 
 - Browser・TrackList・Settings・Theme Editorのヘッダを、タイトル・

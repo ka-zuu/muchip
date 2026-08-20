@@ -60,6 +60,9 @@ set(USE_GME_GBS ON CACHE BOOL "" FORCE)
 # upstreamが既定を変えたときに黙って壊れるため明示する。
 set(USE_GME_NSF ON CACHE BOOL "" FORCE)
 set(USE_GME_NSFE ON CACHE BOOL "" FORCE)
+# SPC (SNES SPC700) デコード。GBS/NSFと同格の一級市民として扱う
+# (F-32, Issue #43)。理由はNSF/NSFEと同じ(暗黙の既定値に頼らない)。
+set(USE_GME_SPC ON CACHE BOOL "" FORCE)
 # YM2612エミュレータの選択。"Nuked"/"GENS"はLGPLv2.1+だが"MAME"はGPLv2+。
 # 暗黙の既定値(現状は"Nuked")に頼るとupstreamが既定を変えたときに出荷バイナリの
 # ライセンスが黙ってGPLv2+へ変わってしまうため、ライセンス上の理由で明示する
