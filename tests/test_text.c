@@ -192,6 +192,70 @@ static int test_cp932_to_utf8_buffer_boundary(void) {
     return 0;
 }
 
+/* ---- 8. 固定長フィールドの末尾切れ(Issue #40) ----------------------------
+ * NSFのゲーム名等は固定32バイトで、末尾で2バイト文字のリードバイト
+ * だけが残って切れている実ファイルがある(下記3例は実機の
+ * /mnt/mmc/ROMS/VGM/NSF/ で確認したゲーム名フィールドそのもの、
+ * いずれも31バイト。gme_track_info() が返す時点で前後の空白は既に
+ * トリムされている)。末尾のリードバイト1個は黙って落とし、手前までを
+ * CP932として変換する。 */
+
+static int test_nsf_truncated_tail_field(void) {
+    /* "Super Chinese 2 - Dragon Kid (Japan) [BGM].nsf" のゲーム名。
+     * 末尾 0x83 (「キ」のリードバイト)が切れている。 */
+    const char super_chinese2[] =
+        "\x83\x58\x81\x5b\x83\x70\x81\x5b\x83\x60\x83\x83\x83\x43\x83\x6a"
+        "\x81\x5b\x83\x59\x32\x20\x83\x68\x83\x89\x83\x53\x83\x93\x83";
+    const char expect_super_chinese2[] =
+        "\xe3\x82\xb9\xe3\x83\xbc\xe3\x83\x91\xe3\x83\xbc\xe3\x83\x81\xe3"
+        "\x83\xa3\xe3\x82\xa4\xe3\x83\x8b\xe3\x83\xbc\xe3\x82\xba\x32\x20"
+        "\xe3\x83\x89\xe3\x83\xa9\xe3\x82\xb4\xe3\x83\xb3";
+
+    char *out = text_dup_utf8(super_chinese2);
+    CHECK(out != NULL);
+    CHECK_STREQ(out, expect_super_chinese2);
+    free(out);
+
+    /* "Bio Senshi Dan - Increaser Tono Tatakai (Japan) [BGM].nsf" の
+     * ゲーム名。ASCII("DAN")混じりで、末尾 0x82 (「と」のリードバイト)
+     * が切れている。 */
+    const char bio_senshi_dan[] =
+        "\x83\x6f\x83\x43\x83\x49\x90\xed\x8e\x6d\x44\x41\x4e\x20\x83\x43"
+        "\x83\x93\x83\x4e\x83\x8a\x81\x5b\x83\x55\x81\x5b\x82\xc6\x82";
+    const char expect_bio_senshi_dan[] =
+        "\xe3\x83\x90\xe3\x82\xa4\xe3\x82\xaa\xe6\x88\xa6\xe5\xa3\xab\x44"
+        "\x41\x4e\x20\xe3\x82\xa4\xe3\x83\xb3\xe3\x82\xaf\xe3\x83\xaa\xe3"
+        "\x83\xbc\xe3\x82\xb6\xe3\x83\xbc\xe3\x81\xa8";
+
+    out = text_dup_utf8(bio_senshi_dan);
+    CHECK(out != NULL);
+    CHECK_STREQ(out, expect_bio_senshi_dan);
+    free(out);
+
+    /* ASCIIの直後で切れるだけの単純なケース。 */
+    out = text_dup_utf8("ABC\x83");
+    CHECK(out != NULL);
+    CHECK_STREQ(out, "ABC");
+    free(out);
+
+    return 0;
+}
+
+/* 緩和が末尾以外に漏れていないことの退行テスト: 末尾より前で破綻して
+ * いる場合は、これまで通り4.の '?' 丸めフォールバックに落ちること。 */
+static int test_mid_string_break_still_falls_back(void) {
+    /* "ン"(妥当) + 0x80(単独では不正) + "ン"(妥当)。末尾ではなく途中の
+     * 破綻なので、cp932_scan()は2バイト目で止まり(次のバイトがまだ
+     * 残っているのでtruncated_tail扱いにはならない)、全体がCP932として
+     * 不正と判定されるべき。全バイトが0x80以上なので4.のフォールバックで
+     * 全部'?'に丸まる。 */
+    char *out = text_dup_utf8("\x83\x93\x80\x83\x93");
+    CHECK(out != NULL);
+    CHECK_STREQ(out, "?????");
+    free(out);
+    return 0;
+}
+
 int main(void) {
     int failed = 0;
     failed |= test_ascii_passthrough();
@@ -203,6 +267,8 @@ int main(void) {
     failed |= test_is_valid_utf8();
     failed |= test_is_valid_cp932();
     failed |= test_cp932_to_utf8_buffer_boundary();
+    failed |= test_nsf_truncated_tail_field();
+    failed |= test_mid_string_break_still_falls_back();
 
     if (failed) {
         fprintf(stderr, "test_text: FAILED\n");
