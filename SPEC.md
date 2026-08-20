@@ -1,4 +1,4 @@
-# SPEC.md — muChip: muOS向け chiptune (GBS/NSF) プレーヤー
+# SPEC.md — muChip: muOS向け chiptune (GBS/NSF/SPC) プレーヤー
 
 > このドキュメントは muChip の仕様書です。実装は完了済み（v1.0.0〜）。
 > 「なぜこの仕様になっているか」は [`docs/design-notes.md`](./docs/design-notes.md)、
@@ -27,13 +27,17 @@
 ### 1.2 スコープ外（やらないこと）
 
 - GB APU の自前エミュレーション実装（libgme に委譲する）
-- GBS/NSF 以外の形式の**積極的な**サポート（ただし libgme が対応する
-  SPC/VGM 等は「たまたま動く」状態で構わない。UI上で排除しない）。
-  `.nsf`/`.nsfe`（NSF, Nintendo Sound Format）は GBS と同格の一級市民として
-  正式サポートする（F-27, Issue #2）。GBS 用に組んだ「単体ファイル＋同名
-  サイドカーm3u／m3u直接／zip」の枠組みがそのまま形式非依存で動くこと、
-  および libgme の NSF/NSFE デコーダが元々静的リンクされていたことから、
-  対応コストが低い（詳細は `docs/design-notes.md`「libgmeフォーク運用」参照）
+- GBS/NSF/SPC 以外の形式の**積極的な**サポート（ただし libgme が対応する
+  VGM 等は「たまたま動く」状態で構わない。UI上で排除しない）。
+  `.nsf`/`.nsfe`（NSF, Nintendo Sound Format）と `.spc`（SPC, SNES SPC700
+  Sound File）は GBS と同格の一級市民として正式サポートする（F-27, F-32,
+  Issue #2, Issue #43）。GBS 用に組んだ「単体ファイル＋同名サイドカーm3u／
+  m3u直接／zip」の枠組みがそのまま形式非依存で動くこと、および libgme の
+  NSF/NSFE/SPC デコーダが元々静的リンクされていたことから、対応コストが
+  低い（詳細は `docs/design-notes.md`「libgmeフォーク運用」参照）
+- `.rsn`（RAR書庫のSPCアルバム）対応。中身の展開にminizでは扱えないRARが
+  必要で、unrar等の新規依存はバイナリサイズと実機のglibc互換性に直結する
+  （CLAUDE.md「事前相談なしの依存追加禁止」）。是非は別Issueで扱う
 - ネットワーク機能、オンラインDB連携
 - 楽曲のエンコード／エクスポート
 
@@ -93,8 +97,9 @@
 | F-27 | `.nsf` / `.nsfe`（NSF, Nintendo Sound Format）を `.gbs` と同格に扱える。単体ファイル＋同名サイドカーm3u・m3u直接・zip同梱のいずれの経路も共通（Issue #2で実装）。10進の拡張M3Uトラック番号はNSFでは1始まり（GBSは0始まり。5.2節参照）で、これはlibgme本家の既定動作そのものであり追加パッチは不要 |
 | F-28 | ながさチェンジ: Settings画面の `Length` を `auto` 以外（5〜30分・5分刻み）にすると、原則として全トラックの曲長をその値へ強制する（Issue #19）。ただし Issue #24: 曲長が既知（m3uの曲長欄や実測値がある）なのにループ構造を持たない（=延長しても実際には鳴り続けず、libgmeの無音自動終了で早く終わってしまう）トラックは、`min(Length指定値, 実測値)` にとどめる（延長はしないが、実測値の方が長い場合の短縮方向は効く）。曲長不明のトラック（判断材料が無い）とループ構造を持つトラック（延長しても実際に鳴り続けられる）は、既知/不明を問わず従来どおり強制する。`auto`（既定）では従来どおりF-07/F-08の判定に戻る。`Repeat: one`（F-07のエンドレス化）はF-28より優先する。変更はいま鳴っている曲へ即座に反映される |
 | F-29 | 短い曲のスキップ: Settings画面の `Skip short` を `off` 以外（0〜30秒・1秒刻み）にすると、実測曲長がその秒数以下のトラックをTrackList一覧・再生順の両方から隠す（Issue #21）。判定は常に実測長で行い、`Length`（F-28）による見かけの曲長上書きの影響は受けない。曲長不明のトラック（F-08のフォールバック対象）は対象外。いま再生中のトラックはしきい値変更で消えない。全トラックが対象になる場合はフィルタ自体を無視して全曲を表示する。変更はTrackList・再生順へ即座に反映される |
-| F-30 | メタデータ（曲名・ゲーム名・作者・著作権）がShift_JIS(CP932)で書かれたNSF/GBS/M3Uでも日本語を正しく表示できる（Issue #29）。取り込み時に文字コードを自動判定してUTF-8へ正規化し（判定順はASCII→UTF-8→CP932→'?'フォールバック。5.5節）、美咲フォント（8x8、JIS第1・第2水準相当）で描画する。判定は自動のみで、明示的な文字コード指定の設定項目は無い |
+| F-30 | メタデータ（曲名・ゲーム名・作者・著作権）がShift_JIS(CP932)で書かれたNSF/GBS/SPC/M3Uでも日本語を正しく表示できる（Issue #29。SPCのID666タグはIssue #43でF-32と同時に対応）。取り込み時に文字コードを自動判定してUTF-8へ正規化し（判定順はASCII→UTF-8→CP932→'?'フォールバック。5.5節）、美咲フォント（8x8、JIS第1・第2水準相当）で描画する。判定は自動のみで、明示的な文字コード指定の設定項目は無い |
 | F-31 | カラーテーマ: Settings画面の `Theme` で5つのプリセット（`midnight`〈既定〉/`gameboy`/`mono`/`amber`/`synthwave`。すべてダーク系。Issue #27）と `custom` を切り替えられる。画面の色は9つの意味的スロット（背景・パネル・本文・副文・アクセント・選択行・再生中マーク・警告・充電中）から導出され、波形背景やシークバー背景等はそこからの計算値（6.4節）。`custom` は `Theme` の次の行 `Edit theme` から開く専用サブ画面（Theme Editor）で9色を個別編集できる。編集は即座に4画面へライブプレビューされる |
+| F-32 | `.spc`（SPC, SNES SPC700 Sound File）を `.gbs`/`.nsf` と同格に扱える。単体ファイル＋同名サイドカーm3u・m3u直接・zip同梱のいずれの経路も共通（Issue #43で実装）。以下の3点でGBS/NSFと挙動が異なる: (1) 1ファイル=1トラック固定（libgmeの`gme_spc_type_`がfixed_track_count=1を宣言するため、フォルダ内の複数`.spc`をまたぐ自動連続再生は行わない。アルバムはzip/m3uでまとめる運用に委ねる）。(2) 10進の拡張M3Uトラック番号はNSFと同じく1始まり（5.2節参照。追加パッチ不要）。(3) ID666タグに曲長（秒）を持つため`length_known`が立ち、F-28（ながさチェンジ）・F-29（Skip short）がGBS/NSFの素のヘッダ（曲長情報を一切持たない）と異なる経路を通る。加えて、libgmeの実装上（`Spc_Emu`が`Classic_Emu`を継承しないため）EQ（F-20）とステレオ深度（F-21）がSPC再生中は一切効かない。値の編集自体は禁止しないが、Settings画面は該当行の値の後ろへ`(n/a)`を付けて示す（6.1節） |
 
 ---
 
@@ -293,6 +298,13 @@ Game.gbs::GBS,2,Battle,1:45
 > 誤ってNSFにも適用すると、逆に全曲が1つズレる新たな不具合になるので
 > 注意（Issue #2で確認済み。`tests/test_playlist.c` の
 > `test_nsf_sidecar_m3u_is_one_based()` 参照）。
+>
+> **SPCも10進トラック番号は1始まり**（NSFと同じ、Issue #43）:
+> `gme_spc_type_`(`vendor/game-music-emu/gme/Spc_Emu.cpp`)も `flags_==0` の
+> ままで、upstreamのデフォルト動作(1始まりとみなして-1する)がそのまま
+> 適用される。SPCは1ファイル=1トラック固定なので実用上m3uで意味を持つのは
+> `SPC,1,...`のみだが、GBSのようなフォークパッチは不要（
+> `tests/test_playlist.c` の `test_spc_sidecar_m3u_is_one_based()` 参照）。
 
 #### 実装方針
 
@@ -406,10 +418,10 @@ UTF-8で統一しているため、`playlist.c` が上記フィールドを複�
 
 | 画面 | 内容 |
 |---|---|
-| **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.gb` `.nsf` `.nsfe` `.m3u` `.zip` のみ表示（設定で全表示可。`.nsf`/`.nsfe`はIssue #2で追加） |
+| **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.gb` `.nsf` `.nsfe` `.spc` `.m3u` `.zip` のみ表示（設定で全表示可。`.nsf`/`.nsfe`はIssue #2、`.spc`はIssue #43で追加） |
 | **Player** | 曲名（見切れる場合、`[ui] title_scroll` が既定onなら横スクロール表示。Issue #8）・ゲーム名・作者・著作権・トラック `n/N`・経過/全体時間とシークバー（同一行。リピートが `one` でフェード無効(エンドレス)のときは全体時間を `--:--` にしシークバーを描かない。Issue #15）・**現在のファイルが属するディレクトリのファイル一覧（中央。Browserと同じ拡張子フィルタ。ディレクトリは出さない。カーソルを青、再生中のファイルを黄でハイライト）**・波形ビジュアライザ（下部） |
 | **TrackList** | 現在のファイルの全トラック一覧。直接ジャンプ可能 |
-| **Settings** | Length（先頭。ながさチェンジ。auto/5〜30分・5分刻み。F-28, Issue #19）・デフォルト曲長（分単位・1分刻み。Issue #16）・Skip short（短い曲のスキップ。off/0〜30秒・1秒刻み。F-29, Issue #21）・リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・Fade・Show all files・Scroll title（Issue #8）・Show battery（F-26, Issue #7）・Theme・Edit theme（末尾2つ。カラーテーマ。F-31, Issue #27）。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10） |
+| **Settings** | Length（先頭。ながさチェンジ。auto/5〜30分・5分刻み。F-28, Issue #19）・デフォルト曲長（分単位・1分刻み。Issue #16）・Skip short（短い曲のスキップ。off/0〜30秒・1秒刻み。F-29, Issue #21）・リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・Fade・Show all files・Scroll title（Issue #8）・Show battery（F-26, Issue #7）・Theme・Edit theme（末尾2つ。カラーテーマ。F-31, Issue #27）。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10）。現在再生中のソースがSPCのときは、libgmeの実装上効かないステレオ深度・EQ bass・EQ trebleの3行の値の後ろへ `(n/a)` を付ける（F-32, Issue #43。値の編集自体は禁止しない） |
 | **Theme Editor** | `Settings`の`Edit theme`（`A`）で開くサブ画面。9つの色スロット（背景・パネル・本文・副文・アクセント・選択行・再生中マーク・警告・充電中）をラベル・R/G/B値・色見本の一覧で並べる。カーソル行のR/G/Bのうち選択中のチャンネルにマーカー（`>`）が付く。編集した値は即座に4画面すべてへライブプレビューされる（F-31, Issue #27） |
 
 > **ヘッダ／フッタの文字階層（Issue #41）**: Browser・TrackList・Settings・
@@ -650,7 +662,8 @@ target_link_libraries(muchip PRIVATE gme_static SDL2 m)
 
 libgme は `BUILD_SHARED_LIBS=OFF`, `ENABLE_UBSAN=OFF` でビルドし、
 不要なエミュレータを削って軽量化してもよい（`USE_GME_GBS=ON` /
-`USE_GME_NSF=ON` / `USE_GME_NSFE=ON` は必須。F-27, Issue #2）。
+`USE_GME_NSF=ON` / `USE_GME_NSFE=ON` / `USE_GME_SPC=ON` は必須。
+F-27, F-32, Issue #2, Issue #43）。
 
 ---
 
@@ -795,11 +808,16 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 | T-16 | ながさチェンジ（F-28, Issue #19/#24） | Settingsで`Length`を`auto`以外にすると、曲長不明のトラックとループ構造を持つトラックは指定値まで曲長が延びる。m3uの曲長・実測値はあるがループ構造を持たないトラックは、指定値より短ければそのまま(延長されない)、長ければ指定値でキャップされる。`auto`へ戻すと元の値(m3u/実測)へ復元される。変更は再生中の曲へ即時反映される |
 | T-17 | 短い曲のスキップ（F-29, Issue #21） | Settingsで`Skip short`を`off`以外にすると、実測曲長がその秒数以下のトラックがTrackList一覧・再生順から消え、曲数(`Tracks (N)`)も減る。曲長不明のトラックは消えない。`Length`で上書き中でも実測長で判定される。いま再生中のトラックはしきい値変更で消えない。`off`へ戻すと消えたトラックが復活する |
 | T-18 | カラーテーマ（F-31, Issue #27） | Settingsの`Theme`で5プリセット+`custom`を循環すると4画面すべての配色が切り替わり、`[ui] theme`へ保存・復元される。`Edit theme`(Theme Editorサブ画面)で9スロットをL1/R1でチャンネル切替・LEFT/RIGHTで値変更すると即座にライブプレビューされ、初回編集で`Theme`が自動的に`custom`へ切り替わる。`X`は入室時の状態(`Theme`と`[theme]`の両方)へ確認ダイアログ無しで戻す。`config.ini`の`[theme]`セクション(9キー、RRGGBB)を手編集しても反映される。Settings画面の`X`での全リセットは`Theme`を`midnight`へ、`[theme]`の9色もmidnightと同じ値へ戻す |
+| T-19 | m3u なしの単体 `.spc` を開く（F-32, Issue #43） | 1トラックだけが `Track 01` で列挙される（SPCは1ファイル=1トラック固定） |
+| T-20 | 同名 `.m3u` がある `.spc` を開く（F-32, Issue #43） | 曲名がm3u通りに反映される。10進トラック番号は1始まり（NSFと同じ。5.2節参照） |
+| T-21 | SPC再生中に Settings 画面を開く（F-32, Issue #43） | `Stereo depth`・`EQ bass`・`EQ treble` の3行の値の後ろへ `(n/a)` が付く。値そのものはLEFT/RIGHTで編集できる。GBS/NSF再生中・停止中は付かない |
+| T-22 | ID666タグに曲長を持つ `.spc`（F-32, Issue #43） | GBS/NSFの素のヘッダと異なり `length_known` が立ち、F-28（ながさチェンジ）・F-29（Skip short）の判定対象になる |
 
 ### 10.3 テスト用素材
 
-著作権上の理由からリポジトリに `.gbs` は含めない。
-`tests/fixtures/` には **合成した最小GBSファイル**（ヘッダのみ有効な擬似ファイル）と、
+著作権上の理由からリポジトリに `.gbs`/`.nsf`/`.spc` は含めない。
+`tests/fixtures/` には **合成した最小GBS/NSF/SPCファイル**（ヘッダのみ有効な
+擬似ファイル。SPCは加えてDSPレジスタ初期値とBRRサンプル1ブロックを持つ）と、
 各種パターンの `.m3u` テキストのみを置く。m3uパーサのユニットテストはこれで行う。
 
 ### 10.4 CI（GitHub Actions、P13）
@@ -848,4 +866,5 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 - muOS Application Runner: https://community.muos.dev/t/application-runner/1282
 - miniz: https://github.com/richgel999/miniz
 - GBS形式仕様: https://www.tauwasser.eu/wiki/GBS
+- SPC/ID666形式仕様: https://ocremix.org/info/SPC_and_RSN_File_Format_Specification
 

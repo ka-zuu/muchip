@@ -105,23 +105,31 @@ add_test(NAME test_battery COMMAND test_battery)
 # 走らせて確認する。表示や実際の操作感はホストでの手動確認(README参照)で
 # 見る前提であり、これはあくまで回帰検出用。
 add_executable(gen_fixture_gbs gen_fixture_gbs.c)
+# Issue #43: SPC対応のUIスモーク用(Settings画面の「(n/a)」表示を実際に
+# 踏むため)。CPU(SPC700)コードは実行せず、DSPレジスタ初期値とBRR
+# サンプル1ブロックだけで鳴らし続ける(gen_fixture_spc.c参照)。
+add_executable(gen_fixture_spc gen_fixture_spc.c)
 
 set(UI_SMOKE_DIR ${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_fixtures)
 set(UI_SMOKE_GBS ${UI_SMOKE_DIR}/Game.gbs)
 # P9: Player画面のファイル一覧を動かすには2つ以上ファイルが要る(1つだと
 # カーソルが動かず、折り返しも決定も何も踏めない)。
-# strcasecmp("Game.gbs","Game2.gbs") は '.'(0x2E) < '2'(0x32) なので
-# Game.gbs が添字0のまま = スクリプト先頭の A の挙動は従来どおり。
+# strcasecmp("Game.gbs","Game.spc","Game2.gbs") は '.'(0x2E) < '2'(0x32)、
+# 'g'(0x67) < 's'(0x73) なので Game.gbs -> Game.spc -> Game2.gbs の順になる
+# (Issue #43でGame.spcを追加してもGame.gbsが添字0・Game2.gbsが末尾のまま
+# = スクリプト先頭の折り返し操作の挙動は変えなくてよい)。
+set(UI_SMOKE_SPC ${UI_SMOKE_DIR}/Game.spc)
 set(UI_SMOKE_GBS2 ${UI_SMOKE_DIR}/Game2.gbs)
 add_custom_command(
-    OUTPUT ${UI_SMOKE_GBS} ${UI_SMOKE_GBS2}
+    OUTPUT ${UI_SMOKE_GBS} ${UI_SMOKE_SPC} ${UI_SMOKE_GBS2}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${UI_SMOKE_DIR}
     COMMAND gen_fixture_gbs ${UI_SMOKE_GBS} 2
+    COMMAND gen_fixture_spc ${UI_SMOKE_SPC}
     COMMAND gen_fixture_gbs ${UI_SMOKE_GBS2} 3
-    DEPENDS gen_fixture_gbs
-    COMMENT "Generating synthetic GBS fixtures for UI smoke test"
+    DEPENDS gen_fixture_gbs gen_fixture_spc
+    COMMENT "Generating synthetic GBS/SPC fixtures for UI smoke test"
 )
-add_custom_target(ui_smoke_fixture ALL DEPENDS ${UI_SMOKE_GBS} ${UI_SMOKE_GBS2})
+add_custom_target(ui_smoke_fixture ALL DEPENDS ${UI_SMOKE_GBS} ${UI_SMOKE_SPC} ${UI_SMOKE_GBS2})
 
 # P6: SPEC 6.2「解像度非依存」の完了条件(複数解像度でレイアウトが破綻しない)を
 # CTestでも見るため、実機やその他muOS対応機種を代表する複数の解像度で

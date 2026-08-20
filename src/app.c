@@ -725,6 +725,12 @@ typedef struct {
     double min, max, step; /* SET_ENUM/SET_BOOL は 0..(選択肢数-1)、step=1 */
     const char *const *enum_names; /* SET_ENUMのみ非NULL */
     int enum_count;
+    /* Issue #43: 非0なら、この項目はlibgmeのEQ/ステレオ深度に相当し、
+     * 現在再生中のソースがSPC(playlist_effects_supported()==0)のときは
+     * 値の後ろへ「(n/a)」を付ける(settings_item_text()参照)。値の編集
+     * 自体は禁止しない(形式非依存のグローバル設定であり、GBS/NSFへ戻れば
+     * 効くため)。 */
+    int needs_effects;
 } setting_def_t;
 
 static const char *const REPEAT_MODE_NAMES[] = { "none", "one", "all" };
@@ -751,27 +757,29 @@ static const char *const THEME_NAMES[] = {
  * Issue #21: Skip short(短い曲のスキップ)はDefault lengthのすぐ後ろに置く
  * (どちらも「曲長に関する項目」でまとまりが良い)。off(0)..30秒・1秒刻み。 */
 static const setting_def_t SETTINGS[] = {
-    { "Length",              SET_LENGTH,  offsetof(mugbs_config_t, length_override_sec), 0,   1800, 300, NULL, 0 },
-    { "Default length",     SET_MINUTES, offsetof(mugbs_config_t, default_length_sec), 60,  600,  60, NULL, 0 },
-    { "Skip short",       SET_SECONDS, offsetof(mugbs_config_t, skip_short_sec),      0,    30,   1, NULL, 0 },
-    { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3 },
-    { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0 },
-    { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0 },
-    { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0 },
-    { "EQ treble",           SET_INT,    offsetof(mugbs_config_t, eq_treble),       -100,   100,   5, NULL, 0 },
-    { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0 },
-    { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0 },
-    { "Scroll title",           SET_BOOL,   offsetof(mugbs_config_t, title_scroll),     0,     1,   1, NULL, 0 },
-    { "Show battery",           SET_ENUM,   offsetof(mugbs_config_t, battery_show),     0,     2,   1, BATTERY_SHOW_NAMES, 3 },
+    { "Length",              SET_LENGTH,  offsetof(mugbs_config_t, length_override_sec), 0,   1800, 300, NULL, 0, 0 },
+    { "Default length",     SET_MINUTES, offsetof(mugbs_config_t, default_length_sec), 60,  600,  60, NULL, 0, 0 },
+    { "Skip short",       SET_SECONDS, offsetof(mugbs_config_t, skip_short_sec),      0,    30,   1, NULL, 0, 0 },
+    { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3, 0 },
+    { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0, 0 },
+    /* Issue #43: 末尾の1はneeds_effects。SPC再生中はEQ/ステレオ深度が
+     * 効かないため「(n/a)」を付ける対象(settings_item_text()参照)。 */
+    { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0, 1 },
+    { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0, 1 },
+    { "EQ treble",           SET_INT,    offsetof(mugbs_config_t, eq_treble),       -100,   100,   5, NULL, 0, 1 },
+    { "Fade",                 SET_INT,    offsetof(mugbs_config_t, fade_length_ms),   0, 20000, 500, NULL, 0, 0 },
+    { "Show all files",         SET_BOOL,   offsetof(mugbs_config_t, show_all_files),   0,     1,   1, NULL, 0, 0 },
+    { "Scroll title",           SET_BOOL,   offsetof(mugbs_config_t, title_scroll),     0,     1,   1, NULL, 0, 0 },
+    { "Show battery",           SET_ENUM,   offsetof(mugbs_config_t, battery_show),     0,     2,   1, BATTERY_SHOW_NAMES, 3, 0 },
     /* Issue #27: 末尾に追加(既存のtests/ui_smoke.scriptの並びを崩さず
      * 追記だけで済ませるため)。customも循環に含める
      * (含めないとadjust_setting()の%nから抜けられない片道になる)。 */
-    { "Theme",                  SET_ENUM,   offsetof(mugbs_config_t, theme_id),         0,     5,   1, THEME_NAMES, 6 },
+    { "Theme",                  SET_ENUM,   offsetof(mugbs_config_t, theme_id),         0,     5,   1, THEME_NAMES, 6, 0 },
     /* Issue #27: customパレットを画面から編集するサブ画面への入口。
      * SET_ACTIONはoffset/min/max/step/enum_namesを一切使わないが、
      * offsetには意味的に近いフィールドを入れておく(将来offset比較の
      * コードが増えたときの誤爆を避けるための保険。現状は使われない)。 */
-    { "Edit theme",             SET_ACTION, offsetof(mugbs_config_t, theme_id),         0,     0,   0, NULL, 0 },
+    { "Edit theme",             SET_ACTION, offsetof(mugbs_config_t, theme_id),         0,     0,   0, NULL, 0, 0 },
 };
 #define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
 
@@ -1542,6 +1550,17 @@ static const char *settings_item_text(void *ctx, int index) {
             /* Issue #27: 値欄ではなく「開ける」ことを示す記号だけ出す。 */
             snprintf(valbuf, sizeof(valbuf), ">");
             break;
+    }
+    /* Issue #43: needs_effects項目は、現在再生中のソースがSPC
+     * (playlist_effects_supported()==0)のとき値が効かないことを示す。
+     * 値そのものはLEFT/RIGHTで編集できたままにする(GBS/NSFへ戻れば
+     * 効くグローバル設定のため)。停止中・SPC以外は従来どおり付けない。 */
+    if (s->needs_effects && app->pl && app->player.current_entry >= 0) {
+        int src_idx = app->pl->entries[app->player.current_entry].source_index;
+        if (!playlist_effects_supported(app->pl, src_idx)) {
+            size_t len = strlen(valbuf);
+            snprintf(valbuf + len, sizeof(valbuf) - len, " (n/a)");
+        }
     }
     /* 等幅8x8フォントなので固定幅のラベル列が ui.c を触らずに揃う。 */
     snprintf(buf, sizeof(buf), "%-18s %s", s->label, valbuf);

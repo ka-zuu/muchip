@@ -17,7 +17,7 @@ muChip が同梱・リンクしているサードパーティ製ソフトウェ�
 
 ## game-music-emu（libgme）— LGPL-2.1-or-later
 
-GBS/NSF デコードと拡張M3U解析を丸ごと委譲している。自前で GB APU は
+GBS/NSF/SPC デコードと拡張M3U解析を丸ごと委譲している。自前で GB APU は
 実装していない。ライセンス全文は submodule 内 `vendor/game-music-emu/license.txt`
 （および逐語コピーを [`licenses/LGPL-2.1.txt`](./licenses/LGPL-2.1.txt) にも
 同梱）。

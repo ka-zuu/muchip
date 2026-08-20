@@ -1,4 +1,4 @@
-/* playlist.h - 単体音楽ファイル(.gbs/.gb/.nsf/.nsfe) / 同名.m3u同梱 /
+/* playlist.h - 単体音楽ファイル(.gbs/.gb/.nsf/.nsfe/.spc) / 同名.m3u同梱 /
  * .m3u直接 / (P4で).zip の4入力を単一のデータモデルへ正規化する。
  * (SPEC 4.2, 5.2)
  *
@@ -30,6 +30,14 @@ typedef struct {
     char *author;
     char *copyright;
     char *system;
+
+    /* Issue #43: libgmeのEQ(F-20)とステレオ深度がこのソースに効くか。
+     * 1=効く(既定)。Spc_Emu は Classic_Emu を継承せず Music_Emu 直下
+     * なので set_equalizer_() が空実装(Music_Emu.h)で、effects_buffer も
+     * NULLのため gme_set_stereo_depth() も何もしない
+     * (docs/design-notes.md「libgmeの使い方と既知の乖離」参照)。
+     * Settings画面(app.c)が「(n/a)」表示を出すために読む。 */
+    int effects_supported;
 } playlist_source_t; /* = 1回 Music_Emu を開く単位 (m3uのセグメントに対応) */
 
 typedef struct {
@@ -168,6 +176,12 @@ int playlist_is_short(const playlist_entry_t *e, const mugbs_config_t *cfg);
  * 追随させること (Issue #21, app_apply_settings() 参照)。 */
 void playlist_apply_config(playlist_t *pl, const mugbs_config_t *cfg,
                             int keep_source, int keep_track);
+
+/* sources[source_index].effects_supported を返す(Issue #43)。
+ * pl が NULL、または source_index が範囲外なら 1(通常表示)を返す
+ * フォールバック。app.c の Settings画面が現在再生中ソースのEQ/ステレオ
+ * 深度が効くかどうかを問い合わせるために使う。 */
+int playlist_effects_supported(const playlist_t *pl, int source_index);
 
 /* entries[](可視ビュー)上で source_index/track_index に一致するエントリの
  * 添字を返す。無ければ-1。Issue #21: playlist_apply_config() でビューが

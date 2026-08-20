@@ -1,9 +1,9 @@
 /* test_playlist.c - playlist.c の統合テスト。
  *
- * 合成した最小GBS/NSFファイル(ヘッダのみ有効な擬似ファイル。SPEC 10.3)と
- * 各種パターンのm3uテキストを実行時に一時ディレクトリへ書き出し、
- * playlist_open() が正しいエントリ表を構築することを確認する。
- * 著作権上の理由から本物の .gbs / .nsf は使わない。
+ * 合成した最小GBS/NSF/SPCファイル(ヘッダのみ有効な擬似ファイル。
+ * SPEC 10.3)と各種パターンのm3uテキストを実行時に一時ディレクトリへ
+ * 書き出し、playlist_open() が正しいエントリ表を構築することを確認する。
+ * 著作権上の理由から本物の .gbs / .nsf / .spc は使わない。
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,6 +83,45 @@ static void write_synthetic_nsf(const char *path, int track_count) {
     FILE *f = fopen(path, "wb");
     fwrite(buf, 1, sizeof(buf), f);
     fclose(f);
+}
+
+/* 合成SPCのバイト列(ヘッダ0x100 + RAM 0x10000 + DSPレジスタ0x80 =
+ * Snes_Spc::spc_min_file_size)。malloc/freeで確保する(0x10180バイトは
+ * ~64KBあり、GBS/NSFのようなstack配列にするには大きすぎる。Issue #43)。 */
+#define SYNTHETIC_SPC_SIZE 0x10180
+
+/* build_synthetic_gbs()/build_synthetic_nsf() のSPC版。ヘッダ構造は
+ * vendor/game-music-emu/gme/Spc_Emu.h の header_t 参照。SPCは1ファイル
+ * =1トラック固定(gme_track_count()==1、gme_spc_type_ の fixed_track_count)
+ * で、GBS/NSFと違いRAM/DSPレジスタの中身が全ゼロでも
+ * pl_scan_source()のメタデータ収集(gme_track_info())は問題なく通る
+ * (Spc_Emu::track_info_() はヘッダのID666タグ領域を読むだけで、
+ * RAM/DSPの内容には一切触れない。実際に鳴らす検証は実機で行う)。
+ * song/len_secsはそれぞれ曲名(32バイトのsongフィールド)・曲長
+ * (len_secsフィールド、ASCII3桁の10進数、例"180"で180秒)を差し込む。
+ * どちらもNULLなら空のまま(=曲名フォールバック・曲長不明のテスト用)。 */
+static void build_synthetic_spc(unsigned char *out, const char *song, const char *len_secs) {
+    memset(out, 0, SYNTHETIC_SPC_SIZE);
+    memcpy(out, "SNES-SPC700 Sound File Data v0.30\x1A\x1A", 35);
+    out[0x23] = 26; /* format: ID666タグあり(テキスト形式) */
+    out[0x24] = 30; /* version: 0.30 */
+    if (song) {
+        size_t n = strlen(song);
+        memcpy(out + 0x2E, song, n < 32 ? n : 32);
+    }
+    if (len_secs) {
+        size_t n = strlen(len_secs);
+        memcpy(out + 0xA9, len_secs, n < 3 ? n : 3);
+    }
+}
+
+static void write_synthetic_spc(const char *path, const char *song, const char *len_secs) {
+    unsigned char *buf = malloc(SYNTHETIC_SPC_SIZE);
+    build_synthetic_spc(buf, song, len_secs);
+    FILE *f = fopen(path, "wb");
+    fwrite(buf, 1, SYNTHETIC_SPC_SIZE, f);
+    fclose(f);
+    free(buf);
 }
 
 static void write_text_file(const char *path, const char *text) {
@@ -191,6 +230,105 @@ static int test_nsf_sidecar_m3u_is_one_based(void) {
     CHECK_STREQ(pl->entries[0].title, "Title Screen");
     CHECK_STREQ(pl->entries[1].title, "Overworld");
     CHECK_STREQ(pl->entries[2].title, "Battle");
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #43 T-01相当: m3uなしの単体.spcを開く -> .gbs/.nsfと同じ
+ * playlist_open_music_file()経路で扱える。SPCは1ファイル=1トラック固定
+ * (gme_spc_type_ の fixed_track_count)なので、GBS/NSFと違いentry_countは
+ * 常に1になる。 */
+static int test_spc_no_m3u_auto_naming(void) {
+    char *spc = path_in("plain.spc");
+    write_synthetic_spc(spc, NULL, NULL);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(spc, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK_STREQ(pl->entries[0].title, "Track 01");
+    CHECK(pl->source_count == 1);
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #43: SPCの拡張M3Uも10進トラック番号は1始まり(NSFと同じ。
+ * gme_spc_type_ の flags_==0 なので Gme_File::remap_track_() が -1する)。
+ * GBS用のフォークパッチ(flags_ |= 0x02)は gme_gbs_type_ にしか
+ * 適用されていないため、SPCには追加パッチが要らない
+ * (docs/design-notes.md「libgmeフォーク運用」参照)。
+ * test_nsf_sidecar_m3u_is_one_based() と同じ限界がある: titleはremap後
+ * ではなくm3uファイル上の位置からそのまま採用されるため、この
+ * テストだけでは物理トラックの選択が正しいことまでは証明できない
+ * (実機で実際のSPCリップを再生して確認する)。 */
+static int test_spc_sidecar_m3u_is_one_based(void) {
+    char *spc = path_in("spc_sidecar.spc");
+    write_synthetic_spc(spc, NULL, NULL);
+    write_text_file(path_in("spc_sidecar.m3u"),
+        "spc_sidecar.spc::SPC,1,Title Screen,3:00\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(spc, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK_STREQ(pl->entries[0].title, "Title Screen");
+
+    playlist_free(pl);
+    return 0;
+}
+
+/* Issue #43: playlist_effects_supported() がSPCソースでは0(EQ/ステレオ深度が
+ * libgmeの実装上効かない。Spc_Emu が Classic_Emu を継承しないため)、
+ * GBS/NSFソースでは1(通常どおり効く)を返すこと。範囲外添字とpl==NULLは
+ * フォールバックの1(通常表示)を返すことも合わせて確認する。 */
+static int test_spc_effects_unsupported(void) {
+    char *gbs = path_in("effects.gbs");
+    write_synthetic_gbs(gbs, 1);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(gbs, &cfg, &pl) == 0);
+    CHECK(playlist_effects_supported(pl, 0) == 1);
+    playlist_free(pl);
+
+    char *spc = path_in("effects.spc");
+    write_synthetic_spc(spc, NULL, NULL);
+
+    pl = NULL;
+    CHECK(playlist_open(spc, &cfg, &pl) == 0);
+    CHECK(playlist_effects_supported(pl, 0) == 0);
+    CHECK(playlist_effects_supported(pl, 99) == 1); /* 範囲外は1にフォールバック */
+    CHECK(playlist_effects_supported(NULL, 0) == 1);
+    playlist_free(pl);
+
+    return 0;
+}
+
+/* Issue #43: SPCはID666タグに曲長(秒、ASCII3桁)を持つため、GBS/NSFの
+ * 素のヘッダ(曲長情報を一切持たない)と違って length_known=1 になる
+ * (playlist_natural_length_ms()がinfo->length>0を検出する経路)。
+ * F-28(ながさチェンジ)・F-29(Skip short)がSPCではGBS/NSFと異なる経路を
+ * 通る根拠になっているので、その入口を固定する。 */
+static int test_spc_id666_length_known(void) {
+    char *spc = path_in("length.spc");
+    write_synthetic_spc(spc, NULL, "180");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(spc, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK(pl->entries[0].length_known == 1);
+    CHECK(pl->entries[0].natural_ms == 180000);
 
     playlist_free(pl);
     return 0;
@@ -812,6 +950,10 @@ int main(void) {
     if (test_sidecar_m3u()) return 1;
     if (test_nsf_no_m3u_auto_naming()) return 1;
     if (test_nsf_sidecar_m3u_is_one_based()) return 1;
+    if (test_spc_no_m3u_auto_naming()) return 1;
+    if (test_spc_sidecar_m3u_is_one_based()) return 1;
+    if (test_spc_effects_unsupported()) return 1;
+    if (test_spc_id666_length_known()) return 1;
     if (test_decimal_track_number_is_zero_based()) return 1;
     if (test_open_m3u_directly()) return 1;
     if (test_hex_track_number()) return 1;

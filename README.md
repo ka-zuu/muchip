@@ -1,12 +1,13 @@
 # muChip
 
-muOS 向けの chiptune プレーヤー。GBS (Game Boy Sound System) と
-`.nsf`/`.nsfe`（NSF, Nintendo Sound Format）を同格の一級市民として扱い、
-サブトラック構造と拡張M3U（曲名・曲長・ループ指定）を正しく扱う。
+muOS 向けの chiptune プレーヤー。GBS (Game Boy Sound System)、
+`.nsf`/`.nsfe`（NSF, Nintendo Sound Format）、`.spc`（SPC, SNES SPC700
+Sound File）を同格の一級市民として扱い、サブトラック構造と拡張M3U
+（曲名・曲長・ループ指定）を正しく扱う。
 （旧名 `muGBS`。詳細は [`docs/design-notes.md`](./docs/design-notes.md)
 参照）。
 
-- 主な機能: GBS/NSF/拡張M3U/zip対応、Browser/Player/TrackList/Settings
+- 主な機能: GBS/NSF/SPC/拡張M3U/zip対応、Browser/Player/TrackList/Settings
   のGUI、EQ・ビジュアライザ・シャッフル・ながさチェンジ・短い曲の
   スキップ・バッテリー残量表示・日本語メタデータ表示
 - 詳細仕様: [`SPEC.md`](./SPEC.md)
@@ -179,7 +180,7 @@ Theme Editor サブ画面では、9つの色スロット（背景・パネル・
 実機の物理ボタンでの終了は **GUIDEボタン単体、または Start+Select 同時押し**。
 
 文字描画は外部フォントライブラリを使わず、内蔵のビットマップフォントを
-使う。UI文言は英語のみ対応。GBS/NSF/M3Uのメタデータ（曲名・ゲーム名・
+使う。UI文言は英語のみ対応。GBS/NSF/SPC/M3Uのメタデータ（曲名・ゲーム名・
 作者・著作権）はASCII用(`vendor/font8x8`)と非ASCII用(`vendor/misaki`、
 8x8のJIS第1・第2水準相当)の2枚のフォントアトラスで描画し、Shift_JIS
 (CP932)で書かれた日本語のメタデータも自動判定してUTF-8へ正規化してから

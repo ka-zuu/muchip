@@ -27,8 +27,8 @@ typedef struct {
  * (最終的にbrowser_free()を呼ぶまで)。
  * 失敗時(opendir不可等)は browser_t を触らない(呼び出し側は直前の
  * ディレクトリに留まれる)。
- * show_all が0なら .gbs/.gb/.m3u/.zip のみを列挙する(拡張子フィルタ、
- * SPEC 6.1)。非0ならすべてのファイルを列挙する
+ * show_all が0なら .gbs/.gb/.nsf/.nsfe/.spc/.m3u/.zip のみを列挙する
+ * (拡張子フィルタ、SPEC 6.1)。非0ならすべてのファイルを列挙する
  * (config.ini show_all_files 相当。値の永続化自体はP6)。 */
 int browser_open_dir(browser_t *b, const char *path, int show_all);
 
