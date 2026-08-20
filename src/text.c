@@ -73,16 +73,34 @@ static int cp932_decode_one(const unsigned char *s, size_t n, size_t i,
     return 1;
 }
 
-int text_is_valid_cp932(const char *s, size_t n) {
+/* 先頭から厳密にCP932としてデコードできたバイト数を返す(全体が妥当なら
+ * n と等しい)。停止位置が「末尾に残ったリードバイト1個」だった場合だけ
+ * *out_truncated_tail に1を書く(固定長フィールドの途中切れ。Issue #40。
+ * NSF/GBSのゲーム名等は32バイト固定で、日本語の2バイト目が切り捨て
+ * られたファイルが実在する)。それ以外の破綻(未定義の符号位置・不正な
+ * trailバイト・0x80/0xA0/0xFD-0xFFのようなリードですらないバイト等)
+ * では0のままにする。 */
+static size_t cp932_scan(const char *s, size_t n, int *out_truncated_tail) {
     const unsigned char *u = (const unsigned char *)s;
+    *out_truncated_tail = 0;
     size_t i = 0;
     while (i < n) {
         unsigned cp;
         size_t len;
-        if (!cp932_decode_one(u, n, i, &cp, &len)) return 0;
+        if (!cp932_decode_one(u, n, i, &cp, &len)) {
+            if (i + 1 == n && cp932_lead_row(u[i]) >= 0) {
+                *out_truncated_tail = 1;
+            }
+            break;
+        }
         i += len;
     }
-    return 1;
+    return i;
+}
+
+int text_is_valid_cp932(const char *s, size_t n) {
+    int truncated;
+    return cp932_scan(s, n, &truncated) == n;
 }
 
 /* コードポイントをUTF-8へエンコードする(BMP範囲まで。cp932由来は
@@ -152,12 +170,16 @@ char *text_dup_utf8(const char *s) {
         return out;
     }
 
-    /* 3. 妥当なCP932ならUTF-8へ変換する。 */
-    if (text_is_valid_cp932(s, n)) {
-        size_t cap = n * 3 + 1; /* 1バイト -> 最大3バイトUTF-8 */
+    /* 3. 妥当なCP932ならUTF-8へ変換する。末尾がリードバイト1個だけで
+     *    切れている場合(固定長フィールドの途中切れ。Issue #40)は、
+     *    その1バイトを黙って落として手前まで変換する。 */
+    int truncated;
+    size_t k = cp932_scan(s, n, &truncated);
+    if (k == n || (truncated && k > 0)) {
+        size_t cap = k * 3 + 1; /* 1バイト -> 最大3バイトUTF-8 */
         char *out = malloc(cap);
         if (!out) return NULL;
-        text_cp932_to_utf8(s, n, out, cap);
+        text_cp932_to_utf8(s, k, out, cap);
         return out;
     }
 
