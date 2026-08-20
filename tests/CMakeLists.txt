@@ -105,7 +105,7 @@ add_test(NAME test_battery COMMAND test_battery)
 # 走らせて確認する。表示や実際の操作感はホストでの手動確認(README参照)で
 # 見る前提であり、これはあくまで回帰検出用。
 add_executable(gen_fixture_gbs gen_fixture_gbs.c)
-# Issue #43: SPC対応のUIスモーク用(Settings画面の「(n/a)」表示を実際に
+# Issue #43: SPC対応のUIスモーク用(Settings画面のグレーアウト表示を実際に
 # 踏むため)。CPU(SPC700)コードは実行せず、DSPレジスタ初期値とBRR
 # サンプル1ブロックだけで鳴らし続ける(gen_fixture_spc.c参照)。
 add_executable(gen_fixture_spc gen_fixture_spc.c)

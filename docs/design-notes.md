@@ -50,11 +50,14 @@ SPEC の記述と食い違う点がいくつかある。
   `effects_buffer` も `NULL` のまま（`Classic_Emu` がコンストラクタで
   確保するメンバのため）。値を送っても黙って無視されるだけでエラーには
   ならない。UI側はこれを隠さず、Settings画面の `Stereo depth`/`EQ bass`/
-  `EQ treble` の3行に `playlist_source_t.effects_supported`
+  `EQ treble` の3行を `playlist_source_t.effects_supported`
   （`gme_type(emu) != gme_spc_type` で判定、`src/playlist.c`）を見て
-  `(n/a)` を付ける（`src/app.c` の `settings_item_text()`）。値の編集
-  自体は禁止しない（GBS/NSFへ戻れば効くグローバル設定のため、無効化する
-  意味が薄い）。
+  グレーアウトする（`src/app.c` の `settings_item_dim()` を
+  `ui_draw_list()` の `dim_fn` へ渡す。`THEME_ROLE_DIM` で描く）。
+  カーソルを合わせた選択中も淡色を優先する（`src/ui.c`。選択した瞬間
+  こそ「効かない」と伝わってほしいため、通常の選択色より優先する設計）。
+  値の編集自体は禁止しない（GBS/NSFへ戻れば効くグローバル設定のため、
+  無効化する意味が薄い）。
 
 ## libgme フォーク運用（m3u トラック番号の0始まり問題）
 

@@ -662,7 +662,8 @@ void ui_list_clamp_scroll(const ui_t *ui, ui_rect_t r, int count, int selected, 
 }
 
 void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
-                   int *scroll, ui_list_item_fn item_fn, void *ctx) {
+                   int *scroll, ui_list_item_fn item_fn, ui_list_dim_fn dim_fn,
+                   void *ctx) {
     int row_h = ui->metrics.line_h;
     int visible = ui_list_visible_rows(ui, r);
 
@@ -680,6 +681,7 @@ void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
     const SDL_Color sel_edge = ui_color(ui, THEME_ROLE_ACCENT);
     const SDL_Color mark_fg = ui_color(ui, THEME_ROLE_MARK);
     const SDL_Color normal_fg = ui_color(ui, THEME_ROLE_FG);
+    const SDL_Color dim_fg = ui_color(ui, THEME_ROLE_DIM);
     /* Issue #27: sel_bgはユーザー編集(custom)でfgと近い値にされうるので、
      * 選択行の文字だけはコントラストの高い方をtheme_best_on()で選ぶ
      * (theme.h参照。全画面の自動補正はしない)。 */
@@ -707,7 +709,10 @@ void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
             ui_fill_rect(ui, edge, sel_edge);
         }
 
-        SDL_Color fg = (idx == marked) ? mark_fg : (idx == selected ? sel_fg : normal_fg);
+        /* dim_fn は marked/selected より優先する。選択中でも「この項目は
+         * 今効かない」ことが伝わってほしいため(Issue #43)。 */
+        SDL_Color fg = (dim_fn && dim_fn(ctx, idx)) ? dim_fg
+                      : (idx == marked ? mark_fg : (idx == selected ? sel_fg : normal_fg));
         const char *text = item_fn(ctx, idx);
         ui_text_clipped(ui, r.x + ui->metrics.pad, y + (row_h - ui->metrics.glyph) / 2,
                          r.w - ui->metrics.pad * 2, UI_TEXT_BODY, fg, text);

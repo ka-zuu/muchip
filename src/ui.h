@@ -195,14 +195,22 @@ ui_rect_t ui_header_rect(const ui_t *ui);
 ui_rect_t ui_header_title_row(const ui_t *ui);
 ui_rect_t ui_footer_rect(const ui_t *ui);
 
-/* Browser/TrackList で共有するスクロール付きリスト描画。
+/* Browser/TrackList/Settings で共有するスクロール付きリスト描画。
  * item_fn(ctx, index) は行の表示文字列を返す(呼び出し中のみ有効な
  * ポインタでよい。内部で即座に描画する)。
  * selected はカーソル位置(背景ハイライト)。marked は追加の強調
  * (TrackListでの再生中トラック等。不要なら -1)。
- * *scroll は呼び出し間で保持され、selected が常に見える範囲に自動調整される。 */
+ * *scroll は呼び出し間で保持され、selected が常に見える範囲に自動調整される。
+ * dim_fn(ctx, index) は非0を返すと、その行を THEME_ROLE_DIM で描く
+ * (Settings画面でSPC再生中のEQ/ステレオ深度など「値はあるが今は効かない」
+ * 項目を示すため。Issue #43)。選択中(idx==selected)でも淡色を優先する
+ * (カーソルを合わせた瞬間にこそ「効かない」と伝わってほしいため、
+ * 通常の選択色より優先する)。不要なら NULL を渡す(Browser/TrackListの
+ * 呼び出しは全項目が常に有効なのでNULLでよい)。 */
 typedef const char *(*ui_list_item_fn)(void *ctx, int index);
+typedef int (*ui_list_dim_fn)(void *ctx, int index);
 void ui_draw_list(ui_t *ui, ui_rect_t r, int count, int selected, int marked,
-                   int *scroll, ui_list_item_fn item_fn, void *ctx);
+                   int *scroll, ui_list_item_fn item_fn, ui_list_dim_fn dim_fn,
+                   void *ctx);
 
 #endif /* MUGBS_UI_H */

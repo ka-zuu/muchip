@@ -727,8 +727,8 @@ typedef struct {
     int enum_count;
     /* Issue #43: 非0なら、この項目はlibgmeのEQ/ステレオ深度に相当し、
      * 現在再生中のソースがSPC(playlist_effects_supported()==0)のときは
-     * 値の後ろへ「(n/a)」を付ける(settings_item_text()参照)。値の編集
-     * 自体は禁止しない(形式非依存のグローバル設定であり、GBS/NSFへ戻れば
+     * 行をグレーアウトする(settings_item_dim()参照)。値の編集自体は
+     * 禁止しない(形式非依存のグローバル設定であり、GBS/NSFへ戻れば
      * 効くため)。 */
     int needs_effects;
 } setting_def_t;
@@ -763,7 +763,7 @@ static const setting_def_t SETTINGS[] = {
     { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3, 0 },
     { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0, 0 },
     /* Issue #43: 末尾の1はneeds_effects。SPC再生中はEQ/ステレオ深度が
-     * 効かないため「(n/a)」を付ける対象(settings_item_text()参照)。 */
+     * 効かないためグレーアウトの対象(settings_item_dim()参照)。 */
     { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0, 1 },
     { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0, 1 },
     { "EQ treble",           SET_INT,    offsetof(mugbs_config_t, eq_treble),       -100,   100,   5, NULL, 0, 1 },
@@ -1209,7 +1209,7 @@ static void draw_browser(app_t *app) {
 
     ui_rect_t list = list_rect(app);
     ui_draw_list(ui, list, app->browser.count, app->browser.selected, -1,
-                 &app->browser.scroll, browser_item_text, app);
+                 &app->browser.scroll, browser_item_text, NULL, app);
 
     ui_footer_t ftr = {
         .line1 = "A:Open  B:Up  Start:Menu",
@@ -1394,7 +1394,7 @@ static void draw_player(app_t *app) {
         ui_draw_list(ui, list, file_count,
                      app->player_list.selected - first,
                      app->player_list_playing >= 0 ? app->player_list_playing - first : -1,
-                     &app->player_list.scroll, player_list_item_text, app);
+                     &app->player_list.scroll, player_list_item_text, NULL, app);
         y += list.h + ui->metrics.pad;
     }
 
@@ -1474,7 +1474,7 @@ static void draw_tracklist(app_t *app) {
         ui_rect_t list = list_rect(app);
         ui_draw_list(ui, list, app->pl->entry_count, app->tracklist_sel,
                      app->player.current_entry, &app->tracklist_scroll,
-                     tracklist_item_text, app);
+                     tracklist_item_text, NULL, app);
     }
 
     ui_footer_t ftr = {
@@ -1551,20 +1551,23 @@ static const char *settings_item_text(void *ctx, int index) {
             snprintf(valbuf, sizeof(valbuf), ">");
             break;
     }
-    /* Issue #43: needs_effects項目は、現在再生中のソースがSPC
-     * (playlist_effects_supported()==0)のとき値が効かないことを示す。
-     * 値そのものはLEFT/RIGHTで編集できたままにする(GBS/NSFへ戻れば
-     * 効くグローバル設定のため)。停止中・SPC以外は従来どおり付けない。 */
-    if (s->needs_effects && app->pl && app->player.current_entry >= 0) {
-        int src_idx = app->pl->entries[app->player.current_entry].source_index;
-        if (!playlist_effects_supported(app->pl, src_idx)) {
-            size_t len = strlen(valbuf);
-            snprintf(valbuf + len, sizeof(valbuf) - len, " (n/a)");
-        }
-    }
     /* 等幅8x8フォントなので固定幅のラベル列が ui.c を触らずに揃う。 */
     snprintf(buf, sizeof(buf), "%-18s %s", s->label, valbuf);
     return buf;
+}
+
+/* Issue #43: needs_effects項目(Stereo depth/EQ bass/EQ treble)は、現在
+ * 再生中のソースがSPC(playlist_effects_supported()==0)のとき値が
+ * 効かない。settings_item_text()の値そのものは変えない
+ * (LEFT/RIGHTでの編集はGBS/NSFへ戻れば効くグローバル設定なので禁止
+ * しない)。ui_draw_list()のdim_fnへ渡し、行の文字色をTHEME_ROLE_DIMへ
+ * 差し替えて示す(停止中・SPC以外は従来どおり通常色)。 */
+static int settings_item_dim(void *ctx, int index) {
+    app_t *app = (app_t *)ctx;
+    const setting_def_t *s = &SETTINGS[index];
+    if (!s->needs_effects || !app->pl || app->player.current_entry < 0) return 0;
+    int src_idx = app->pl->entries[app->player.current_entry].source_index;
+    return !playlist_effects_supported(app->pl, src_idx);
 }
 
 /* Xで開くリセット確認ダイアログ (P10)。draw_settings()の最後、通常の
@@ -1621,7 +1624,7 @@ static void draw_settings(app_t *app) {
 
     ui_rect_t list = list_rect(app);
     ui_draw_list(ui, list, SETTINGS_COUNT, app->settings_sel, -1,
-                 &app->settings_scroll, settings_item_text, app);
+                 &app->settings_scroll, settings_item_text, settings_item_dim, app);
 
     /* Issue #27: SET_ACTION行(Edit theme)ではLEFT/RIGHTが無反応なので
      * "L/R:Adjust" は誤解を招く。選択行に応じてフッタを差し替える。 */

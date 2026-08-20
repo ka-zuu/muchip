@@ -36,7 +36,7 @@ typedef struct {
      * なので set_equalizer_() が空実装(Music_Emu.h)で、effects_buffer も
      * NULLのため gme_set_stereo_depth() も何もしない
      * (docs/design-notes.md「libgmeの使い方と既知の乖離」参照)。
-     * Settings画面(app.c)が「(n/a)」表示を出すために読む。 */
+     * Settings画面(app.c)がグレーアウト表示を出すために読む。 */
     int effects_supported;
 } playlist_source_t; /* = 1回 Music_Emu を開く単位 (m3uのセグメントに対応) */
 

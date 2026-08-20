@@ -5,7 +5,7 @@
 # が置かれたディレクトリを --start-dir に指定して実行する想定。
 # Browser -> ファイルを開く -> Player(一覧を操作して別ファイルを開く) ->
 # TrackList -> ジャンプ -> Player -> Settings(値変更・リセット確認ダイアログ) ->
-# Player -> Browser -> Game.spcを開く -> Settings((n/a)表示) -> Player ->
+# Player -> Browser -> Game.spcを開く -> Settings(グレーアウト表示) -> Player ->
 # Browser -> Settings -> Browser -> 終了、という画面遷移をひととおり踏む。
 # SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy 下で実行され、表示は見えない
 # (画面遷移・ライフサイクルのクラッシュ回帰をCIで拾うためのもの)。
@@ -107,9 +107,9 @@ DOWN    # Browser: Game.gbs -> Game.spc (Issue #43)
 A       # 決定。Game.spcを開く -> Player(GBSからSPCへplaylistを張り替える
         # 経路を通す。SPCは1ファイル=1トラック固定なので一覧操作はしない)
 START   # Player -> Settings。Stereo depth/EQ bass/EQ trebleの表示行が
-        # settings_item_text()の新分岐(playlist_effects_supported()==0の
-        # とき値の後ろへ"(n/a)"を付ける)を、SPC再生中の状態で通す
-        # (目視確認はホストでの--screenshot。ここでは画面遷移が
+        # settings_item_dim()の新分岐(playlist_effects_supported()==0の
+        # ときui_draw_list()のdim_fnがグレーアウトさせる)を、SPC再生中の
+        # 状態で通す(目視確認はホストでの--screenshot。ここでは画面遷移が
         # クラッシュしないことだけを見る)
 B       # Settings -> Player
 B       # Player -> Browser
