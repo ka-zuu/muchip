@@ -56,9 +56,10 @@ ctest --test-dir build --output-on-failure
 引数無し、または `--list`/`--cli` 以外の起動でGUI本体が立ち上がる。
 
 ```sh
-./build/muchip                       # カレントディレクトリのBrowserから開始
-                                     # (config.iniのlast_pathがあればそこから)
-./build/muchip --start-dir /path/to/music
+./build/muchip                       # 設定に従ってBrowserまたはPlayerから開始
+                                     # (下記「起動モード」参照)
+./build/muchip --start-dir /path/to/music  # 起動モードより優先してこの
+                                     # ディレクトリのBrowserから始める
 ./build/muchip Game.gbs              # 指定ファイルを直接Playerで開いて開始
 ./build/muchip --window 720x720      # ホストでの別解像度レイアウト確認用
                                      # (省略時は検出した解像度でフルスクリーン)
@@ -67,11 +68,21 @@ ctest --test-dir build --output-on-failure
                                      # 無ければ ./config.ini)
 ```
 
+**起動モード**: Settings画面の **Start with** で `Folder`（既定）と
+`Last played`（Resume）を切り替える。`Folder` は **Start folder**
+（同じくSettings画面。`A`でディレクトリ専用の選択サブ画面を開く）が
+設定済みならそこから、未設定なら前回開いていた場所（F-13）から、それも
+無ければ環境変数 `MUCHIP_START_DIR` かカレントディレクトリからBrowserを
+開始する。`Last played` は前回再生していたファイル・トラック・再生位置を
+復元し、**Player画面から自動再生で**始める（復元に失敗した場合は
+`Folder` と同じフォールバック列に従う）。`--start-dir` はどちらの
+モードより常に優先する。
+
 キーボード操作（実機ではSDL_GameControllerのボタンに対応。SPEC 6.3参照）:
 
 | キー | Browser | Player | TrackList | Settings |
 |---|---|---|---|---|
-| `↑` `↓` | カーソル移動 | ファイル一覧のカーソル移動 | カーソル移動 | 項目選択 |
+| `↑` `↓` | カーソル移動 | 同ディレクトリの前/次ファイルへ送る | カーソル移動 | 項目選択 |
 | `←` `→` | ページ送り | 前/次トラック | ページ送り | 値を増減 |
 | `Z` (A相当) | 開く | 決定(カーソルのファイルを開く) | ジャンプ再生 | 値を増やす |
 | `X` (B相当) | 上の階層へ | Browserへ戻る | Playerへ戻る | 保存して戻る |
@@ -84,14 +95,17 @@ ctest --test-dir build --output-on-failure
 | `Esc` | 終了 | 終了 | 終了 | — |
 
 `↑↓←→` は押しっぱなしで長押しリピートする(初回350ms後から70ms間隔)。
-リスト系画面(Browser/TrackList/Settings/Playerのファイル一覧)のカーソルは
-端で反対側へ折り返す。ページ送り(Browserの`←``→`)は折り返さない。
+リスト系画面(Browser/TrackList/Settings/Folder Pick)のカーソルは端で
+反対側へ折り返す。Player画面の`↑↓`(ファイル送り)も同じ折り返し規約に
+従うが、押しっぱなしにしても連射で曲が切り替わり続けない(1回押すごとに
+1回だけ切り替わる)。ページ送り(Browserの`←``→`)は折り返さない。
 
-Player画面の中央には、いま開いているファイルが置かれているディレクトリの
-ファイル一覧が出る。カーソル(青)を`↑``↓`で動かして`Z`で決定すると、そのまま
-別のファイルへ切り替えて再生できる(再生中のファイルは黄色で表示される)。
-`1`/`2` の「前/次ソース」はこれとは別で、いま開いている m3u や zip の中で
-参照先ファイルを跨ぐ移動。
+Player画面は曲情報とシークバーの下を丸ごと波形ビジュアライザに使う
+（同ディレクトリのファイル一覧UIは廃止した）。`↑``↓`を押すと、いま開いて
+いるファイルと同じディレクトリの前/次の音楽ファイルへ即座に切り替わる
+（端まで行くと反対側へ折り返す。長押しリピートでは連射されない — 1回
+押すごとに1回だけ切り替わる）。`1`/`2` の「前/次ソース」はこれとは別で、
+いま開いている m3u や zip の中で参照先ファイルを跨ぐ移動。
 
 **Yコンボ**: Player画面で `S`(Y相当)を押しながら方向キーを押すと、
 Settingsへ入らずにRepeat/Shuffleを変えられる。`S`+`←`/`→` でRepeatモードを
@@ -111,16 +125,20 @@ Settings 画面は Browser/Player どちらからも Start で開ける。**Leng
 （ながさチェンジ）・**Default length**・**Skip short**（短い曲の
 スキップ）・Repeat・**Shuffle**・Stereo depth・**EQ bass**・
 **EQ treble**・Fade・Show all files・Scroll title・Show battery・
-**Theme**（カラーテーマ）の13項目を編集でき、抜けるときとアプリ終了時に
-`config.ini` へ自動保存する（`sample_rate` はデバイス再オープンが必要な
-ため対象外）。末尾の **Edit theme** は値を持たず、`A` で `Theme` の
-`custom` パレットを編集するサブ画面（Theme Editor）を開く。`X`
-（キーボードは `A`）でこれら13項目を一括で既定値に戻す確認ダイアログを
-開ける（`last_path`やコントローラ設定など、Settings画面に出てこない値は
-対象外。ただし `Theme` の `custom` パレットはSettings画面に出てこないが、
-`Theme` 自体のリセット対象なので一緒に既定へ戻る）。Default length は
-`config.ini` 上は秒のまま（既定180秒）だが、Settings画面では `3 min` の
-ように分単位・1分刻みで編集する。
+**Theme**（カラーテーマ）・**Start with**（起動モード）の14項目を編集
+でき、抜けるときとアプリ終了時に `config.ini` へ自動保存する
+（`sample_rate` はデバイス再オープンが必要なため対象外）。**Edit theme**
+と **Start folder** は値を持たず、`A` でそれぞれ `Theme` の `custom`
+パレットを編集するサブ画面（Theme Editor）・起動ディレクトリを選ぶ
+サブ画面（ディレクトリのみ列挙。`A`で入る、`B`で上へ、`X`で確定、`Y`で
+未設定に戻す、`Start`でキャンセル）を開く。`X`（キーボードは `A`）で
+これら14項目を一括で既定値に戻す確認ダイアログを開ける（`last_path`や
+コントローラ設定など、Settings画面に出てこない値は対象外。ただし
+`Theme` の `custom` パレットと `Start folder` はSettings画面の一覧行
+そのものには出てこないが、それぞれ `Theme`/`Start with` 自体のリセット
+対象なので一緒に既定へ戻る）。Default length は `config.ini` 上は秒の
+まま（既定180秒）だが、Settings画面では `3 min` のように分単位・1分
+刻みで編集する。
 
 **Length（ながさチェンジ）**: 既定は `auto`（今までどおり、m3uの曲長や
 実測値があればそれを使い、無い曲だけ Default length へフォールバック
@@ -151,7 +169,8 @@ Shuffle を有効にすると、次/前トラック（自動送りも含む）�
 
 ### バッテリー残量表示
 
-4画面すべてのタイトル行右端に残量ゲージ（矩形の枠＋残量ぶんの塗り。
+全6画面（Browser/Player/TrackList/Settings/Theme Editor/Folder Pick）
+すべてのタイトル行右端に残量ゲージ（矩形の枠＋残量ぶんの塗り。
 8x8フォントはASCIIのみで絵文字が無いため数値は出さない）を表示できる。
 Settings の `Show battery`（`config.ini` の `[ui] battery_show`）で
 `off`/`low`/`always` を選ぶ（既定は `low`＝残量が少ないときだけ）。色は
@@ -172,7 +191,7 @@ Theme Editor サブ画面では、9つの色スロット（背景・パネル・
 アクセント・選択行・再生中マーク・警告・充電中）を一覧から編集できる。
 `UP`/`DOWN` でスロット選択、`L1`/`R1` で編集するチャンネル(R/G/B)を切替、
 `LEFT`/`RIGHT` で値を8刻みで増減する。値を変えた瞬間に `Theme` は
-`custom` へ切り替わり、4画面すべてへ即座にライブプレビューされる。`X`
+`custom` へ切り替わり、全6画面へ即座にライブプレビューされる。`X`
 で確認ダイアログ無しに開いたときの状態へ戻せる（パレットは1枚だけなので
 これがそのままundoになる）。`custom` のパレットは `config.ini` の
 `[theme]` セクション（9キー、`RRGGBB` の16進）を手編集しても変更できる。
@@ -201,9 +220,12 @@ Player 画面にはシークバーの下に簡易オシロスコープを表示�
 ## 設定ファイル (config.ini)
 
 SPEC 7 の全キーに加え、`[ui] show_all_files`/`title_scroll`/
-`battery_show`/`theme`/`last_path`、`[theme]` の9キー（`custom` テーマの
-パレット）、`[input] gamecontroller_db`/`controller_mapping` を持つ。
-`src/config.c` が読み書きする（外部のINIライブラリは使わない）。
+`battery_show`/`theme`/`last_path`/`start_mode`/`start_folder`、
+`[theme]` の9キー（`custom` テーマのパレット）、
+`[input] gamecontroller_db`/`controller_mapping`、
+`[resume] path`/`source`/`track`/`position_ms`（`start_mode=resume`の
+ときだけ意味を持つ）を持つ。`src/config.c` が読み書きする（外部のINI
+ライブラリは使わない）。
 
 - パス解決順: `--config PATH` > 環境変数 `MUCHIP_CONFIG` > `./config.ini`
 - 保存は正規形で書き直す（手書きしたコメントや並び順は保存されない。
@@ -243,8 +265,8 @@ scp muChip-<version>.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
 される（前回開いた場所・EQなどの設定が復元される）。`mux_launch.sh` は
 起動のたびに実機のSDカードから音楽ディレクトリを自動検出し
 （`MUSIC`/`Music`/`ROMS/GBS`等を優先的に探索、無ければ `ROMS`直下に
-フォールバック）、`config.ini` にまだ `last_path` が無い初回起動時だけ
-そこから始まる。
+フォールバック）、`Start folder`（未設定時）・`last_path`・
+`MUCHIP_START_DIR` のいずれもまだ無い初回起動時だけそこから始まる。
 
 終了は **GUIDEボタン単体**、または **Start+Select同時押し**。
 

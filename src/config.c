@@ -35,6 +35,7 @@ typedef enum {
     CFG_STR,
     CFG_THEME,  /* Issue #27: theme_id_t。名前<->enum変換はtheme.cへ委譲する */
     CFG_COLOR,  /* Issue #27: theme_color_t 1個(RRGGBB 16進)。同上 */
+    CFG_START_MODE, /* Issue #47: start_mode_t。"folder"|"resume" */
 } config_kind_t;
 
 typedef struct {
@@ -68,6 +69,9 @@ static const config_key_t KEYS[] = {
     { "ui", "battery_show",  CFG_BATTERY_SHOW, offsetof(mugbs_config_t, battery_show), 0, 0, 0 },
     { "ui", "theme",          CFG_THEME, offsetof(mugbs_config_t, theme_id),      0, 0, 0 }, /* Issue #27 */
     { "ui", "last_path",      CFG_STR,  offsetof(mugbs_config_t, last_path),      0, 0, MUGBS_PATH_MAX },
+    /* Issue #47 */
+    { "ui", "start_mode",   CFG_START_MODE, offsetof(mugbs_config_t, start_mode),   0, 0, 0 },
+    { "ui", "start_folder", CFG_STR,        offsetof(mugbs_config_t, start_folder), 0, 0, MUGBS_PATH_MAX },
 
     /* Issue #27: theme=custom のときだけ使うパレット。キー名は
      * theme.c の THEME_SLOT_KEYS[]・theme_slot_key() と一致させること
@@ -85,6 +89,13 @@ static const config_key_t KEYS[] = {
 
     { "input", "gamecontroller_db",  CFG_STR, offsetof(mugbs_config_t, gamecontroller_db),  0, 0, MUGBS_PATH_MAX },
     { "input", "controller_mapping", CFG_STR, offsetof(mugbs_config_t, controller_mapping), 0, 0, MUGBS_MAPPING_MAX },
+
+    /* Issue #47: start_mode=resumeのときだけ意味を持つ。resume_pathが空なら
+     * 未設定として扱う(app_run()参照)。 */
+    { "resume", "path",         CFG_STR, offsetof(mugbs_config_t, resume_path),        0,       0, MUGBS_PATH_MAX },
+    { "resume", "source",       CFG_INT, offsetof(mugbs_config_t, resume_source),      0, 1000000, 0 },
+    { "resume", "track",        CFG_INT, offsetof(mugbs_config_t, resume_track),       0, 1000000, 0 },
+    { "resume", "position_ms",  CFG_INT, offsetof(mugbs_config_t, resume_position_ms), 0, 86400000, 0 },
 };
 
 #define KEY_COUNT ((int)(sizeof(KEYS) / sizeof(KEYS[0])))
@@ -104,6 +115,12 @@ static const char *section_comment(const char *section) {
                "; (それ以外のプリセット選択中はここを書き換えても無視される)。値は\n"
                "; RRGGBB の16進(先頭#無し)。Settings画面の \"Edit theme\" で編集した内容が\n"
                "; ここへ保存される。\n";
+    }
+    if (strcmp(section, "resume") == 0) {
+        return "; Issue #47: [ui] start_mode が \"resume\" のときだけ、起動時にここへ復元する\n"
+               "; (それ以外のときはここを書き換えても無視される)。source/trackは\n"
+               "; playlist_entry_t の source_index/track_index、position_msは再生位置(ms)。\n"
+               "; Settings画面を抜けるたびと終了時に自動更新される。\n";
     }
     return NULL;
 }
@@ -199,6 +216,20 @@ static const char *battery_show_name(battery_show_t m) {
     return "low";
 }
 
+static int parse_start_mode_value(const char *s, start_mode_t *out) {
+    if (ieq(s, "folder")) { *out = START_MODE_FOLDER; return 0; }
+    if (ieq(s, "resume")) { *out = START_MODE_RESUME; return 0; }
+    return -1;
+}
+
+static const char *start_mode_name(start_mode_t m) {
+    switch (m) {
+        case START_MODE_FOLDER: return "folder";
+        case START_MODE_RESUME: return "resume";
+    }
+    return "folder";
+}
+
 /* ---- 既定値 ------------------------------------------------------------ */
 
 void config_set_defaults(mugbs_config_t *c) {
@@ -225,8 +256,16 @@ void config_set_defaults(mugbs_config_t *c) {
         * (Edit theme画面を一度も開かなくても妥当な色が入っている)。 */
     c->last_path[0] = 0;
 
+    c->start_mode = START_MODE_FOLDER; /* Issue #47: 既定はfolder(memsetのゼロと同じだが明示) */
+    c->start_folder[0] = 0; /* 未設定。app_run()がlast_path等へフォールバックする */
+
     c->gamecontroller_db[0] = 0;
     c->controller_mapping[0] = 0;
+
+    c->resume_path[0] = 0; /* 未設定。start_mode=resumeでもfolderへフォールバックする */
+    c->resume_source = 0;
+    c->resume_track = 0;
+    c->resume_position_ms = 0;
 }
 
 /* ---- 読み込み ---------------------------------------------------------- */
@@ -342,6 +381,16 @@ static void apply_value(mugbs_config_t *c, const config_key_t *k, const char *va
                 return;
             }
             *(theme_color_t *)field = v;
+            return;
+        }
+        case CFG_START_MODE: {
+            start_mode_t v;
+            if (parse_start_mode_value(value, &v) != 0) {
+                LOG_WARN("%s:%d: %s の値が不正です: \"%s\" (folder|resume)",
+                         where, lineno, k->key, value);
+                return;
+            }
+            *(start_mode_t *)field = v;
             return;
         }
     }
@@ -513,6 +562,9 @@ static int write_config(const mugbs_config_t *c, FILE *f) {
                 fprintf(f, "%s = %s\n", k->key, buf);
                 break;
             }
+            case CFG_START_MODE:
+                fprintf(f, "%s = %s\n", k->key, start_mode_name(*(const start_mode_t *)field));
+                break;
         }
     }
 

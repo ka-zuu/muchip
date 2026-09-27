@@ -213,6 +213,27 @@ static int test_select_by_name(void) {
     return 0;
 }
 
+/* Issue #47: BROWSER_FILTER_DIRSは、show_all/拡張子フィルタに関わらず
+ * ディレクトリだけを列挙し、ファイルは一切出さない
+ * (Settings画面の「Start folder」サブ画面用)。 */
+static int test_filter_dirs(void) {
+    browser_t b;
+    memset(&b, 0, sizeof(b));
+    CHECK(browser_open_dir(&b, g_tmpdir, BROWSER_FILTER_DIRS) == 0);
+    /* g_tmpdirの中身はtest_sort_and_filter()が作った "sub" 1件だけがディレクトリ。 */
+    CHECK(b.count == 1);
+    CHECK(b.items[0].is_dir);
+    CHECK_STREQ(b.items[0].name, "sub");
+
+    /* subは空ディレクトリなので、DIRSで開くと0件になる(ファイルも
+     * サブディレクトリも無い)。 */
+    CHECK(browser_enter(&b, BROWSER_FILTER_DIRS) == 1);
+    CHECK(b.count == 0);
+
+    browser_free(&b);
+    return 0;
+}
+
 int main(void) {
     setup_tmpdir("browser");
 
@@ -223,6 +244,7 @@ int main(void) {
     if (test_root_boundary()) return 1;
     if (test_self_refresh_same_cwd_pointer()) return 1;
     if (test_select_by_name()) return 1;
+    if (test_filter_dirs()) return 1;
 
     printf("test_browser: すべて成功\n");
     return 0;

@@ -53,6 +53,12 @@ static int test_defaults(void) {
     CHECK(c.last_path[0] == 0);
     CHECK(c.gamecontroller_db[0] == 0);
     CHECK(c.controller_mapping[0] == 0);
+    CHECK(c.start_mode == START_MODE_FOLDER); /* Issue #47 */
+    CHECK(c.start_folder[0] == 0);
+    CHECK(c.resume_path[0] == 0);
+    CHECK(c.resume_source == 0);
+    CHECK(c.resume_track == 0);
+    CHECK(c.resume_position_ms == 0);
     return 0;
 }
 
@@ -501,6 +507,12 @@ static int check_equal(const mugbs_config_t *a, const mugbs_config_t *b) {
     CHECK_STREQ(a->last_path, b->last_path);
     CHECK_STREQ(a->gamecontroller_db, b->gamecontroller_db);
     CHECK_STREQ(a->controller_mapping, b->controller_mapping);
+    CHECK(a->start_mode == b->start_mode); /* Issue #47 */
+    CHECK_STREQ(a->start_folder, b->start_folder);
+    CHECK_STREQ(a->resume_path, b->resume_path);
+    CHECK(a->resume_source == b->resume_source);
+    CHECK(a->resume_track == b->resume_track);
+    CHECK(a->resume_position_ms == b->resume_position_ms);
     return 0;
 }
 
@@ -555,7 +567,54 @@ static int test_roundtrip_mutated(void) {
     snprintf(c.gamecontroller_db, sizeof(c.gamecontroller_db), "/usr/lib/gamecontrollerdb.txt");
     snprintf(c.controller_mapping, sizeof(c.controller_mapping),
              "03000000091200000031000011010000,MyPad,a:b1,b:b0,platform:Linux,");
+    /* Issue #47 */
+    c.start_mode = START_MODE_RESUME;
+    snprintf(c.start_folder, sizeof(c.start_folder), "/mnt/mmc/MUSIC");
+    snprintf(c.resume_path, sizeof(c.resume_path), "/mnt/mmc/MUSIC/Album.zip:Game.gbs");
+    c.resume_source = 3;
+    c.resume_track = 7;
+    c.resume_position_ms = 123456;
     return roundtrip(&c);
+}
+
+/* --- Issue #47: [ui] start_mode/start_folder, [resume] ------------------ */
+
+static int test_start_mode_and_resume(void) {
+    mugbs_config_t c;
+
+    static const struct { const char *token; start_mode_t mode; } modes[] = {
+        { "folder", START_MODE_FOLDER }, { "Resume", START_MODE_RESUME },
+    };
+    for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[ui]\nstart_mode = %s\n", modes[i].token);
+        config_set_defaults(&c);
+        CHECK(load_str(&c, buf) == 0);
+        CHECK(c.start_mode == modes[i].mode);
+    }
+
+    /* 不正な値は直前の値(=既定値のfolder)を維持する。 */
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[ui]\nstart_mode = sideways\n") == 0);
+    CHECK(c.start_mode == START_MODE_FOLDER);
+
+    config_set_defaults(&c);
+    CHECK(load_str(&c, "[ui]\nstart_folder = /mnt/mmc/MUSIC\n") == 0);
+    CHECK_STREQ(c.start_folder, "/mnt/mmc/MUSIC");
+
+    config_set_defaults(&c);
+    CHECK(load_str(&c,
+        "[resume]\n"
+        "path = /mnt/mmc/MUSIC/Game.gbs\n"
+        "source = 2\n"
+        "track = 5\n"
+        "position_ms = 42000\n") == 0);
+    CHECK_STREQ(c.resume_path, "/mnt/mmc/MUSIC/Game.gbs");
+    CHECK(c.resume_source == 2);
+    CHECK(c.resume_track == 5);
+    CHECK(c.resume_position_ms == 42000);
+
+    return 0;
 }
 
 /* --- 保存できない場所でも -1 を返して .tmp を残さないこと ---------------- */
@@ -585,6 +644,7 @@ int main(void) {
     if (test_skip_short_sec()) return 1;
     if (test_input_section()) return 1;
     if (test_theme_keys()) return 1;
+    if (test_start_mode_and_resume()) return 1;
     if (test_roundtrip_defaults()) return 1;
     if (test_roundtrip_mutated()) return 1;
     if (test_save_failure()) return 1;

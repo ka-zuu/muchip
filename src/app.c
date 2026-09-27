@@ -13,6 +13,7 @@
 #include "input.h"
 #include "log.h"
 #include "player.h"
+#include "playctx.h"
 #include "playlist.h"
 #include "ui.h"
 
@@ -29,6 +30,7 @@ typedef enum {
     SCREEN_TRACKLIST,
     SCREEN_SETTINGS, /* P6: SPEC 6.1。START で Browser/Player どちらからも開く */
     SCREEN_THEME_EDIT, /* Issue #27: Settings画面の"Edit theme"(A)で開くサブ画面 */
+    SCREEN_FOLDER_PICK, /* Issue #47: Settings画面の"Start folder"(A)で開くサブ画面 */
 } app_screen_t;
 
 typedef struct {
@@ -39,28 +41,22 @@ typedef struct {
     browser_t browser;
     app_screen_t screen;
 
-    /* Player画面の中央に出す「いま開いているファイルが置かれている
-     * ディレクトリ」の一覧 (P9)。Browser画面の browser とは完全に独立した
-     * 2つ目のインスタンスにしてある。再生中にBrowserで別フォルダを眺めても
-     * Player側の一覧が動いてはならず、逆にPlayer側でファイルを送っても
-     * Browserのカーソル/スクロールを壊してはならないため
-     * (browser_open_dir() は selected/scroll を0に戻す)。
-     *
-     * 添字の空間に注意: player_list.selected と player_list_playing は
-     * items[] の添字(=「アイテム空間」。browser_select_by_name /
-     * browser_path_at がそのまま使える)。一方 player_list.scroll は
-     * ui_draw_list() だけが触る「表示空間」(ファイル領域の先頭が0)。
-     * player_list に対して browser_move()/browser_page()/browser_enter()/
-     * browser_up() を呼んではならない(ディレクトリを飛ばす前提が壊れる)。 */
-    browser_t player_list;
-    int player_list_first_file; /* items[] の最初の非ディレクトリ添字。
-                                    items[] は「ディレクトリ優先 -> 名前順」
-                                    (browser.c の item_cmp)なので、ここ以降が
-                                    まとめてファイル領域になる */
-    int player_list_playing;     /* 再生中ファイルの items[] 添字。一覧に
-                                    無ければ -1(zip内から開いた等) */
+    /* Issue #47: Player画面のUP/DOWN(同ディレクトリの前/次ファイルへ送る)
+     * を支える再生コンテキスト。P9はこれをPlayer画面内の一覧UI(2つ目の
+     * browser_t)として持っていたが、Issue #47で一覧UI自体を撤去したため、
+     * カーソル/スクロールを持たない薄いモデル(playctx.h参照)へ置き換えた。
+     * 将来のプレイリスト機能(Issue #18)は playctx_t の kind を増やす形で
+     * ここに乗せる想定。 */
+    playctx_t playctx;
+
+    /* Issue #47: Settings画面の"Start folder"(A)で開くディレクトリ専用の
+     * フォルダ選択サブ画面(SCREEN_FOLDER_PICK)用。app->browser とは別の
+     * 3つ目のインスタンス(Browser/Player中の状態を壊さないため、
+     * かつてのplayer_listと同じ理由)。 */
+    browser_t folder_pick;
     char player_path[MUGBS_PATH_MAX]; /* app_open_path() に渡されたパス。
-                                          show_all_files 変更時の再構築に使う。
+                                          show_all_files 変更時の再構築、
+                                          およびResume(Issue #47)の保存に使う。
                                           空文字列=まだ何も開いていない */
 
     mugbs_config_t *cfg; /* 参照のみ。所有権は呼び出し側(main())。
@@ -256,11 +252,10 @@ static const char *path_leaf(const char *path) {
  * 波形が横に伸び縮みして読めない)。 */
 #define APP_SCOPE_DRAW_SAMPLES (AUDIO_SCOPE_SAMPLES / 2)
 
-/* Player画面のステータス行より下の帯を、ファイル一覧(P9)とビジュアライザ
- * (F-14)で行単位に分け合うときの一覧側の上限/波形側の下限。draw_player()を
- * 参照。波形側には上限を設けていない(P10: 余りは全部波形に渡し、
- * 下端がフッタ帯近くまで届くようにする)。 */
-#define PLAYER_LIST_MAX_ROWS 7
+/* Player画面のステータス行より下の帯は、Issue #47でファイル一覧UIを
+ * 撤去して以降、丸ごとビジュアライザ(F-14)になる(draw_player()参照)。
+ * この行数を切れない極端な低解像度では波形自体を描かない
+ * (フッタへはみ出させない。SPEC 6.2)。 */
 #define PLAYER_WAVE_MIN_ROWS 2
 
 /* 1フレームに1回だけ波形を取り込む。
@@ -330,76 +325,39 @@ static void set_last_path(app_t *app, const char *path) {
     memcpy(app->cfg->last_path, path, n + 1);
 }
 
-/* ---- Player画面のファイル一覧 (P9) --------------------------------------
+/* ---- Player画面の再生コンテキスト (Issue #47) ---------------------------
  *
  * opened_path は app_open_path() に渡されたパスそのもの(.gbs/.gb/.m3u/.zip)。
  * playlist_source_t.fs_path ではなくこれを使う理由:
  *   - zip内ソースの fs_path は NULL である (playlist.h)
- *   - .zip を開いたときに見せたいのは「zipを含むディレクトリ」であり、
- *     ハイライトすべき項目はその .zip 自身である
+ *   - .zip を開いたときに送り先の基準にしたいのは「zipを含むディレクトリ」
+ *     であり、いま鳴っているのはその .zip 自身である
  *   - .gbs/.m3u/.zip のどれでも同じ扱いで済む唯一の値である
  *
  * force_rescan=0 のとき、既に同じディレクトリを開いていれば readdir を
- * やり直さない。毎回の再走査はSDカード上で無駄なだけでなく、
- * browser_open_dir() が scroll を0に戻すため一覧が跳ねてしまう。
- * show_all_files が変わったときだけ force_rescan=1 で呼ぶ。 */
-static void app_sync_player_list(app_t *app, const char *opened_path, int force_rescan) {
+ * やり直さない(playctx_open_dir()内部の判定。SDカード上での無駄な
+ * 再走査を避ける)。show_all_files が変わったときだけ force_rescan=1 で
+ * 呼ぶ。 */
+static void app_sync_playctx(app_t *app, const char *opened_path, int force_rescan) {
     if (!opened_path || !opened_path[0]) return;
 
-    /* opened_path が app->player_path 自身であり得る(show_all_files切替時)。
-     * 以降 app->player_path へ書き戻すので、まずローカルへ写しておく。 */
-    char full[MUGBS_PATH_MAX];
-    if (snprintf(full, sizeof(full), "%s", opened_path) >= (int)sizeof(full)) {
-        LOG_WARN("パスが長すぎるためPlayer画面の一覧を作れません: %s", opened_path);
-        browser_free(&app->player_list);
-        app->player_list_first_file = 0;
-        app->player_list_playing = -1;
+    if (playctx_open_dir(&app->playctx, opened_path, app->cfg->show_all_files,
+                          force_rescan) != 0) {
+        /* 読めないディレクトリ。コンテキストは空にしておく
+         * (Up/Downでのファイル送りは何もしなくなるだけで、再生自体は
+         * 継続する)。 */
+        playctx_free(&app->playctx);
         app->player_path[0] = 0;
         return;
     }
 
-    /* dir と base に分ける。 */
-    char dir[MUGBS_PATH_MAX];
-    char base[MUGBS_PATH_MAX];
-    const char *slash = strrchr(full, '/');
-    if (!slash) {
-        snprintf(base, sizeof(base), "%s", full);
-        snprintf(dir, sizeof(dir), ".");
-    } else {
-        snprintf(base, sizeof(base), "%s", slash + 1);
-        size_t dn = (size_t)(slash - full);
-        if (dn == 0) dn = 1; /* "/foo.gbs" -> "/" */
-        memcpy(dir, full, dn);
-        dir[dn] = 0;
+    size_t n = strlen(opened_path);
+    if (n >= sizeof(app->player_path)) {
+        LOG_WARN("パスが長すぎるため記憶しません: %s", opened_path);
+        app->player_path[0] = 0;
+        return;
     }
-
-    if (force_rescan || !app->player_list.cwd || strcmp(app->player_list.cwd, dir) != 0) {
-        if (browser_open_dir(&app->player_list, dir, app->cfg->show_all_files) != 0) {
-            /* 読めないディレクトリ。一覧は空にしておく(draw_playerがcount==0
-             * として何も描かない)。 */
-            browser_free(&app->player_list);
-            app->player_list_first_file = 0;
-            app->player_list_playing = -1;
-            app->player_path[0] = 0;
-            return;
-        }
-    }
-
-    int first = 0;
-    while (first < app->player_list.count && app->player_list.items[first].is_dir) first++;
-    app->player_list_first_file = first;
-
-    if (browser_select_by_name(&app->player_list, base) &&
-        app->player_list.selected >= first) {
-        app->player_list_playing = app->player_list.selected;
-    } else {
-        /* 一覧に無い(zip内から開いた・拡張子フィルタ外・同名ディレクトリ等)。
-         * 一覧自体は出すが「再生中」の印は付けない。 */
-        app->player_list.selected = first;
-        app->player_list_playing = -1;
-    }
-
-    memcpy(app->player_path, full, strlen(full) + 1);
+    memcpy(app->player_path, opened_path, n + 1);
 }
 
 /* ---- ファイルを開く ---------------------------------------------------- */
@@ -424,21 +382,42 @@ static void app_open_path(app_t *app, const char *path) {
         set_status(app, "Failed to play: %s", path);
         playlist_free(app->pl);
         app->pl = NULL;
-        /* 何も鳴っていないので、一覧の「再生中」の印は消す。カーソルは
-         * そのまま残し、ユーザーが続けて別のファイルを選べるようにする。 */
-        app->player_list_playing = -1;
         return;
     }
 
     set_last_path(app, path); /* F-13: 直近に開いたファイルを記憶する */
-    /* Player画面の一覧を、いま開いたファイルへ合わせる (P9)。
-     * app_open_path() はGUI側で playlist_open() を呼ぶ唯一の関数なので、
-     * Browserの決定・argvのinitial_path・Player一覧からの決定という
-     * 3経路すべてがここを通る。 */
-    app_sync_player_list(app, path, 0);
+    /* Player画面のUP/DOWN用の再生コンテキストを、いま開いたファイルへ
+     * 合わせる (Issue #47)。app_open_path() はGUI側で playlist_open() を
+     * 呼ぶ唯一の関数なので、Browserの決定・argvのinitial_path・
+     * Player画面でのUP/DOWNによる送り・Resumeの4経路すべてがここを通る。 */
+    app_sync_playctx(app, path, 0);
+
+    /* Issue #47: Browserのカーソルを、いま開いたファイルへ合わせる
+     * (Player画面の一覧UIを廃したため、Up/Downで送った後にBでBrowserへ
+     * 戻ったときの手がかりをBrowserのカーソル位置に一本化する)。
+     * Browserがいま別のディレクトリを見ている場合は何もしない
+     * (無関係な項目へカーソルを動かしてしまわないため)。 */
+    if (app->browser.cwd && app->playctx.dir && strcmp(app->browser.cwd, app->playctx.dir) == 0) {
+        browser_select_by_name(&app->browser, path_leaf(path));
+    }
+
     app->tracklist_sel = 0;
     app->tracklist_scroll = 0;
     app->screen = SCREEN_PLAYER;
+}
+
+/* Player画面のUP/DOWN: 同ディレクトリの前/次ファイルを開いて再生する
+ * (Issue #47。旧player_list_move()+player_list_open_selected()相当)。
+ * 一覧が1件だけ(自分自身に折り返す)場合は同じファイルの再オープンで
+ * 再生位置が0へ戻ってしまうのを避けるため、何もしない。 */
+static void app_player_step_file(app_t *app, int delta) {
+    if (app->playctx.count <= 0) return;
+
+    char path[MUGBS_PATH_MAX];
+    if (playctx_step_path(&app->playctx, delta, path, sizeof(path)) != 0) return;
+    if (app->player_path[0] && strcmp(path, app->player_path) == 0) return;
+
+    app_open_path(app, path);
 }
 
 /* L2/R2 (前/次ファイル, SPEC 6.3): 現エントリの source を跨ぐ最初の
@@ -520,42 +499,6 @@ static void handle_browser_input(app_t *app, input_action_t a) {
     }
 }
 
-/* Player画面のファイル一覧 (P9) のカーソルを delta 動かす。
- * ファイル領域 [first_file, count-1] の中で端は反対側へ折り返す。
- * 再生中の曲は変えない(決定は A)。 */
-static void player_list_move(app_t *app, int delta) {
-    int lo = app->player_list_first_file;
-    int hi = app->player_list.count - 1;
-    if (hi < lo) return; /* 一覧が空、または全部ディレクトリ */
-
-    int n = hi - lo + 1;
-    int rel = (app->player_list.selected - lo + delta) % n;
-    if (rel < 0) rel += n;
-    app->player_list.selected = lo + rel;
-    /* scroll は ui_draw_list() が selected に追従させるので触らない。 */
-}
-
-/* Player画面のファイル一覧でカーソルが指すファイルを開いて再生する (A)。 */
-static void player_list_open_selected(app_t *app) {
-    int lo = app->player_list_first_file;
-    int hi = app->player_list.count - 1;
-    if (hi < lo) return;
-    /* 既に鳴っているファイルなら何もしない(頭出しし直さない)。 */
-    if (app->player_list.selected == app->player_list_playing) return;
-
-    char path[MUGBS_PATH_MAX];
-    if (browser_path_at(&app->player_list, app->player_list.selected, path, sizeof(path)) != 0) {
-        return;
-    }
-
-    /* 成功すれば app_open_path() の中の app_sync_player_list() が、実際に
-     * 開けたファイルからカーソルと player_list_playing を作り直す。
-     * 失敗すれば app_open_path() は status を出して即 return するだけなので、
-     * カーソルはここに残り、黄色い印は前の(いま鳴っている)ファイルを
-     * 指したままになる = 一覧と実際の再生が食い違わない。 */
-    app_open_path(app, path);
-}
-
 /* Y+LEFT/RIGHT (P11): Settings画面に入らずRepeatモードを直接変える
  * ショートカット。Settingsの並び(none/one/all)と同じ順に±1周させる。 */
 static void app_step_repeat_mode(app_t *app, int direction) {
@@ -575,26 +518,27 @@ static void app_set_shuffle(app_t *app, int on) {
     app->cfg->shuffle = on ? 1 : 0;
 }
 
-static void handle_player_input(app_t *app, input_action_t a) {
+/* repeat が非0なら、input_last_was_repeat()が直前のUP/DOWNをD-pad長押し
+ * (またはキーボードのOSキーリピート)由来だと報告したことを示す
+ * (Issue #47)。押しっぱなしで曲を連打で切り替えてしまわないよう、
+ * Player画面のUP/DOWNだけこれを無視する(1回押すごとに1回だけ送る)。
+ * 他の画面のカーソル移動はリピートを許可したまま(app_dispatch()参照)。 */
+static void handle_player_input(app_t *app, input_action_t a, int repeat) {
     switch (a) {
-        /* UP/DOWN: 中央のファイル一覧のカーソル移動(端で折り返す)。
-         * P9で音量調整を廃止して空いたスロットを再利用している。 */
+        /* UP/DOWN: 同ディレクトリの前/次ファイルへ送る(Issue #47。
+         * P9で音量調整を廃止して空いたスロットを、一覧UI撤去後も
+         * 「ファイル送り」用途で再利用している)。 */
         case INPUT_UP:
-            player_list_move(app, -1);
+            if (!repeat) app_player_step_file(app, -1);
             break;
         case INPUT_DOWN:
-            player_list_move(app, 1);
+            if (!repeat) app_player_step_file(app, 1);
             break;
         case INPUT_LEFT:
             player_prev_track(&app->player);
             break;
         case INPUT_RIGHT:
             player_next_track(&app->player);
-            break;
-        case INPUT_A:
-            /* 決定: カーソルが指すファイルを開く(Browser/TrackListと同じく
-             * A=決定で統一する。再生/一時停止は SELECT へ移した)。 */
-            player_list_open_selected(app);
             break;
         case INPUT_SELECT:
             player_toggle_pause(&app->player);
@@ -716,6 +660,11 @@ typedef enum {
      * ことで、setSETTINGS[]を全走査するapp_reset_settings()から見ても
      * 自動的に無害になる(何も読まない・書かない)。 */
     SET_ACTION,
+    /* Issue #47: SET_ACTIONと同じく値を持たない行だが、Aで開くサブ画面が
+     * SCREEN_FOLDER_PICK(Edit themeではない)固定になる点だけ区別する
+     * (handle_settings_input()参照)。表示・reset対象への算入は
+     * SET_ACTIONと同じ扱い。 */
+    SET_FOLDER,
 } setting_kind_t;
 
 typedef struct {
@@ -746,6 +695,9 @@ static const char *const BATTERY_SHOW_NAMES[] = { "off", "when low", "always" };
 static const char *const THEME_NAMES[] = {
     "Midnight", "Game Boy", "Mono", "Amber", "Synthwave", "Custom",
 };
+/* Issue #47。config.iniのトークン(start_mode_name())は"folder"/"resume"で
+ * 別(他のSET_ENUM表示名と同じ「字面が違ってよい」方針)。 */
+static const char *const START_MODE_NAMES[] = { "Folder", "Last played" };
 
 /* Default length/Fade が「次のトラックから反映される」ことを示す
  * フッタの "(next track)" 注記はP10で削除した(ユーザー判断。
@@ -780,6 +732,11 @@ static const setting_def_t SETTINGS[] = {
      * offsetには意味的に近いフィールドを入れておく(将来offset比較の
      * コードが増えたときの誤爆を避けるための保険。現状は使われない)。 */
     { "Edit theme",             SET_ACTION, offsetof(mugbs_config_t, theme_id),         0,     0,   0, NULL, 0, 0 },
+    /* Issue #47: 起動モード。folder(既定)/resume(前回の再生状態)。 */
+    { "Start with",             SET_ENUM,   offsetof(mugbs_config_t, start_mode),       0,     1,   1, START_MODE_NAMES, 2, 0 },
+    /* Issue #47: start_mode=folderのときに開始するディレクトリを選ぶ
+     * サブ画面(SCREEN_FOLDER_PICK)への入口。SET_ACTIONと同じく値を持たない。 */
+    { "Start folder",           SET_FOLDER, offsetof(mugbs_config_t, start_folder),     0,     0,   0, NULL, 0, 0 },
 };
 #define SETTINGS_COUNT ((int)(sizeof(SETTINGS) / sizeof(SETTINGS[0])))
 
@@ -791,6 +748,7 @@ static const setting_def_t SETTINGS[] = {
 _Static_assert(sizeof(repeat_mode_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
 _Static_assert(sizeof(battery_show_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
 _Static_assert(sizeof(theme_id_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている");
+_Static_assert(sizeof(start_mode_t) == sizeof(int), "SET_ENUMはint幅のenumを前提にしている"); /* Issue #47 */
 
 static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
     const void *field = (const char *)cfg + s->offset;
@@ -803,6 +761,7 @@ static double setting_get(const mugbs_config_t *cfg, const setting_def_t *s) {
         case SET_LENGTH:  return *(const int *)field; /* 同上。0=auto */
         case SET_SECONDS: return *(const int *)field; /* 秒のまま保持。0=off */
         case SET_ACTION:  return 0; /* 値を持たない */
+        case SET_FOLDER:  return 0; /* 値を持たない(Issue #47) */
     }
     return 0;
 }
@@ -818,6 +777,7 @@ static void setting_set(mugbs_config_t *cfg, const setting_def_t *s, double v) {
         case SET_LENGTH:  *(int *)field = (int)v; break;
         case SET_SECONDS: *(int *)field = (int)v; break;
         case SET_ACTION:  break; /* no-op */
+        case SET_FOLDER:  break; /* no-op(Issue #47) */
     }
 }
 
@@ -866,9 +826,9 @@ static void app_apply_settings(app_t *app) {
 
 static void adjust_setting(app_t *app, int direction) {
     const setting_def_t *s = &SETTINGS[app->settings_sel];
-    /* Issue #27: SET_ACTION行はLEFT/RIGHTでは何も変わらない(Aでサブ画面を
-     * 開く方はhandle_settings_input()側で分岐する)。 */
-    if (s->kind == SET_ACTION) return;
+    /* Issue #27/#47: SET_ACTION/SET_FOLDER行はLEFT/RIGHTでは何も変わらない
+     * (Aでサブ画面を開く方はhandle_settings_input()側で分岐する)。 */
+    if (s->kind == SET_ACTION || s->kind == SET_FOLDER) return;
 
     double before = setting_get(app->cfg, s);
     double v;
@@ -906,16 +866,40 @@ static void adjust_setting(app_t *app, int direction) {
      * 0へリセットされてしまう(browser.cの契約)。 */
     if (s->offset == offsetof(mugbs_config_t, show_all_files) && v != before) {
         browser_open_dir(&app->browser, app->browser.cwd, app->cfg->show_all_files);
-        /* Player画面の一覧も同じフィルタで作り直す (P9)。ディレクトリは
-         * 変わらないので force_rescan=1 が必須。 */
-        if (app->player_path[0]) app_sync_player_list(app, app->player_path, 1);
+        /* Player画面の再生コンテキストも同じフィルタで作り直す
+         * (Issue #47。旧・P9)。ディレクトリは変わらないので
+         * force_rescan=1 が必須。 */
+        if (app->player_path[0]) app_sync_playctx(app, app->player_path, 1);
     }
+}
+
+/* Issue #47: いま鳴っている曲の位置をcfg->resume_*へ書く(start_mode=resume
+ * での復元用)。何も再生していない・player_pathが空(zip内から開いた等で
+ * app_sync_playctx()が記録できなかった)場合は前の値を残す(何もしない)。
+ * app_save_config()から呼ぶことで、Settings退出時・Theme Editor退出時・
+ * 終了時のすべてで自動的に最新化される(1箇所に集約し、呼び忘れの事故を
+ * 構造的に無くす。app_apply_theme()等と同じ方針)。 */
+static void app_capture_resume(app_t *app) {
+    if (!app->pl || app->player.current_entry < 0 || !app->player_path[0]) return;
+
+    size_t n = strlen(app->player_path);
+    if (n >= sizeof(app->cfg->resume_path)) {
+        LOG_WARN("resume_path が長すぎるため記憶しません: %s", app->player_path);
+        return;
+    }
+    const playlist_entry_t *e = &app->pl->entries[app->player.current_entry];
+    memcpy(app->cfg->resume_path, app->player_path, n + 1);
+    app->cfg->resume_source = e->source_index;
+    app->cfg->resume_track = e->track_index;
+    app->cfg->resume_position_ms = player_tell_ms(&app->player);
 }
 
 /* config_pathが設定されていれば保存する(終了を待たず、変更のたびに
  * 実機の電源断耐性を持たせる)。Settings退出時とテーマエディタ退出時の
- * 両方から呼ぶ共通ヘルパ (Issue #27)。 */
+ * 両方から呼ぶ共通ヘルパ (Issue #27)。Issue #47: app_capture_resume()も
+ * ここに集約し、保存する箇所すべてでresume_*が最新化されるようにした。 */
 static void app_save_config(app_t *app) {
+    app_capture_resume(app); /* Issue #47 */
     if (app->config_path) {
         config_save(app->cfg, app->config_path);
     }
@@ -935,7 +919,9 @@ static void app_leave_settings(app_t *app) {
  * Issue #27: theme_customはSETTINGS[]に無い(Edit theme画面からしか
  * 触れない)が、Themeそのものが「全項目を既定値に戻す」対象である以上、
  * リセット後にThemeがcustomへ戻ったときだけ編集済みパレットが復活するのは
- * 驚きになる。ここで明示的にmidnightのコピーへ戻す。 */
+ * 驚きになる。ここで明示的にmidnightのコピーへ戻す。
+ * Issue #47: start_folderも同じ理由でSETTINGS[]の一般巡回(SET_FOLDERは
+ * 値を持たないので何もしない)には乗らないため、ここで明示的に空へ戻す。 */
 static void app_reset_settings(app_t *app) {
     mugbs_config_t defaults;
     config_set_defaults(&defaults);
@@ -944,12 +930,13 @@ static void app_reset_settings(app_t *app) {
         setting_set(app->cfg, s, setting_get(&defaults, s));
     }
     app->cfg->theme_custom = defaults.theme_custom;
+    app->cfg->start_folder[0] = 0;
     app_apply_settings(app);
     /* show_all_filesも既定値に戻り得るので、adjust_setting()と同様に
-     * Browser/Player一覧を作り直す。頻繁な操作ではないので、実際に
+     * Browser/再生コンテキストを作り直す。頻繁な操作ではないので、実際に
      * 変わったかどうかは問わず常に再走査する。 */
     browser_open_dir(&app->browser, app->browser.cwd, app->cfg->show_all_files);
-    if (app->player_path[0]) app_sync_player_list(app, app->player_path, 1);
+    if (app->player_path[0]) app_sync_playctx(app, app->player_path, 1);
     set_status(app, "Settings reset to defaults");
 }
 
@@ -1038,6 +1025,73 @@ static void handle_theme_edit_input(app_t *app, input_action_t a) {
     }
 }
 
+/* ---- フォルダ選択サブ画面 (SCREEN_FOLDER_PICK, Issue #47) --------------
+ *
+ * Settings画面の"Start folder"(A)で開く、ディレクトリのみを列挙する
+ * (BROWSER_FILTER_DIRS)専用ブラウザ。app->browser/player_listとは別の
+ * 3つ目のbrowser_tインスタンス(folder_pick)を使う理由は、Browser画面の
+ * カーソル位置をこのサブ画面の探索で壊さないため(P9のplayer_listと同じ
+ * 発想)。 */
+
+/* 開始位置: 現在のstart_folder(設定済みなら)、無ければBrowserがいま見て
+ * いるディレクトリ、それも開けなければカレントディレクトリ。 */
+static void app_enter_folder_pick(app_t *app) {
+    if (app->cfg->start_folder[0] &&
+        browser_open_dir(&app->folder_pick, app->cfg->start_folder, BROWSER_FILTER_DIRS) == 0) {
+        app->screen = SCREEN_FOLDER_PICK;
+        return;
+    }
+    if (app->browser.cwd &&
+        browser_open_dir(&app->folder_pick, app->browser.cwd, BROWSER_FILTER_DIRS) == 0) {
+        app->screen = SCREEN_FOLDER_PICK;
+        return;
+    }
+    if (browser_open_dir(&app->folder_pick, ".", BROWSER_FILTER_DIRS) == 0) {
+        app->screen = SCREEN_FOLDER_PICK;
+        return;
+    }
+    set_status(app, "Could not open folder picker");
+}
+
+static void handle_folder_pick_input(app_t *app, input_action_t a) {
+    switch (a) {
+        case INPUT_UP:    browser_move_wrap(&app->folder_pick, -1); break;
+        case INPUT_DOWN:  browser_move_wrap(&app->folder_pick, 1); break;
+        case INPUT_LEFT:  browser_page(&app->folder_pick, -list_visible_rows(app)); break;
+        case INPUT_RIGHT: browser_page(&app->folder_pick, list_visible_rows(app)); break;
+        case INPUT_A:
+            browser_enter(&app->folder_pick, BROWSER_FILTER_DIRS);
+            break;
+        case INPUT_B:
+            browser_up(&app->folder_pick, BROWSER_FILTER_DIRS);
+            break;
+        case INPUT_X: {
+            /* いまのフォルダをstart_folderへ確定してSettingsへ戻る。 */
+            size_t n = strlen(app->folder_pick.cwd);
+            if (n >= sizeof(app->cfg->start_folder)) {
+                set_status(app, "Path too long");
+                break;
+            }
+            memcpy(app->cfg->start_folder, app->folder_pick.cwd, n + 1);
+            app->screen = SCREEN_SETTINGS;
+            app_save_config(app);
+            break;
+        }
+        case INPUT_Y:
+            /* start_folderを未設定に戻してSettingsへ戻る。 */
+            app->cfg->start_folder[0] = 0;
+            app->screen = SCREEN_SETTINGS;
+            app_save_config(app);
+            break;
+        case INPUT_START:
+            /* キャンセル。start_folderは変えずSettingsへ戻る。 */
+            app->screen = SCREEN_SETTINGS;
+            break;
+        default:
+            break;
+    }
+}
+
 static void handle_settings_input(app_t *app, input_action_t a) {
     if (app->settings_confirm_reset) {
         /* リセット確認ダイアログの表示中。Yes/Noのみ受け付ける。 */
@@ -1072,10 +1126,12 @@ static void handle_settings_input(app_t *app, input_action_t a) {
             adjust_setting(app, 1);
             break;
         case INPUT_A: /* 親指1本で右方向へ回せるようにする。ただし
-                       * SET_ACTION行(Edit theme)ではサブ画面を開く方に
-                       * 意味が変わる (Issue #27)。 */
+                       * SET_ACTION行(Edit theme)・SET_FOLDER行(Start folder)
+                       * ではサブ画面を開く方に意味が変わる (Issue #27, #47)。 */
             if (SETTINGS[app->settings_sel].kind == SET_ACTION) {
                 app_enter_theme_edit(app);
+            } else if (SETTINGS[app->settings_sel].kind == SET_FOLDER) {
+                app_enter_folder_pick(app);
             } else {
                 adjust_setting(app, 1);
             }
@@ -1092,18 +1148,22 @@ static void handle_settings_input(app_t *app, input_action_t a) {
     }
 }
 
-static void app_dispatch(app_t *app, input_action_t a) {
+/* repeat: 直前に input_poll() が返した a が長押しリピート由来だったか
+ * (input_last_was_repeat()。--ui-script経由では常に0)。Player画面の
+ * UP/DOWNだけがこれを見る(handle_player_input()参照)。 */
+static void app_dispatch(app_t *app, input_action_t a, int repeat) {
     if (a == INPUT_NONE) return;
     if (a == INPUT_QUIT) {
         app->running = 0;
         return;
     }
     switch (app->screen) {
-        case SCREEN_BROWSER:    handle_browser_input(app, a); break;
-        case SCREEN_PLAYER:     handle_player_input(app, a); break;
-        case SCREEN_TRACKLIST:  handle_tracklist_input(app, a); break;
-        case SCREEN_SETTINGS:   handle_settings_input(app, a); break;
-        case SCREEN_THEME_EDIT: handle_theme_edit_input(app, a); break;
+        case SCREEN_BROWSER:     handle_browser_input(app, a); break;
+        case SCREEN_PLAYER:      handle_player_input(app, a, repeat); break;
+        case SCREEN_TRACKLIST:   handle_tracklist_input(app, a); break;
+        case SCREEN_SETTINGS:    handle_settings_input(app, a); break;
+        case SCREEN_THEME_EDIT:  handle_theme_edit_input(app, a); break;
+        case SCREEN_FOLDER_PICK: handle_folder_pick_input(app, a); break;
     }
 }
 
@@ -1121,13 +1181,13 @@ static const char *browser_item_text(void *ctx, int index) {
     return buf;
 }
 
-/* Player画面のファイル一覧 (P9)。index は表示空間(ファイル領域の先頭が0)。
- * ディレクトリは出さないので browser_item_text() の "[name]" 分岐は要らない。 */
-static const char *player_list_item_text(void *ctx, int index) {
+/* フォルダ選択サブ画面(SCREEN_FOLDER_PICK, Issue #47)。BROWSER_FILTER_DIRS
+ * で開いているためitems[]はすべてディレクトリだが、browser_item_text()と
+ * 表示を揃えるため同じ"[name]"角括弧にする。 */
+static const char *folder_pick_item_text(void *ctx, int index) {
     app_t *app = (app_t *)ctx;
     static char buf[300];
-    const browser_item_t *it = &app->player_list.items[app->player_list_first_file + index];
-    snprintf(buf, sizeof(buf), "%s", it->name);
+    snprintf(buf, sizeof(buf), "[%s]", app->folder_pick.items[index].name);
     return buf;
 }
 
@@ -1267,16 +1327,27 @@ static void draw_player(app_t *app) {
     }
     y += ui_glyph_size(ui, UI_TEXT_TITLE) + ui->metrics.pad;
 
-    ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim,
-                     (app->pl && app->pl->game && app->pl->game[0]) ? app->pl->game : "");
-    y += ui->metrics.line_h;
+    /* Issue #47: ゲーム名・作者/著作権のどちらか(または両方)が空の
+     * ヘッダしか持たないファイル(素のGBS/NSF等)で、空行が居座って
+     * 波形側の余白を無駄に食わないよう、無い行は描かず詰める。 */
+    if (app->pl && app->pl->game && app->pl->game[0]) {
+        ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, app->pl->game);
+        y += ui->metrics.line_h;
+    }
 
-    char meta[256];
-    snprintf(meta, sizeof(meta), "%s  %s",
-             (src && src->author[0]) ? src->author : "",
-             (src && src->copyright[0]) ? src->copyright : "");
-    ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, meta);
-    y += ui->metrics.line_h + ui->metrics.pad;
+    int has_author = src && src->author[0];
+    int has_copyright = src && src->copyright[0];
+    if (has_author || has_copyright) {
+        char meta[256];
+        if (has_author && has_copyright) {
+            snprintf(meta, sizeof(meta), "%s  %s", src->author, src->copyright);
+        } else {
+            snprintf(meta, sizeof(meta), "%s", has_author ? src->author : src->copyright);
+        }
+        ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, meta);
+        y += ui->metrics.line_h;
+    }
+    y += ui->metrics.pad;
 
     char trackno[32];
     snprintf(trackno, sizeof(trackno), "Track %d/%d",
@@ -1354,53 +1425,19 @@ static void draw_player(app_t *app) {
     ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, status_line);
     y += ui->metrics.line_h;
 
-    /* ステータス行の下からフッタ帯の上までを
-     *   [同一ディレクトリのファイル一覧(P9)] -> [ビジュアライザ(F-14)]
-     * で分け合う。一覧は操作に必要なので優先し(最大PLAYER_LIST_MAX_ROWS行)、
-     * 装飾である波形は上限を設けず残り全部をもらう(P10: 波形の下端が
-     * フッタ帯に迫るところまで大きくする、というフィードバックへの対応)。
-     * 低解像度で行が取れない要素は丸ごと省く(フッタへはみ出させない。
-     * SPEC 6.2)。一時ステータスメッセージ用の行はもう固定確保しない
-     * (下記、フッタ直上へのオーバーレイとして描く)。 */
+    /* Issue #47: ステータス行の下からフッタ帯の上までを丸ごとビジュア
+     * ライザ(F-14)に使う。P9〜P10で共有していた同ディレクトリのファイル
+     * 一覧UIは撤去した(同じ操作はUP/DOWNでのファイル送りに一本化。
+     * app_player_step_file()参照)。一時ステータスメッセージ用の行は
+     * 固定確保せず、下記でフッタ直上へのオーバーレイとして描く。 */
     const int row_h = ui->metrics.line_h;
-    /* 一覧と波形の間に入る余白(下記 "y += list.h + pad") の分だけ
-     * band_h から差し引いておかないと、波形の下端がフッタ帯へ数px
-     * はみ出しうる。 */
     int band_h = (ui->screen_h - ui->metrics.footer_h) - y - ui->metrics.pad;
     if (band_h < 0) band_h = 0;
-    int avail_rows = band_h / row_h;
+    int wave_rows = band_h / row_h;
 
-    int list_rows = 0, wave_rows = 0;
-    if (avail_rows >= PLAYER_WAVE_MIN_ROWS + 2) {
-        list_rows = avail_rows - PLAYER_WAVE_MIN_ROWS;
-        if (list_rows > PLAYER_LIST_MAX_ROWS) list_rows = PLAYER_LIST_MAX_ROWS;
-        wave_rows = avail_rows - list_rows; /* 上限なし。余りは全部波形へ */
-    } else {
-        /* 波形と一覧を両立できない極端な解像度。操作に必要な一覧を優先する
-         * (0行なら一覧も出さない)。 */
-        list_rows = avail_rows;
-    }
-
-    if (list_rows > 0) {
-        /* ui_draw_list() は r.h==0 でも visible を1へ切り上げて1行描いてしまう
-         * ので、行数0のときは絶対に呼ばないこと。 */
-        ui_rect_t list = { x, y, content_w, list_rows * row_h };
-        const SDL_Color list_bg = ui_color(ui, THEME_ROLE_RAISED);
-        ui_fill_rect(ui, list, list_bg);
-
-        int first = app->player_list_first_file;
-        int file_count = app->player_list.count - first;
-        if (file_count < 0) file_count = 0;
-        ui_draw_list(ui, list, file_count,
-                     app->player_list.selected - first,
-                     app->player_list_playing >= 0 ? app->player_list_playing - first : -1,
-                     &app->player_list.scroll, player_list_item_text, NULL, app);
-        y += list.h + ui->metrics.pad;
-    }
-
-    /* F-14 簡易ビジュアライザ。P9で一覧の下へ移し、P10で下限をフッタ帯
-     * 近くまで広げた。 */
-    if (wave_rows > 0) {
+    /* F-14 簡易ビジュアライザ。低解像度で最低限の高さも取れない場合は
+     * 描かない(フッタへはみ出させない。SPEC 6.2)。 */
+    if (wave_rows >= PLAYER_WAVE_MIN_ROWS) {
         ui_rect_t wave = { x, y, content_w, wave_rows * row_h };
         const SDL_Color wave_bg = ui_color(ui, THEME_ROLE_SUNKEN);
         ui_draw_waveform(ui, wave, app->scope, app->scope_len, accent, wave_bg);
@@ -1428,7 +1465,9 @@ static void draw_player(app_t *app) {
     snprintf(footer_line2, sizeof(footer_line2), "Start+Select:Quit  %s",
              src ? src->display_path : "");
     ui_footer_t ftr = {
-        .line1 = "A:Play  X:Tracks  Select:Pause  Start:Settings",
+        /* Issue #47: Up/Downはファイル一覧UIの撤去に伴い「同ディレクトリの
+         * 前/次ファイル」へ転用した(app_player_step_file())。 */
+        .line1 = "<>:Track  ^v:File  Select:Pause  X:Tracks  Start:Settings",
         .line2 = footer_line2,
         .line1_color = fg, .line2_color = accent, .bar_color = ui_color(ui, THEME_ROLE_PANEL),
     };
@@ -1550,6 +1589,14 @@ static const char *settings_item_text(void *ctx, int index) {
             /* Issue #27: 値欄ではなく「開ける」ことを示す記号だけ出す。 */
             snprintf(valbuf, sizeof(valbuf), ">");
             break;
+        case SET_FOLDER:
+            /* Issue #47: 未設定なら"(not set)"、設定済みならフォルダ名
+             * (フルパスはヘッダのサブタイトルに出すPlayer/Browserと違い、
+             * この1行に収める都合上末尾要素だけにする)+開けることを示す
+             * ">" を付ける。 */
+            snprintf(valbuf, sizeof(valbuf), "%s >",
+                     app->cfg->start_folder[0] ? path_leaf(app->cfg->start_folder) : "(not set)");
+            break;
     }
     /* 等幅8x8フォントなので固定幅のラベル列が ui.c を触らずに揃う。 */
     snprintf(buf, sizeof(buf), "%-18s %s", s->label, valbuf);
@@ -1626,11 +1673,13 @@ static void draw_settings(app_t *app) {
     ui_draw_list(ui, list, SETTINGS_COUNT, app->settings_sel, -1,
                  &app->settings_scroll, settings_item_text, settings_item_dim, app);
 
-    /* Issue #27: SET_ACTION行(Edit theme)ではLEFT/RIGHTが無反応なので
-     * "L/R:Adjust" は誤解を招く。選択行に応じてフッタを差し替える。 */
+    /* Issue #27/#47: SET_ACTION行(Edit theme)・SET_FOLDER行(Start folder)
+     * ではLEFT/RIGHTが無反応なので "L/R:Adjust" は誤解を招く。選択行に
+     * 応じてフッタを差し替える。 */
+    int is_open_row = SETTINGS[app->settings_sel].kind == SET_ACTION ||
+                       SETTINGS[app->settings_sel].kind == SET_FOLDER;
     ui_footer_t ftr = {
-        .line1 = (SETTINGS[app->settings_sel].kind == SET_ACTION)
-                     ? "A:Open  B/START:Back" : "L/R:Adjust  B/START:Back",
+        .line1 = is_open_row ? "A:Open  B/START:Back" : "L/R:Adjust  B/START:Back",
         .line2 = "X:Reset all",
         .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
     };
@@ -1727,6 +1776,54 @@ static void draw_theme_edit(app_t *app) {
     ui_draw_footer(ui, &ftr);
 }
 
+/* フォルダ選択サブ画面(SCREEN_FOLDER_PICK, Issue #47)。Browser画面
+ * (draw_browser())と同じ構図(ヘッダ2段組+リスト+フッタ2行)だが、
+ * BROWSER_FILTER_DIRSで開いているためディレクトリしか出ない。 */
+static void draw_folder_pick(app_t *app) {
+    ui_t *ui = &app->ui;
+    const SDL_Color bg = ui_color(ui, THEME_ROLE_BG);
+    const SDL_Color bar_bg = ui_color(ui, THEME_ROLE_PANEL);
+    const SDL_Color fg = ui_color(ui, THEME_ROLE_FG);
+    const SDL_Color dim = ui_color(ui, THEME_ROLE_DIM);
+    const SDL_Color accent = ui_color(ui, THEME_ROLE_ACCENT);
+    const SDL_Color err = ui_color(ui, THEME_ROLE_WARN);
+
+    ui_clear(ui, bg);
+
+    ui_rect_t title_row = ui_header_title_row(ui);
+    int bat_w = draw_battery(app, ui->screen_w - ui->metrics.pad, title_row.y, title_row.h);
+
+    char counter[32];
+    if (app->folder_pick.count > 0) {
+        snprintf(counter, sizeof(counter), "%d / %d",
+                  app->folder_pick.selected + 1, app->folder_pick.count);
+    } else {
+        counter[0] = 0;
+    }
+    ui_header_t hdr = {
+        .title = "Start folder",
+        .subtitle = app->folder_pick.cwd ? app->folder_pick.cwd : "",
+        .counter = counter, .right_reserve = bat_w,
+        .title_color = fg, .sub_color = dim, .counter_color = accent, .bar_color = bar_bg,
+    };
+    ui_draw_header(ui, &hdr);
+
+    ui_rect_t list = list_rect(app);
+    ui_draw_list(ui, list, app->folder_pick.count, app->folder_pick.selected, -1,
+                 &app->folder_pick.scroll, folder_pick_item_text, NULL, app);
+
+    ui_footer_t ftr = {
+        .line1 = "A:Open  B:Up  X:Use this folder",
+        .line2 = "Y:Clear  Start:Cancel",
+        .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
+    };
+    if (app->status[0] && SDL_GetTicks() < app->status_until) {
+        ftr.line1 = app->status;
+        ftr.line1_color = err;
+    }
+    ui_draw_footer(ui, &ftr);
+}
+
 /* ---- 起動時のBrowser開始位置 (F-13) ------------------------------------- */
 
 /* last_path をまずディレクトリとして開いてみて、失敗したら「ファイルの
@@ -1763,6 +1860,39 @@ static void restore_last_path(app_t *app, const char *last_path) {
     browser_open_dir(&app->browser, ".", app->cfg->show_all_files);
 }
 
+/* Issue #47: start_mode=resumeでの起動。cfg->resume_pathを開き、
+ * resume_source/resume_trackのトラックへジャンプしてresume_position_msへ
+ * シークする。0を返す(何も変えない)のは resume_path が空のとき、または
+ * playlist_open()自体が失敗したとき(app_open_path()が画面をPlayerへ
+ * 進めなかったことで判定する)。呼び出し側(app_run())はこのときfolderへの
+ * フォールバック列を続ける。
+ * トラックが見つからない(resume_source/trackが古い等)場合はエントリ0の
+ * まま(app_open_path()が既に再生している)にする。 */
+static int app_try_resume(app_t *app) {
+    if (!app->cfg->resume_path[0]) return 0;
+
+    /* Browserをファイルの場所へ合わせておく(Bで戻ったときの一貫性。
+     * restore_last_path()自体はディレクトリ/ファイルの両対応で、
+     * 失敗してもここでは無視してよい: 次のapp_open_path()の成否だけを見る)。 */
+    restore_last_path(app, app->cfg->resume_path);
+
+    app_open_path(app, app->cfg->resume_path);
+    if (app->screen != SCREEN_PLAYER || !app->pl) return 0; /* 失敗 */
+
+    int idx = playlist_find_entry(app->pl, app->cfg->resume_source, app->cfg->resume_track);
+    if (idx >= 0 && idx != app->player.current_entry) {
+        player_play_entry(&app->player, idx);
+    }
+
+    int dur = player_current_duration_ms(&app->player);
+    int pos = app->cfg->resume_position_ms;
+    if (pos < 0) pos = 0;
+    if (dur > 0 && pos > dur) pos = dur;
+    if (pos > 0) player_seek(&app->player, pos);
+
+    return 1;
+}
+
 /* ---- メインループ ------------------------------------------------------- */
 
 int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
@@ -1772,7 +1902,6 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     app.config_path = opt->config_path;
     app.running = 1;
     app.screen = SCREEN_BROWSER;
-    app.player_list_playing = -1; /* memsetの0は有効な添字なので明示的に潰す */
     app.battery_low_pct = opt->battery_low_pct;
     battery_init(&app.battery);
 
@@ -1788,19 +1917,32 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         return 1;
     }
 
-    /* Browserの開始位置(F-13):
-     *   --start-dir > last_path > MUCHIP_START_DIR > カレントディレクトリ。
+    /* 起動時の開始位置。優先順(Issue #47でstart_mode/start_folderを追加):
+     *   --start-dir > (start_mode=resumeならResume) > start_folder >
+     *   last_path(F-13) > MUCHIP_START_DIR > カレントディレクトリ。
      * --start-dirが明示されたときは、以後それが記憶される対象になる
-     * (次回起動時にlast_pathとして使われる)。
+     * (次回起動時にlast_pathとして使われる)。resumeとstart_folderは
+     * --start-dirより優先度が低い: --start-dirはホストでの複数解像度
+     * レイアウト確認用の明示的な上書きなので、config.iniの起動モードより
+     * 常に勝つ。
      * MUCHIP_START_DIR(P7) は last_path より後に置くのが肝で、実機の
      * mux_launch.sh は毎回これを渡してくるため、--start-dir と同じ優先度に
-     * すると last_path が毎回上書きされ F-13 が永久に発火しなくなる。 */
+     * すると last_path が毎回上書きされ F-13 が永久に発火しなくなる。
+     * start_folder はlast_pathより前: ユーザーが明示的に選んだ固定の
+     * 開始位置なので、F-13の「前回どこを見ていたか」の自動追随より
+     * 優先する。resumeが失敗した場合(ファイルが削除された等)はここへ
+     * フォールバックする。 */
     if (opt->start_dir && opt->start_dir[0]) {
         if (browser_open_dir(&app.browser, opt->start_dir, app.cfg->show_all_files) != 0) {
             LOG_WARN("開始ディレクトリを開けません: %s。カレントディレクトリで再試行します",
                       opt->start_dir);
             browser_open_dir(&app.browser, ".", app.cfg->show_all_files);
         }
+    } else if (app.cfg->start_mode == START_MODE_RESUME && app_try_resume(&app)) {
+        /* 成功。app_try_resume()がBrowser・Player両方の状態を作った。 */
+    } else if (app.cfg->start_folder[0] &&
+               browser_open_dir(&app.browser, app.cfg->start_folder, app.cfg->show_all_files) == 0) {
+        LOG_INFO("start_folder から開始します: %s", app.cfg->start_folder);
     } else if (app.cfg->last_path[0]) {
         restore_last_path(&app, app.cfg->last_path);
     } else if (opt->fallback_start_dir && opt->fallback_start_dir[0] &&
@@ -1823,7 +1965,8 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         if (!use_script) {
             player_shutdown(&app.player);
             browser_free(&app.browser);
-            browser_free(&app.player_list);
+            playctx_free(&app.playctx);
+            browser_free(&app.folder_pick);
             input_shutdown(&app.input);
             ui_shutdown(&app.ui);
             return 1;
@@ -1836,12 +1979,13 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
             if (!ui_script_next(&script, &a)) {
                 app.running = 0;
             } else {
-                app_dispatch(&app, a);
+                /* --ui-scriptはリピートを合成しないため常に0(Issue #47)。 */
+                app_dispatch(&app, a, 0);
             }
         } else {
             input_action_t a;
             while (input_poll(&app.input, &a)) {
-                app_dispatch(&app, a);
+                app_dispatch(&app, a, input_last_was_repeat(&app.input));
                 if (!app.running) break;
             }
         }
@@ -1864,11 +2008,12 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         app_apply_theme(&app); /* Issue #27: 同上 */
 
         switch (app.screen) {
-            case SCREEN_BROWSER:    draw_browser(&app); break;
-            case SCREEN_PLAYER:     draw_player(&app); break;
-            case SCREEN_TRACKLIST:  draw_tracklist(&app); break;
-            case SCREEN_SETTINGS:   draw_settings(&app); break;
-            case SCREEN_THEME_EDIT: draw_theme_edit(&app); break;
+            case SCREEN_BROWSER:     draw_browser(&app); break;
+            case SCREEN_PLAYER:      draw_player(&app); break;
+            case SCREEN_TRACKLIST:   draw_tracklist(&app); break;
+            case SCREEN_SETTINGS:    draw_settings(&app); break;
+            case SCREEN_THEME_EDIT:  draw_theme_edit(&app); break;
+            case SCREEN_FOLDER_PICK: draw_folder_pick(&app); break;
         }
         /* --screenshot(開発用): 毎フレーム上書きすることで、ループを抜けた
          * 時点のファイルが「最後に描かれた画面」になる。ui_present() の後だと
@@ -1883,18 +2028,18 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     }
 
     /* 終了時の自動保存。Settings画面を一度も開かずに終了した場合でも
-     * last_path(F-13)は最新化されているため、config_pathがあれば
-     * ここでも保存する(Settings退出時の保存(app_leave_settings)と
-     * 合わせて二重に保存されることがあるが、config_save()は冪等なので
+     * last_path(F-13)・resume_*(Issue #47)は最新化されているため、
+     * config_pathがあればここでも保存する(app_save_config()がここでも
+     * app_capture_resume()を呼ぶ。Settings退出時の保存(app_leave_settings)
+     * と合わせて二重に保存されることがあるが、config_save()は冪等なので
      * 無害)。 */
-    if (app.config_path) {
-        config_save(app.cfg, app.config_path);
-    }
+    app_save_config(&app);
 
     if (use_script) ui_script_free(&script);
     if (app.pl) playlist_free(app.pl);
     browser_free(&app.browser);
-    browser_free(&app.player_list);
+    playctx_free(&app.playctx);
+    browser_free(&app.folder_pick);
     player_shutdown(&app.player);
     input_shutdown(&app.input);
     ui_shutdown(&app.ui);

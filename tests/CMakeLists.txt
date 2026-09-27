@@ -70,6 +70,13 @@ add_executable(test_browser test_browser.c ../src/browser.c)
 target_include_directories(test_browser PRIVATE . ../src)
 add_test(NAME test_browser COMMAND test_browser)
 
+# Issue #47で追加したplayctx.c(Player画面のUP/DOWNが同ディレクトリの
+# 前/次ファイルへ送るための再生コンテキスト)の単体テスト。browser.cと
+# 同じくSDL非依存の純libc。
+add_executable(test_playctx test_playctx.c ../src/playctx.c)
+target_include_directories(test_playctx PRIVATE . ../src)
+add_test(NAME test_playctx COMMAND test_playctx)
+
 # P6で追加した ui_metrics_compute()/ui_glyph_size_for() (SDL_Init不要な純関数)の
 # 単体テスト。ui.c 全体をリンクする必要があるためSDL2は要るが、SDL_Initは
 # 一度も呼ばない。SDL2の解決方法はルートCMakeLists.txtのmuchip本体と同じ

@@ -7,6 +7,17 @@
 #ifndef MUGBS_BROWSER_H
 #define MUGBS_BROWSER_H
 
+/* browser_open_dir() 等の show_all/filter 引数。Issue #47以前は0/1のint
+ * (show_all_filesそのもの)だったが、Settings画面の「Start folder」サブ画面
+ * (BROWSER_FILTER_DIRS。ディレクトリだけを列挙してファイルは一切出さない)
+ * を足すため3値のenumへ拡張した。数値そのものは既存の呼び出し(cfg->show_all_files
+ * を0/1でそのまま渡す箇所)と互換になるよう保っている。 */
+typedef enum {
+    BROWSER_FILTER_MUSIC = 0, /* 拡張子フィルタあり(既定) */
+    BROWSER_FILTER_ALL   = 1, /* 全ファイル表示(show_all_files=1相当) */
+    BROWSER_FILTER_DIRS  = 2, /* ディレクトリのみ(ファイルは一切出さない) */
+} browser_filter_t;
+
 typedef struct {
     char *name;   /* ディレクトリエントリ名(パスを含まない。malloc'd) */
     int   is_dir;
@@ -27,10 +38,13 @@ typedef struct {
  * (最終的にbrowser_free()を呼ぶまで)。
  * 失敗時(opendir不可等)は browser_t を触らない(呼び出し側は直前の
  * ディレクトリに留まれる)。
- * show_all が0なら .gbs/.gb/.nsf/.nsfe/.spc/.m3u/.zip のみを列挙する
- * (拡張子フィルタ、SPEC 6.1)。非0ならすべてのファイルを列挙する
- * (config.ini show_all_files 相当。値の永続化自体はP6)。 */
-int browser_open_dir(browser_t *b, const char *path, int show_all);
+ * filter は browser_filter_t(int互換)。BROWSER_FILTER_MUSICなら
+ * .gbs/.gb/.nsf/.nsfe/.spc/.m3u/.zip のみを列挙する(拡張子フィルタ、
+ * SPEC 6.1)。BROWSER_FILTER_ALLならすべてのファイルを列挙する
+ * (config.ini show_all_files 相当。値の永続化自体はP6)。BROWSER_FILTER_DIRS
+ * ならディレクトリのみを列挙する(Settings画面の「Start folder」サブ画面用、
+ * Issue #47)。 */
+int browser_open_dir(browser_t *b, const char *path, int filter);
 
 void browser_free(browser_t *b);
 
@@ -48,13 +62,13 @@ void browser_move_wrap(browser_t *b, int delta);
 void browser_page(browser_t *b, int page_size);
 
 /* 現在のディレクトリの親へ移動する。ルートに達している場合は何もしない
- * (0を返す)。移動できれば1を返す。show_allはbrowser_open_dir()へそのまま渡す。 */
-int browser_up(browser_t *b, int show_all);
+ * (0を返す)。移動できれば1を返す。filterはbrowser_open_dir()へそのまま渡す。 */
+int browser_up(browser_t *b, int filter);
 
 /* selected が指す項目がディレクトリなら、そこへ移動する(1を返す)。
  * ファイルなら何もせず0を返す(呼び出し側がbrowser_selected_path()で
  * パスを取り出して開く)。 */
-int browser_enter(browser_t *b, int show_all);
+int browser_enter(browser_t *b, int filter);
 
 /* items[index] の絶対パスを out に書く(cwdとの結合)。
  * index が範囲外なら空文字列を書いて-1を返す。

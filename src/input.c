@@ -210,6 +210,10 @@ void input_shutdown(input_t *in) {
 }
 
 int input_poll(input_t *in, input_action_t *out) {
+    /* Issue #47: 既定はリピートではない。リピート由来の分岐だけが
+     * 明示的に1へ立てる(下記)。 */
+    in->last_was_repeat = 0;
+
     SDL_Event ev;
     if (!SDL_PollEvent(&ev)) {
         /* 新しいSDLイベントが無くても、D-padが押しっぱなしならリピートを
@@ -221,6 +225,7 @@ int input_poll(input_t *in, input_action_t *out) {
         for (int i = 0; i < 4; i++) {
             if (in->dpad_held[i] && now >= in->dpad_next_repeat_at[i]) {
                 in->dpad_next_repeat_at[i] = now + DPAD_REPEAT_RATE_MS;
+                in->last_was_repeat = 1;
                 *out = apply_y_modifier(in, dpad_action(i));
                 return 1;
             }
@@ -244,6 +249,10 @@ int input_poll(input_t *in, input_action_t *out) {
                 *out = INPUT_NONE;
                 return 1;
             }
+            /* Issue #47: 上下左右はOSキーリピートを許可したままだが、
+             * それがリピート由来だったことは呼び出し側(app.c)が判定できる
+             * よう記録する(D-pad長押し合成と同じ扱い)。 */
+            if (ev.key.repeat) in->last_was_repeat = 1;
             *out = apply_y_modifier(in, a);
             return 1;
         }
@@ -353,6 +362,10 @@ int input_poll(input_t *in, input_action_t *out) {
             *out = INPUT_NONE;
             return 1;
     }
+}
+
+int input_last_was_repeat(const input_t *in) {
+    return in->last_was_repeat;
 }
 
 int input_take_window_resized(input_t *in) {

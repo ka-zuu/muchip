@@ -186,40 +186,64 @@ SMALLはヘッダのサブタイトル・カウンタとフッタの操作ヒン
 （`line_h`からの間接的な導出はしない。ヘッダ=タイトル1行+サブ1行、
 フッタ=SMALL2行）。`ui_draw_header()`/`ui_draw_footer()`（`ui.c`）が
 この2段組/2行フッタの描画を共通化しており、文字列と色は呼び出し側
-(`app.c`)が渡す(Browser/TrackList/Settings/Theme Editorの4画面が共有。
-Playerはヘッダ帯を持たず曲名をTITLEでそのまま出すため対象外だが、
-フッタは同じ2行構成を使う)。リスト系画面の選択行は塗りつぶしに加えて
+(`app.c`)が渡す(Browser/TrackList/Settings/Theme Editor/Folder Pick
+〈Issue #47で追加〉の5画面が共有。Playerはヘッダ帯を持たず曲名をTITLEで
+そのまま出すため対象外だが、フッタは同じ2行構成を使う)。リスト系画面の
+選択行は塗りつぶしに加えて
 左端へ`THEME_ROLE_ACCENT`の縦バーを添える(`ui_draw_list()`内)。
 
-**Player画面の構成**（Issue #3/#8、P9〜P10 で確定）: 曲名とゲーム名の下に
-「時間+シークバー」を1行で（時間はBODY、バーの残り幅を計算）、その下に
-`Track n/m` とステータス行（`repeat:xxx shuffle:on/off`、ながさチェンジ
-中は `len:15m` を追記）、その下に現在ディレクトリのファイル一覧
-（`PLAYER_LIST_MAX_ROWS=7` 行まで）、残りの高さを波形ビジュアライザに
-割り当てる。一覧を優先し、両立できない極端な低解像度では波形→一覧の順に
-省く（フッタへはみ出させない）。一時ステータスメッセージは専用行を
-確保せず、フッタ帯の直上にオーバーレイとして描く。
+**Player画面の構成**（Issue #3/#8/#47、P9〜P10 で確定・Issue #47で改訂）:
+曲名とゲーム名・作者/著作権（無い項目の行は詰めて描き、余った高さは波形へ
+回す）の下に「時間+シークバー」を1行で（時間はBODY、バーの残り幅を
+計算）、その下に `Track n/m` とステータス行（`repeat:xxx shuffle:on/off`、
+ながさチェンジ中は `len:15m` を追記）、残りの高さをすべて波形
+ビジュアライザに割り当てる。低解像度で最低限の高さ（`PLAYER_WAVE_MIN_ROWS`）
+も取れない場合は波形自体を描かない（フッタへはみ出させない）。一時
+ステータスメッセージは専用行を確保せず、フッタ帯の直上にオーバーレイと
+して描く。P9〜P10では同ディレクトリのファイル一覧をここに表示していたが、
+Issue #47でUIから撤去し、波形の高さへ回した（下記「ファイル送りと再生
+コンテキスト」参照）。
 
 曲名は `ui_text_scroll()`（`ui.c` の汎用プリミティブ、`title_scroll`
 設定・既定on）で横スクロール表示できる。速度・停止時間はすべて
 `glyph_px` の倍数で決め、解像度非依存を保つ。
 
-**Player画面のファイル一覧**: `app_t` に専用の2つ目の `browser_t`
-（`player_list`）を持つ（`app->browser` と共有すると、Player中に
-Browserのカーソル位置が壊れる）。一覧の元にするパスは
-`app_open_path()` に渡されたパスそのもの（zip内ソースでも一貫して
-使える値がこれだけ）。ディレクトリは一覧に出さない（階層を辿るのは
-Browserの役目）。UP/DOWNで一覧のカーソルを動かし、`A`で確定して開く
-（即切替ではなく確定ボタン方式。D-pad長押しリピートで `playlist_open()`
-が連打されるのを防ぐため）。
+**ファイル送りと再生コンテキスト（Issue #47）**: P9〜P10はPlayer画面の
+中央に同ディレクトリのファイル一覧を表示し、カーソル+`A`確定で切り替える
+UIを持っていたが、波形とテキスト情報を見やすくするため撤去した。代わりに
+`src/playctx.c/.h` の `playctx_t`（SDL非依存の薄いモデル）が「UP/DOWNで
+次に開くべきファイルのパス」だけを持つ。`app_t.playctx` は
+`app_open_path()` が呼ぶ `app_sync_playctx()` で、開いたファイルの
+親ディレクトリを再走査して構築する（`force_rescan=0`なら同じ
+ディレクトリの再走査を省く。理由は旧`player_list`と同じ）。Player画面の
+UP/DOWNは `app_player_step_file()` が `playctx_step_path()`（端は反対側へ
+折り返す）で次のパスを得て `app_open_path()` を直接呼ぶ（確定ボタンを
+挟まない）。ただし D-pad長押しリピート・キーボードのOSキーリピートは
+`input_t.last_was_repeat` として呼び出し側に伝え、Player画面のUP/DOWNだけ
+これを無視することで、押しっぱなしで曲が連打で切り替わり続ける事故を
+防いでいる（他画面のカーソル移動はリピートを許可したまま。詳細は下記
+「入力」参照）。一覧が1件だけ（自分自身に折り返す）場合は、同じパスへの
+再オープンで再生位置が0へ戻ってしまわないよう `app_player_step_file()`
+が何もしない。`playctx_t.kind` は将来のプレイリスト機能（Issue #18）で
+`PLAYCTX_PLAYLIST` を足す受け皿として設けてある。
 
-**リスト系画面のカーソル折り返し**: Browser/TrackList/Settings/Player
-ファイル一覧のUP/DOWNカーソルは端で反対側へ折り返す
+`app_open_path()` は成功すると、Browserがいま同じディレクトリを見ている
+場合に限り `browser_select_by_name()` でBrowserのカーソルもいま開いた
+ファイルへ合わせる（Player画面でUP/DOWNにより送った後 `B` でBrowserへ
+戻ったときの一貫性のため。別ディレクトリを見ている場合は無関係な項目へ
+カーソルを動かさないよう何もしない）。
+
+**リスト系画面のカーソル折り返し**: Browser/TrackList/Settings/
+Folder Pick（Issue #47）のUP/DOWNカーソルは端で反対側へ折り返す
 （`browser_move_wrap()`、既存の `browser_move()` とは別関数。
 `browser_page()` が内部で `browser_move()` を呼ぶため、既存関数を
-折り返すよう変えるとページ送りまで巻き添えになる）。**ページ送り
-（Browserの`←`/`→`）は対象外**（複数件ジャンプするページ送りを
-折り返すと着地位置が押した回数で変わり分かりにくくなるため）。
+折り返すよう変えるとページ送りまで巻き添えになる）。Player画面の
+UP/DOWN（ファイル送り、上記）も同じ折り返し規約に従うが、これは
+`playctx_step_path()` 内の剰余演算によるもので `browser_move_wrap()`
+は経由しない（`playctx_t` はカーソルではなく次のパスだけを返すモデル
+のため）。**ページ送り（Browserの`←`/`→`）は対象外**（複数件ジャンプ
+するページ送りを折り返すと着地位置が押した回数で変わり分かりにくく
+なるため）。
 
 **ビジュアライザ(F-14)**: libgme の公開C APIでチャンネル別PCMを取り出す
 手段は `gme_new_emu_multi_channel()` のみで、`gme_open_file()`/
@@ -323,6 +347,18 @@ OSレベルのキーリピートを持たない。`input_t` に `dpad_held[4]`/
 対象はUP/DOWN/LEFT/RIGHTのみ（A/B等の単発操作は対象外）。
 GameController切断時は `dpad_held[]` をクリアする。
 
+**リピート由来かどうかの通知（Issue #47）**: `input_t.last_was_repeat`
+（`input_last_was_repeat()`で読む）に、直前に返したアクションがD-pad
+長押し合成、またはキーボードのOSキーリピート（`ev.key.repeat`。UP/DOWN/
+LEFT/RIGHTだけは元々リピートを許可している）由来だったかを記録する。
+Player画面のUP/DOWN（同ディレクトリのファイル送り）だけがこれを見て、
+リピート由来の入力を無視する（押しっぱなしで `playlist_open()` が連打
+されるのを防ぐ。旧`player_list`時代は確定ボタン方式でこの問題を避けて
+いたが、Issue #47で確定ボタンを挟まない直接切替に変えたため、判定を
+リピート検出側へ移した）。他の画面のカーソル移動は従来どおりリピートを
+許可したまま。`--ui-script`（テスト用ヘッドレス入力）は`input_poll()`を
+経由しないため常にリピート扱いにならない。
+
 **Yコンボ（Player画面での Repeat/Shuffle 直接切替）**: Player画面の全
 ボタンが使用済みのため、新ボタンを増やさず `Y` を「押しながらD-Padの
 意味を変えるモディファイア」に転用した。`input_t.y_held` を状態として
@@ -360,12 +396,33 @@ Startをplayer画面専用としているが、ファイルを開くまで設定
 `SETTINGS[]` に載っている分だけコピーする実装のため、対象範囲の限定が
 自然に実現できている。確認ダイアログは新しい画面を作らず、1つのbool
 フラグ（`app_t.settings_confirm_reset`）で表現する。
-唯一の例外が `theme_custom`（カラーテーマの`custom`パレット、下記
+例外が2つある。(1) `theme_custom`（カラーテーマの`custom`パレット、下記
 「カラーテーマ」参照）: `SETTINGS[]` には載らない（Settings画面の一覧
 行ではなく `Edit theme` サブ画面からしか触れない）が、`Theme` 自体は
 リセット対象であり、リセット後に `Theme` を `custom` へ戻すと編集済み
 パレットが復活するのは驚きになるため、`app_reset_settings()` で
-明示的に既定（`midnight`と同じ色）へ戻している。
+明示的に既定（`midnight`と同じ色）へ戻している。(2) `start_folder`
+（Issue #47）も同じ構図: `Edit theme` と同じ `SET_ACTION` 系の値を持たない
+行（`SET_FOLDER`）で `Start folder` サブ画面（Folder Pick）からしか
+触れないが、`Start with` 自体はリセット対象なので `app_reset_settings()`
+で明示的に空（未設定）へ戻している。
+
+**起動モードとResume（Issue #47）**: `app_run()` の開始位置決定は
+`--start-dir`（ホスト検証用の明示的な上書き。常に最優先）→
+`start_mode==START_MODE_RESUME`なら`app_try_resume()`（`[resume]`の
+ファイル・トラック・位置を復元してPlayer画面から自動再生）→
+`start_folder`（設定済みならそこをBrowserで開く）→`last_path`（F-13）→
+`MUCHIP_START_DIR`→カレントディレクトリ、の順。`app_try_resume()`が
+失敗した場合（ファイルが削除された等）はこの列の続き（`start_folder`
+以降）へフォールバックする。`start_folder`をF-13の`last_path`より
+優先する理由は、前者がユーザーが明示的に選んだ固定の場所、後者が
+自動追随する「前回どこにいたか」であり、明示的な設定の方が意図が
+強いため。`app_capture_resume()`（`cfg->resume_*`への書き込み）は
+`app_save_config()`に集約されており、Settings退出時・Theme Editor退出時・
+アプリ終了時のすべてで自動的に最新化される（呼び忘れを構造的に防ぐ、
+`app_apply_theme()`と同じ方針）。何も再生していない・
+`app_sync_playctx()`が記録できなかった（zip内から開いた等で
+`player_path`が空）場合は前の値を残す。
 
 **旧バージョンのconfig.iniへの配慮**: 廃止したキー（`[audio] volume`、
 `[voices] mute_mask`）は未知のキー/セクションとして黙って飛ばされ、
@@ -469,9 +526,11 @@ glibc(2.38)はDebian bullseyeのクロスツールチェインが持つglibc(2.3
   変わる）
 
 `MUCHIP_START_DIR` 環境変数（`mux_launch.sh`が音楽ディレクトリを自動
-検出してexport）は `--start-dir > last_path > MUCHIP_START_DIR > "."`の
-優先順位で、F-13（前回開いた場所の復元）を潰さないよう最低優先度にして
-ある。
+検出してexport）は `--start-dir > Resume(start_mode) > start_folder >
+last_path > MUCHIP_START_DIR > "."`の優先順位（Issue #47で`Resume`/
+`start_folder`を追加）で、F-13（前回開いた場所の復元）を潰さないよう
+`last_path`より後、最低優先度に近い位置にしてある（詳細は「設定
+（config.ini）」の「起動モードとResume」参照）。
 
 ホストで実機を模した確認をする際は、`mux_launch.sh` をSSH経由で直接
 起動しない（`muxfrontend`のフォアグラウンド受け渡しを経由せず、終了後に
