@@ -80,7 +80,7 @@
 | F-10 | GB APU の 4ch（Pulse1 / Pulse2 / Wave / Noise）を個別にミュートできる |
 | F-11 | リピートモード（1曲リピート / 全曲リピート / リピートなし）を切り替えられる |
 | F-12 | 再生位置とトラック情報を画面表示する（曲名・作者・著作権・n/N） |
-| F-13 | 起動モード（Settings画面の`Start with`。Issue #47）: `Folder`（既定）は`Start folder`が設定済みならそこから、未設定なら直近に開いた場所（`last_path`）から、それも無ければ`MUCHIP_START_DIR`かカレントディレクトリからBrowserを開始する。`Last played`（Resume）は直近に再生していたファイル・トラック・再生位置（`[resume]`）を復元し、Player画面から自動再生で開始する（復元に失敗した場合は`Folder`と同じフォールバック列に従う）。ホスト検証用の`--start-dir`はどちらのモードより常に優先する |
+| F-13 | 起動モード（Settings画面の`Start with`。Issue #47）: `Folder`（既定）は`Start folder`が設定済みならそこから、未設定なら`MUCHIP_START_DIR`（実機では`mux_launch.sh`が自動検出した音楽フォルダ）かカレントディレクトリからBrowserを開始する（前回開いた場所には戻らない。前回の続きは`Last played`を使う）。`Last played`（Resume）は直近に再生していたファイル・トラック・再生位置（`[resume]`）を復元し、Player画面から自動再生で開始する（復元に失敗した場合は`Folder`と同じフォールバック列に従う）。ホスト検証用の`--start-dir`はどちらのモードより常に優先する |
 | F-14 | 簡易ビジュアライザ（4chのボリュームバー or 波形） |
 
 ### 3.3 NICE TO HAVE
@@ -596,7 +596,7 @@ battery_show   = low    ; off | low | always。バッテリー残量ゲージ (F
 theme          = midnight ; midnight | gameboy | mono | amber | synthwave | custom (F-31, Issue #27)
 last_path      = /mnt/mmc/MUSIC
 start_mode     = folder ; folder | resume。起動モード (F-13, Issue #47)
-start_folder   =        ; start_mode=folderで開始するディレクトリ。空=last_path等へフォールバック
+start_folder   =        ; start_mode=folderで開始するディレクトリ。空=MUCHIP_START_DIR等へフォールバック
 
 ; theme が "custom" のときだけ実効値になる9色 (RRGGBB、先頭#無し。F-31)
 [theme]
@@ -840,8 +840,8 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 | T-21 | SPC再生中に Settings 画面を開く（F-32, Issue #43） | `Stereo depth`・`EQ bass`・`EQ treble` の3行がグレーアウトされる（選択中も維持）。値そのものはLEFT/RIGHTで編集できる。GBS/NSF再生中・停止中はグレーアウトされない |
 | T-22 | ID666タグに曲長を持つ `.spc`（F-32, Issue #43） | GBS/NSFの素のヘッダと異なり `length_known` が立ち、F-28（ながさチェンジ）・F-29（Skip short）の判定対象になる |
 | T-23 | Player画面でUP/DOWN（F-13, Issue #47） | 同ディレクトリの前/次の音楽ファイルへ即座に切り替わり、そのまま再生される。端まで行くと反対側へ折り返す。D-Padを押しっぱなしにしても連射で曲が切り替わり続けない（1回押すごとに1回だけ切り替わる） |
-| T-24 | Settingsの`Start folder`でディレクトリを選び、再起動する（F-13, Issue #47） | `A`でサブ画面（Folder Pick）を開き、`A`/`B`で階層を辿って`X`で確定するとSettingsへ戻り`config.ini`の`start_folder`へ保存される。`Y`で未設定に戻せる。次回起動（`Start with`が`Folder`）はそのディレクトリのBrowserから始まる |
-| T-25 | Settingsの`Start with`を`Last played`にして再生中に終了し、再起動する（F-13, Issue #47） | 直近に再生していたファイル・トラック・再生位置が`[resume]`へ保存され、次回起動はPlayer画面からそのトラック・位置で自動再生が始まる。ファイルが削除された等で復元に失敗した場合は`Folder`と同じフォールバック列（`Start folder`→`last_path`→カレントディレクトリ）でBrowserから始まる |
+| T-24 | Settingsの`Start folder`でディレクトリを選び、再起動する（F-13, Issue #47） | `A`でサブ画面（Folder Pick）を開き、`A`/`B`で階層を辿って`X`で確定するとSettingsへ戻り`config.ini`の`start_folder`へ保存される。`Y`で未設定に戻せる。次回起動（`Start with`が`Folder`）は、前回どのフォルダを開いていたかに関わらず、そのディレクトリのBrowserから始まる。`Y`で未設定に戻した場合は`MUCHIP_START_DIR`（自動検出した音楽フォルダ）から始まる |
+| T-25 | Settingsの`Start with`を`Last played`にして再生中に終了し、再起動する（F-13, Issue #47） | 直近に再生していたファイル・トラック・再生位置が`[resume]`へ保存され、次回起動はPlayer画面からそのトラック・位置で自動再生が始まる。ファイルが削除された等で復元に失敗した場合は`Folder`と同じフォールバック列（`Start folder`→`MUCHIP_START_DIR`→カレントディレクトリ）でBrowserから始まる |
 
 ### 10.3 テスト用素材
 

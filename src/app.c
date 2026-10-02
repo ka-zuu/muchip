@@ -1919,19 +1919,17 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
 
     /* 起動時の開始位置。優先順(Issue #47でstart_mode/start_folderを追加):
      *   --start-dir > (start_mode=resumeならResume) > start_folder >
-     *   last_path(F-13) > MUCHIP_START_DIR > カレントディレクトリ。
-     * --start-dirが明示されたときは、以後それが記憶される対象になる
-     * (次回起動時にlast_pathとして使われる)。resumeとstart_folderは
-     * --start-dirより優先度が低い: --start-dirはホストでの複数解像度
-     * レイアウト確認用の明示的な上書きなので、config.iniの起動モードより
-     * 常に勝つ。
-     * MUCHIP_START_DIR(P7) は last_path より後に置くのが肝で、実機の
-     * mux_launch.sh は毎回これを渡してくるため、--start-dir と同じ優先度に
-     * すると last_path が毎回上書きされ F-13 が永久に発火しなくなる。
-     * start_folder はlast_pathより前: ユーザーが明示的に選んだ固定の
-     * 開始位置なので、F-13の「前回どこを見ていたか」の自動追随より
-     * 優先する。resumeが失敗した場合(ファイルが削除された等)はここへ
-     * フォールバックする。 */
+     *   MUCHIP_START_DIR > カレントディレクトリ。
+     * --start-dirが明示されたときは、以後それがlast_pathとして記録される。
+     * resumeとstart_folderは--start-dirより優先度が低い: --start-dirは
+     * ホストでの複数解像度レイアウト確認用の明示的な上書きなので、
+     * config.iniの起動モードより常に勝つ。
+     * Folderモードは「前回の場所」を追わない: start_folder未設定でも
+     * last_pathへは落とさず、MUCHIP_START_DIR(実機のmux_launch.shが
+     * 自動検出した音楽フォルダ)から始める。前回の続きから始めたい場合は
+     * 起動モードをResumeにする(F-13)。last_pathは記録だけ続ける。
+     * resumeが失敗した場合(ファイルが削除された等)もここへフォールバック
+     * する。 */
     if (opt->start_dir && opt->start_dir[0]) {
         if (browser_open_dir(&app.browser, opt->start_dir, app.cfg->show_all_files) != 0) {
             LOG_WARN("開始ディレクトリを開けません: %s。カレントディレクトリで再試行します",
@@ -1943,8 +1941,6 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     } else if (app.cfg->start_folder[0] &&
                browser_open_dir(&app.browser, app.cfg->start_folder, app.cfg->show_all_files) == 0) {
         LOG_INFO("start_folder から開始します: %s", app.cfg->start_folder);
-    } else if (app.cfg->last_path[0]) {
-        restore_last_path(&app, app.cfg->last_path);
     } else if (opt->fallback_start_dir && opt->fallback_start_dir[0] &&
                browser_open_dir(&app.browser, opt->fallback_start_dir,
                                  app.cfg->show_all_files) == 0) {

@@ -411,13 +411,16 @@ Startをplayer画面専用としているが、ファイルを開くまで設定
 `--start-dir`（ホスト検証用の明示的な上書き。常に最優先）→
 `start_mode==START_MODE_RESUME`なら`app_try_resume()`（`[resume]`の
 ファイル・トラック・位置を復元してPlayer画面から自動再生）→
-`start_folder`（設定済みならそこをBrowserで開く）→`last_path`（F-13）→
-`MUCHIP_START_DIR`→カレントディレクトリ、の順。`app_try_resume()`が
-失敗した場合（ファイルが削除された等）はこの列の続き（`start_folder`
-以降）へフォールバックする。`start_folder`をF-13の`last_path`より
-優先する理由は、前者がユーザーが明示的に選んだ固定の場所、後者が
-自動追随する「前回どこにいたか」であり、明示的な設定の方が意図が
-強いため。`app_capture_resume()`（`cfg->resume_*`への書き込み）は
+`start_folder`（設定済みならそこをBrowserで開く）→`MUCHIP_START_DIR`
+→カレントディレクトリ、の順。`app_try_resume()`が失敗した場合
+（ファイルが削除された等）はこの列の続き（`start_folder`以降）へ
+フォールバックする。`Folder`モードは「前回どこにいたか」を追わない:
+`start_folder`が未設定でも`last_path`へは落とさず、`mux_launch.sh`が
+自動検出した音楽フォルダ（`MUCHIP_START_DIR`）から始める。起動のたびに
+同じ場所から始まることが`Folder`の意味で、前回の続きが欲しい場合は
+`Resume`を使う（二つの意味が混ざると、Settingsで`Folder`を選んでも
+挙動が読めなくなるため）。`last_path`は記録だけ続ける（config.iniの
+キー互換のため。起動時には読まない）。`app_capture_resume()`（`cfg->resume_*`への書き込み）は
 `app_save_config()`に集約されており、Settings退出時・Theme Editor退出時・
 アプリ終了時のすべてで自動的に最新化される（呼び忘れを構造的に防ぐ、
 `app_apply_theme()`と同じ方針）。何も再生していない・
@@ -527,10 +530,9 @@ glibc(2.38)はDebian bullseyeのクロスツールチェインが持つglibc(2.3
 
 `MUCHIP_START_DIR` 環境変数（`mux_launch.sh`が音楽ディレクトリを自動
 検出してexport）は `--start-dir > Resume(start_mode) > start_folder >
-last_path > MUCHIP_START_DIR > "."`の優先順位（Issue #47で`Resume`/
-`start_folder`を追加）で、F-13（前回開いた場所の復元）を潰さないよう
-`last_path`より後、最低優先度に近い位置にしてある（詳細は「設定
-（config.ini）」の「起動モードとResume」参照）。
+MUCHIP_START_DIR > "."`の優先順位で、`start_folder`が未設定のときの
+既定の開始位置になる（詳細は「設定（config.ini）」の「起動モードと
+Resume」参照）。
 
 ホストで実機を模した確認をする際は、`mux_launch.sh` をSSH経由で直接
 起動しない（`muxfrontend`のフォアグラウンド受け渡しを経由せず、終了後に

@@ -265,8 +265,9 @@ scp muChip-<version>.muxapp root@<実機のIP>:/mnt/mmc/ARCHIVE/
 される（前回開いた場所・EQなどの設定が復元される）。`mux_launch.sh` は
 起動のたびに実機のSDカードから音楽ディレクトリを自動検出し
 （`MUSIC`/`Music`/`ROMS/GBS`等を優先的に探索、無ければ `ROMS`直下に
-フォールバック）、`Start folder`（未設定時）・`last_path`・
-`MUCHIP_START_DIR` のいずれもまだ無い初回起動時だけそこから始まる。
+フォールバック）、`Start folder` が未設定のとき（`Start with` が `Folder` の場合）
+そこから始まる。前回の続きから始めたい場合は `Start with` を
+`Last played` にする。
 
 終了は **GUIDEボタン単体**、または **Start+Select同時押し**。
 

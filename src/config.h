@@ -34,7 +34,7 @@ typedef enum {
 } battery_show_t;
 
 /* Issue #47: 起動時にBrowserをどこから開始するか。
- * folder  = [ui] start_folder(未設定ならlast_path等、従来どおりのフォール
+ * folder  = [ui] start_folder(未設定ならMUCHIP_START_DIR等のフォール
  *           バック列。app_run()参照)を開いてBrowser画面から始める(既定)。
  * resume  = [resume] のファイル・トラック・再生位置を復元し、Player画面
  *           から自動再生で始める。復元に失敗したらfolderへフォールバック
@@ -79,9 +79,9 @@ typedef struct {
     /* Issue #47: 起動モード(F-13を拡張)。既定はfolder。 */
     start_mode_t start_mode;
     /* Issue #47: start_mode=folderのときにBrowserを開始するディレクトリ。
-     * 空文字列=未設定(その場合はlast_path等、従来のフォールバック列に従う。
-     * app_run()参照)。Settings画面の「Start folder」サブ画面
-     * (SCREEN_FOLDER_PICK)から設定する。last_pathと違い、F-13のような
+     * 空文字列=未設定(その場合はMUCHIP_START_DIR等のフォールバック列に
+     * 従う。app_run()参照)。Settings画面の「Start folder」サブ画面
+     * (SCREEN_FOLDER_PICK)から設定する。前回の場所への
      * 自動追随はしない(ユーザーが明示的に選んだ固定の場所)。 */
     char start_folder[MUGBS_PATH_MAX];
 
