@@ -42,7 +42,7 @@ static void join_path(char *out, size_t out_size, const char *dir, const char *n
     snprintf(out, out_size, "%s%s%s", dir, (strcmp(dir, "/") == 0 ? "" : "/"), name);
 }
 
-int browser_open_dir(browser_t *b, const char *path, int show_all) {
+int browser_open_dir(browser_t *b, const char *path, int filter) {
     DIR *dir = opendir(path);
     if (!dir) {
         LOG_WARN("ディレクトリを開けません: %s", path);
@@ -72,7 +72,13 @@ int browser_open_dir(browser_t *b, const char *path, int show_all) {
             is_dir = (stat(full, &st) == 0) && S_ISDIR(st.st_mode);
         }
 
-        if (!is_dir && !show_all && !has_music_ext(name)) continue;
+        /* ディレクトリはfilterに関わらず常に列挙する(階層を辿れなくなる
+         * 事故を避ける)。ファイルはfilterごとに絞る: MUSICは拡張子一致のみ、
+         * ALLは無条件、DIRSは一切出さない(Start folderサブ画面用、Issue #47)。 */
+        if (!is_dir) {
+            if (filter == BROWSER_FILTER_DIRS) continue;
+            if (filter == BROWSER_FILTER_MUSIC && !has_music_ext(name)) continue;
+        }
 
         browser_item_t *grown = realloc(items, sizeof(*items) * (size_t)(count + 1));
         if (!grown) {
@@ -161,7 +167,7 @@ static char *parent_dir(const char *path) {
     return tmp;
 }
 
-int browser_up(browser_t *b, int show_all) {
+int browser_up(browser_t *b, int filter) {
     if (!b->cwd) return 0;
 
     char *parent = parent_dir(b->cwd);
@@ -171,18 +177,18 @@ int browser_up(browser_t *b, int show_all) {
         return 0;
     }
 
-    int rc = browser_open_dir(b, parent, show_all);
+    int rc = browser_open_dir(b, parent, filter);
     free(parent);
     return rc == 0 ? 1 : 0;
 }
 
-int browser_enter(browser_t *b, int show_all) {
+int browser_enter(browser_t *b, int filter) {
     if (b->count == 0 || b->selected < 0 || b->selected >= b->count) return 0;
     if (!b->items[b->selected].is_dir) return 0;
 
     char path[4096];
     join_path(path, sizeof(path), b->cwd, b->items[b->selected].name);
-    return browser_open_dir(b, path, show_all) == 0 ? 1 : 0;
+    return browser_open_dir(b, path, filter) == 0 ? 1 : 0;
 }
 
 int browser_path_at(const browser_t *b, int index, char *out, unsigned long out_size) {

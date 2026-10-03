@@ -150,10 +150,10 @@ done
 [ -d "$START_DIR" ] || START_DIR="$APP_DIR"
 echo "start dir: $START_DIR"
 
-# 自動検出した値は「保存された last_path がまだ無いときの初期値」として渡す。
-# --start-dir だと config.ini の last_path (F-13) より優先されてしまい、
-# 前回の続きから開けなくなるため、優先度の低い環境変数で渡す。
-# (優先度: --start-dir > last_path > MUCHIP_START_DIR > ".")
+# 自動検出した値は「Start folder が未設定のときの開始位置」として渡す。
+# --start-dir だと config.ini の起動モード(Start with / Start folder)より
+# 優先されてしまうため、優先度の低い環境変数で渡す。
+# (優先度: --start-dir > Resume > Start folder > MUCHIP_START_DIR > ".")
 export MUCHIP_START_DIR="$START_DIR"
 
 # --- 起動 -------------------------------------------------------------------

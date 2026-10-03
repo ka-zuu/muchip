@@ -14,16 +14,16 @@ typedef struct {
     const char *initial_path; /* 非NULLならまずそのファイルを開いてPlayer画面から始める
                                   (playlist_open()が失敗した場合はBrowserにエラー表示付きで
                                   留まる。T-12)。NULLならBrowser画面から始める
-                                  (--start-dir/last_pathの優先順はapp.c参照)。 */
-    const char *start_dir;    /* Browserの開始ディレクトリ。NULLならlast_path、
-                                  それも無ければ fallback_start_dir、
+                                  (--start-dir等の優先順はapp.c参照)。 */
+    const char *start_dir;    /* Browserの開始ディレクトリ。NULLなら起動モード(Resume/
+                                  Start folder)、それも無ければ fallback_start_dir、
                                   それも無ければカレントディレクトリ。 */
-    const char *fallback_start_dir; /* 環境変数 MUCHIP_START_DIR (P7)。last_path が
-                                  まだ無い初回起動時だけ使われる開始ディレクトリ。
+    const char *fallback_start_dir; /* 環境変数 MUCHIP_START_DIR (P7)。Start folder が
+                                  未設定のときだけ使われる開始ディレクトリ。
                                   実機では mux_launch.sh が音楽フォルダを自動検出して
-                                  ここへ渡す。start_dir(--start-dir)と違い last_path
-                                  より優先度が低いため、F-13(前回の続きから開く)を
-                                  毎回上書きしてしまうことがない。 */
+                                  ここへ渡す。start_dir(--start-dir)と違い起動
+                                  モードより優先度が低いため、それらを毎回上書き
+                                  してしまうことがない。 */
 
     int window_w, window_h;   /* 両方正なら、その解像度の非フルスクリーンウィンドウで
                                   起動する(--window。ホストでの複数解像度レイアウト

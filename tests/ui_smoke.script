@@ -3,10 +3,11 @@
 # tests/CMakeLists.txt が gen_fixture_gbs/gen_fixture_spc で生成する
 # Game.gbs (2トラック)・Game.spc (1トラック, Issue #43)・Game2.gbs (3トラック)
 # が置かれたディレクトリを --start-dir に指定して実行する想定。
-# Browser -> ファイルを開く -> Player(一覧を操作して別ファイルを開く) ->
-# TrackList -> ジャンプ -> Player -> Settings(値変更・リセット確認ダイアログ) ->
-# Player -> Browser -> Game.spcを開く -> Settings(グレーアウト表示) -> Player ->
-# Browser -> Settings -> Browser -> 終了、という画面遷移をひととおり踏む。
+# Browser -> ファイルを開く -> Player(UP/DOWNで別ファイルへ送る) ->
+# TrackList -> ジャンプ -> Player -> Settings(値変更・Start folder・
+# リセット確認ダイアログ) -> Player -> Browser -> Game.spcを開く ->
+# Settings(グレーアウト表示) -> Player -> Browser -> Settings -> Browser ->
+# 終了、という画面遷移をひととおり踏む。
 # SDL_VIDEODRIVER=dummy / SDL_AUDIODRIVER=dummy 下で実行され、表示は見えない
 # (画面遷移・ライフサイクルのクラッシュ回帰をCIで拾うためのもの)。
 #
@@ -22,12 +23,17 @@
 # を追加)後もこのスクリプトは通ること。Skip shortの変更は再生中
 # (SELECTで再開済み)に踏むので、entries[](可視ビュー)の再構築と
 # player_reanchor_entry()による現在トラックの追随を通る。
+#
+# Issue #47 (UIの刷新。Player画面のファイル一覧UIを撤去してUP/DOWNを
+# ファイル送りへ転用、Settings末尾にStart with/Start folderを追加)後も
+# このスクリプトは通ること。ファイル送りはapp_player_step_file()、
+# Start folderはSCREEN_FOLDER_PICK(BROWSER_FILTER_DIRS)を通す。
 
 A       # Browser: Game.gbs を開く -> Player
-UP      # Player: 一覧の先頭からUP -> 末尾(Game2.gbs)へ折り返す(カーソルのみ)
-A       # 決定。Game2.gbs を開く(再生中のplaylistを張り替える経路を通す)
-DOWN    # 末尾からDOWN -> 先頭(Game.gbs)へ折り返す
-A       # 決定。Game.gbs へ戻る
+UP      # Player: UP(同ディレクトリの前ファイルへ送る。Issue #47)。
+        # 末尾(Game2.gbs)へ折り返りつつ、開いて再生を張り替える経路
+        # (app_player_step_file() -> app_open_path())を通す
+DOWN    # DOWN(次ファイルへ送る)。先頭(Game.gbs)へ折り返りつつ張り替える
 SELECT  # 一時停止 (P9でAから移した)
 SELECT  # 再開
 Y_RIGHT # Player: Y+RIGHTでRepeatを直接進める (P11。既定all -> none)
@@ -70,7 +76,7 @@ RIGHT   # title_scroll を切り替える
 DOWN    # Scroll title -> Show battery (Issue #7)
 RIGHT   # off -> low
 RIGHT   # low -> always (ENUMの循環を1周ぶん踏む)
-DOWN    # Show battery -> Theme (Issue #27。SETTINGS[]の末尾)
+DOWN    # Show battery -> Theme (Issue #27)
 RIGHT   # midnight -> gameboy (app_apply_theme()経由でui->themeが変わる
         # 経路を、再生中(SELECTで再開済み)の状態で通す)
 RIGHT   # gameboy -> mono
@@ -80,7 +86,7 @@ RIGHT   # synthwave -> custom (config_set_defaults()時点のtheme_custom
         # =midnightのコピーが実効になる経路を通す)
 RIGHT   # custom -> midnight (6値を1周してENUMの循環がcustomを跨いで
         # 戻ることを確認する)
-DOWN    # Theme -> Edit theme (SET_ACTION行。SETTINGS[]の末尾)
+DOWN    # Theme -> Edit theme (SET_ACTION行)
 LEFT    # SET_ACTION行ではLEFTが無反応であること(adjust_settingの早期return)
 A       # エディタを開く(app_enter_theme_edit)。カーソルはBackground(先頭)
 UP      # 先頭でUP -> 末尾(Charging)へ折り返す(P9と同じ規約)
@@ -96,11 +102,26 @@ RIGHT
 L1      # チャンネル B -> G
 LEFT    # G値を下げる(2回目以降の編集。theme_customへの直接書き込み経路)
 X       # 入室時のテーマ(まだmidnightだった)へ戻す(確認ダイアログ無しのundo)
-B       # エディタ -> Settings (ここでconfig_save)
+B       # エディタ -> Settings (ここでconfig_save)。カーソルはEdit themeのまま
+DOWN    # Edit theme -> Start with (Issue #47)
+RIGHT   # folder -> resume (SET_ENUMの循環)
+RIGHT   # resume -> folder (2値のenumが一周して戻ることを確認する)
+DOWN    # Start with -> Start folder
+A       # Start folder: サブ画面(SCREEN_FOLDER_PICK)を開く。start_folder未設定
+        # なのでBrowserの現在ディレクトリ(UI_SMOKE_DIR。サブディレクトリを
+        # 持たない)へフォールバックする経路(app_enter_folder_pick)を通す
+UP      # 一覧が空(ディレクトリ0件)。browser_move_wrap()のcount==0分岐を通す
+X       # いまのフォルダ(UI_SMOKE_DIR)をstart_folderに確定してSettingsへ戻る
+        # (config_save)
+A       # 再度開く。今度はstart_folderが設定済みなのでそれを直接開く経路を通す
+Y       # start_folderを未設定に戻してSettingsへ戻る(config_save)
+A       # 再度開く。再びBrowserの現在ディレクトリへのフォールバック経路を通す
+START   # キャンセル。start_folderは変えずSettingsへ戻る
 X       # リセット確認ダイアログを開く(P10)
 B       # キャンセル(変更はそのまま残る)
 X       # 再度開く
-A       # 確定。SETTINGS[]の項目が既定値に戻る(app_reset_settings)
+A       # 確定。SETTINGS[]の項目が既定値に戻る(app_reset_settings)。
+        # start_folderも明示的に空へ戻る(Issue #47)
 B       # Settings -> Player (ここでconfig_pathがあれば保存される)
 B       # Player -> Browser (カーソルはBの時点の値のまま=Game.gbs)
 DOWN    # Browser: Game.gbs -> Game.spc (Issue #43)

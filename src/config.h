@@ -33,6 +33,17 @@ typedef enum {
     BATTERY_SHOW_ALWAYS,
 } battery_show_t;
 
+/* Issue #47: 起動時にBrowserをどこから開始するか。
+ * folder  = [ui] start_folder(未設定ならMUCHIP_START_DIR等のフォール
+ *           バック列。app_run()参照)を開いてBrowser画面から始める(既定)。
+ * resume  = [resume] のファイル・トラック・再生位置を復元し、Player画面
+ *           から自動再生で始める。復元に失敗したらfolderへフォールバック
+ *           する。 */
+typedef enum {
+    START_MODE_FOLDER = 0,
+    START_MODE_RESUME,
+} start_mode_t;
+
 typedef struct {
     /* [playback] */
     int default_length_sec; /* 曲長不明時の再生秒数 (F-08) */
@@ -65,6 +76,15 @@ typedef struct {
     battery_show_t battery_show; /* Issue #7: 画面右上のバッテリー残量ゲージの表示条件。既定low */
     theme_id_t theme_id; /* Issue #27: カラーテーマ。custom のとき theme_custom を使う */
 
+    /* Issue #47: 起動モード(F-13を拡張)。既定はfolder。 */
+    start_mode_t start_mode;
+    /* Issue #47: start_mode=folderのときにBrowserを開始するディレクトリ。
+     * 空文字列=未設定(その場合はMUCHIP_START_DIR等のフォールバック列に
+     * 従う。app_run()参照)。Settings画面の「Start folder」サブ画面
+     * (SCREEN_FOLDER_PICK)から設定する。前回の場所への
+     * 自動追随はしない(ユーザーが明示的に選んだ固定の場所)。 */
+    char start_folder[MUGBS_PATH_MAX];
+
     /* [theme] Issue #27。theme_id==THEME_CUSTOM のときだけ実効値になる
      * 9スロットのパレット(Edit theme画面が編集する)。それ以外のプリセット
      * 選択中は無視される(theme_resolve()参照)。config.iniには常に9キー
@@ -80,6 +100,17 @@ typedef struct {
      * どちらも空文字列なら SDL の既定動作(環境変数)に任せる。 */
     char gamecontroller_db[MUGBS_PATH_MAX];        /* DBファイルのパス */
     char controller_mapping[MUGBS_MAPPING_MAX];    /* 追加マッピング1行(SDL形式) */
+
+    /* [resume] Issue #47: start_mode=resumeで復元する再生状態。
+     * app_capture_resume()がSettings退出時・Theme Editor退出時・終了時に
+     * 書き込む(何も再生していなければ前の値を残す)。resume_pathが空なら
+     * 未設定(resume復元は諦めてfolderへフォールバックする)。 */
+    char resume_path[MUGBS_PATH_MAX]; /* app_open_path()に渡したパスそのもの
+                                          (playctx_t.dirと同じ意味の値。
+                                          zip内ソースならzip自身のパス) */
+    int resume_source;      /* playlist_entry_t.source_index */
+    int resume_track;       /* playlist_entry_t.track_index */
+    int resume_position_ms; /* player_tell_ms() */
 } mugbs_config_t;
 
 /* 既定値を書き込む。config_load() より先に必ず呼ぶこと。

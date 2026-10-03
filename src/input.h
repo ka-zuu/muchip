@@ -89,6 +89,15 @@ typedef struct {
     int dpad_held[4];
     Uint32 dpad_next_repeat_at[4]; /* 次にリピートを発火するSDL_GetTicks()時刻 */
 
+    /* Issue #47: 直前に input_poll() が返したアクションが、長押しリピート
+     * (D-pad長押し合成、またはキーボードのOSキーリピート)由来かどうか。
+     * Player画面のUP/DOWN(ファイル送り)は、押しっぱなしで曲を連打で
+     * 切り替えてしまわないよう、この値が1のときは無視する(app_dispatch()
+     * 参照)。他の画面のカーソル移動はリピートを許可したままなので、
+     * ここでは値を記録するだけで判定自体はしない。input_poll()の
+     * 呼び出しごとに更新される(次の呼び出しまで有効)。 */
+    int last_was_repeat;
+
     /* Yボタン/キーが押されている間だけ立つ(P11)。D-padのイベントを
      * INPUT_UP/DOWN/LEFT/RIGHT ではなく INPUT_Y_UP/DOWN/LEFT/RIGHT として
      * 返すためのモディファイア。押した順序に依存しない(dpad_held[]の
@@ -125,6 +134,11 @@ void input_shutdown(input_t *in);
  * 論理アクションに対応しない場合は INPUT_NONE を書いて非0を返す
  * (呼び出し側はループでポーリングを続ければよい)。 */
 int input_poll(input_t *in, input_action_t *out);
+
+/* 直前の input_poll() が *out に書いたアクションがリピート由来だったか
+ * (input_t.last_was_repeat 参照)。呼び出し側は input_poll() の直後に
+ * 読むこと(次の input_poll() 呼び出しで上書きされる)。 */
+int input_last_was_repeat(const input_t *in);
 
 /* 直前の input_poll() の呼び出し群の間にウィンドウサイズ変更があれば1を
  * 返し、内部フラグをクリアする(呼び出し側はui_handle_resize()を呼ぶ)。 */
