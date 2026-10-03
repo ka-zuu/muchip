@@ -26,7 +26,9 @@ cmake_minimum_required(VERSION 3.13)
 # のを解消した(Issue #29)。メタデータをUTF-8へ自動正規化し、美咲フォント
 # (8x8, JIS第1・第2水準)を同梱して日本語を描画できるようにした。
 # ユーザー向けの新機能のためminorバンプ。
-project(muchip VERSION 1.7.0 LANGUAGES C CXX)
+# 1.8.0 = SPC(SNES SPC700)対応(Issue #43)と、UI刷新・ディレクトリベースの
+# 管理・起動モード追加(Issue #47)。ユーザー向けの新機能のためminorバンプ。
+project(muchip VERSION 1.8.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
