@@ -11,15 +11,27 @@
 #include <stddef.h>
 
 #include "config.h"
+#include "favorites.h"
 
 /* gme.h の前方宣言だけを使う。playlist.h の利用側(ui.c/app.c等)に
  * <gme/gme.h> への依存を強制しないため、フルインクルードはしない。 */
 typedef struct gme_info_t gme_info_t;
+/* archive.h の不透明型 archive_t と同じ実体(typedef struct archive archive_t)。 */
+struct archive;
 
 typedef struct {
     char *display_path; /* 表示・ログ用。P4ではzip内なら "rip.zip:Game.gbs" 形式になる */
     char *fs_path;       /* 実ファイルのパス。P3時点では常に非NULL */
     char *zip_entry;      /* zip内エントリ名。P3では常にNULL (P4で使用) */
+    char *container;       /* Issue #18: このソースを列挙した playlist_open() のパス
+                               (.gbs/.nsf/.spc/.m3u/.zip)。お気に入りの同定キー
+                               (favorites.h)の一部。常に非NULL */
+    struct archive *archive; /* zip内ソース(zip_entry!=NULL)のときのzip。借用:
+                               所有権は playlist_t.archives[] にある。それ以外はNULL */
+    char *game;             /* Issue #18: このソースの最初のトラックの gme_info_t.game。
+                               取得できなければ空文字列。お気に入りのように
+                               複数ゲームが混ざるプレイリストの表示用
+                               (playlist_game_name()) */
     char *m3u_text;        /* このソース用に再構成されたm3uテキスト。
                                無ければNULL(m3u無しでファイル単体を列挙する場合) */
     size_t m3u_len;
@@ -79,9 +91,16 @@ typedef struct {
     int entry_count;
     char *game; /* 表示用ゲーム名。取得できた最初のソースの情報を使う。空文字列もあり得る */
 
-    struct archive *archive; /* .zip から開いた場合のみ非NULL。セッション中保持し、
+    struct archive **archives; /* .zip から開いたzip群(通常は0〜1個、お気に入りでは
+                                 zipごとに1個)。セッション中保持し、
                                  sources[].zip_entry の実体展開に使う (P4)。
-                                 所有権はplaylist_tにあり、playlist_free()で閉じる */
+                                 所有権はplaylist_tにあり、playlist_free()で閉じる。
+                                 sources[].archive はこの配列の要素を借用する */
+    int archive_count;
+
+    int is_favorites;  /* Issue #18: playlist_open_favorites() で作った場合1 */
+    int defer_scan;    /* 内部用: 非0の間、ソースを追加するだけでスキャンしない
+                           (playlist_open_favorites()が必要なソースだけ後でスキャンする) */
 } playlist_t;
 
 /* path (.gbs/.gb/.nsf/.nsfe単体 または .m3u) を開き、統一データモデルを
@@ -96,6 +115,24 @@ typedef struct {
  *
  * P3時点ではローカルファイルシステムのみを扱う。zip対応はP4。 */
 int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **out);
+
+/* Issue #18: お気に入り(favorites.h)を1本の playlist_t にする。
+ * entries[] はお気に入りの並び(追加順)になる。fav の各項目は、containerを
+ * playlist_open() と同じロジックで開き直し、source_key が一致するソースの
+ * track_index のトラックとして解決する(サイドカーm3uやzip内m3uの適用も
+ * 通常の再生経路と同一)。解決できない項目(ファイルが消えた等)は警告して
+ * 読み飛ばす。fav は変更しない。1件も解決できなければ-1。 */
+int playlist_open_favorites(const favorites_t *fav, const mugbs_config_t *config,
+                            playlist_t **out);
+
+/* Issue #18: source_index のソースを favorites.h の source_key へ変換する。
+ * 同じファイルを複数セグメントで指すm3uでも一意になる(実装側のコメント参照)。
+ * 0で成功。out_size が足りなければ-1。 */
+int playlist_source_key(const playlist_t *pl, int source_index, char *out, size_t out_size);
+
+/* 表示用のゲーム名。通常は pl->game。お気に入りでは曲ごとに元ゲームが
+ * 違うので、source_index のソース自身の game を返す。空文字列もあり得る。 */
+const char *playlist_game_name(const playlist_t *pl, int source_index);
 
 void playlist_free(playlist_t *pl);
 

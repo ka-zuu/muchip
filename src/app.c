@@ -10,6 +10,7 @@
 
 #include "battery.h"
 #include "browser.h"
+#include "favorites.h"
 #include "input.h"
 #include "log.h"
 #include "player.h"
@@ -48,6 +49,13 @@ typedef struct {
      * 将来のプレイリスト機能(Issue #18)は playctx_t の kind を増やす形で
      * ここに乗せる想定。 */
     playctx_t playctx;
+
+    /* Issue #18: お気に入り(固定の1本)。起動時に favorites_path から読み、
+     * 追加/削除のたびに保存する。favorites_path を app_open_path() に渡すと
+     * これを1本のプレイリストとして開く(playlist_open_favorites())。
+     * favorites_path は参照のみ(所有は呼び出し側)。NULL=永続化しない。 */
+    favorites_t fav;
+    const char *favorites_path;
 
     /* Issue #47: Settings画面の"Start folder"(A)で開くディレクトリ専用の
      * フォルダ選択サブ画面(SCREEN_FOLDER_PICK)用。app->browser とは別の
@@ -366,10 +374,16 @@ static void app_sync_playctx(app_t *app, const char *opened_path, int force_resc
  * (Browserに留まりエラー表示するだけ。T-12: 壊れたファイルでクラッシュしない)。
  * 成功した場合のみ、既存の再生を止めてから(SPEC 13チェックリスト:
  * gme_open_data の所有権/ロック順序に注意)差し替える。 */
+static int is_favorites_path(const app_t *app, const char *path) {
+    return app->favorites_path && strcmp(path, app->favorites_path) == 0;
+}
+
 static void app_open_path(app_t *app, const char *path) {
+    const int is_fav = is_favorites_path(app, path);
     playlist_t *new_pl = NULL;
-    if (playlist_open(path, app->cfg, &new_pl) != 0) {
-        set_status(app, "Failed to open: %s", path);
+    if (is_fav ? playlist_open_favorites(&app->fav, app->cfg, &new_pl) != 0
+               : playlist_open(path, app->cfg, &new_pl) != 0) {
+        set_status(app, is_fav ? "Failed to open favorites" : "Failed to open: %s", path);
         return;
     }
 
@@ -385,12 +399,22 @@ static void app_open_path(app_t *app, const char *path) {
         return;
     }
 
-    set_last_path(app, path); /* F-13: 直近に開いたファイルを記憶する */
-    /* Player画面のUP/DOWN用の再生コンテキストを、いま開いたファイルへ
-     * 合わせる (Issue #47)。app_open_path() はGUI側で playlist_open() を
-     * 呼ぶ唯一の関数なので、Browserの決定・argvのinitial_path・
-     * Player画面でのUP/DOWNによる送り・Resumeの4経路すべてがここを通る。 */
-    app_sync_playctx(app, path, 0);
+    if (is_fav) {
+        /* Issue #18: お気に入りは「ディレクトリ内のファイル」ではないので、
+         * last_path(Browserの場所)には記録せず、UP/DOWNのファイル送りも
+         * 無効にする(playctxを空にする)。Resume用に player_path だけは
+         * favorites_path にしておく(app_capture_resume()が使う)。
+         * path は favorites_path と等しいので長さは常に収まる。 */
+        playctx_free(&app->playctx);
+        snprintf(app->player_path, sizeof(app->player_path), "%s", path);
+    } else {
+        set_last_path(app, path); /* F-13: 直近に開いたファイルを記憶する */
+        /* Player画面のUP/DOWN用の再生コンテキストを、いま開いたファイルへ
+         * 合わせる (Issue #47)。app_open_path() はGUI側で playlist_open() を
+         * 呼ぶ唯一の関数なので、Browserの決定・argvのinitial_path・
+         * Player画面でのUP/DOWNによる送り・Resumeの4経路すべてがここを通る。 */
+        app_sync_playctx(app, path, 0);
+    }
 
     /* Issue #47: Browserのカーソルを、いま開いたファイルへ合わせる
      * (Player画面の一覧UIを廃したため、Up/Downで送った後にBでBrowserへ
@@ -418,6 +442,62 @@ static void app_player_step_file(app_t *app, int delta) {
     if (app->player_path[0] && strcmp(path, app->player_path) == 0) return;
 
     app_open_path(app, path);
+}
+
+/* show_all_files が変わったとき、開いているファイルのディレクトリで
+ * 再生コンテキストを作り直す。お気に入り再生中は対象ディレクトリが無い
+ * (player_pathがfavorites_path)ので何もしない。 */
+static void app_resync_playctx(app_t *app) {
+    if (!app->player_path[0] || is_favorites_path(app, app->player_path)) return;
+    app_sync_playctx(app, app->player_path, 1);
+}
+
+/* ---- お気に入り (Issue #18) -------------------------------------------- */
+
+/* entries[entry_idx] がお気に入りに入っているか。 */
+static int app_entry_is_favorite(const app_t *app, int entry_idx) {
+    if (!app->pl || entry_idx < 0 || entry_idx >= app->pl->entry_count) return 0;
+    const playlist_entry_t *e = &app->pl->entries[entry_idx];
+    const playlist_source_t *src = &app->pl->sources[e->source_index];
+    char key[MUGBS_PATH_MAX + 16];
+    if (!src->container || playlist_source_key(app->pl, e->source_index, key, sizeof(key)) != 0) {
+        return 0;
+    }
+    return favorites_find(&app->fav, src->container, key, e->track_index) >= 0;
+}
+
+/* entries[entry_idx] をお気に入りへ追加/削除(トグル)して保存する。
+ * お気に入り再生中に外しても、いま開いているプレイリストは作り直さない
+ * (曲が突然消えて再生が切れるのを避ける。次に開き直したときに反映される)。 */
+static void app_toggle_favorite(app_t *app, int entry_idx) {
+    if (!app->pl || entry_idx < 0 || entry_idx >= app->pl->entry_count) return;
+    const playlist_entry_t *e = &app->pl->entries[entry_idx];
+    const playlist_source_t *src = &app->pl->sources[e->source_index];
+    char key[MUGBS_PATH_MAX + 16];
+    if (!src->container || playlist_source_key(app->pl, e->source_index, key, sizeof(key)) != 0) {
+        set_status(app, "Can't add this track to favorites");
+        return;
+    }
+
+    int added = favorites_toggle(&app->fav, src->container, key, e->track_index, e->title);
+    if (added < 0) {
+        set_status(app, "Can't add this track to favorites");
+        return;
+    }
+    if (app->favorites_path && favorites_save(&app->fav, app->favorites_path) != 0) {
+        set_status(app, "Failed to save favorites");
+        return;
+    }
+    set_status(app, added ? "\xE2\x98\x85 Added to favorites" : "\xE2\x98\x86 Removed from favorites");
+}
+
+/* Browser の Y: お気に入りを1本のプレイリストとして開く。 */
+static void app_open_favorites(app_t *app) {
+    if (!app->favorites_path || app->fav.count <= 0) {
+        set_status(app, "No favorites yet (Player: A)");
+        return;
+    }
+    app_open_path(app, app->favorites_path);
 }
 
 /* L2/R2 (前/次ファイル, SPEC 6.3): 現エントリの source を跨ぐ最初の
@@ -484,6 +564,9 @@ static void handle_browser_input(app_t *app, input_action_t a) {
                 set_last_path(app, app->browser.cwd); /* F-13 */
             }
             break;
+        case INPUT_Y:
+            app_open_favorites(app);
+            break;
         case INPUT_START:
             /* SPEC 6.3 の表はStartをPlayer画面専用としているが、ファイルを
              * 開くまでSettingsへ入れないのは初回体験として悪いため、
@@ -542,6 +625,9 @@ static void handle_player_input(app_t *app, input_action_t a, int repeat) {
             break;
         case INPUT_SELECT:
             player_toggle_pause(&app->player);
+            break;
+        case INPUT_A:
+            app_toggle_favorite(app, app->player.current_entry); /* Issue #18 */
             break;
         case INPUT_B:
             app->screen = SCREEN_BROWSER;
@@ -617,6 +703,9 @@ static void handle_tracklist_input(app_t *app, input_action_t a) {
         case INPUT_A:
             if (n > 0) player_play_entry(&app->player, app->tracklist_sel);
             app->screen = SCREEN_PLAYER;
+            break;
+        case INPUT_Y:
+            if (n > 0) app_toggle_favorite(app, app->tracklist_sel); /* Issue #18 */
             break;
         case INPUT_B:
         case INPUT_X:
@@ -869,7 +958,7 @@ static void adjust_setting(app_t *app, int direction) {
         /* Player画面の再生コンテキストも同じフィルタで作り直す
          * (Issue #47。旧・P9)。ディレクトリは変わらないので
          * force_rescan=1 が必須。 */
-        if (app->player_path[0]) app_sync_playctx(app, app->player_path, 1);
+        app_resync_playctx(app);
     }
 }
 
@@ -936,7 +1025,7 @@ static void app_reset_settings(app_t *app) {
      * Browser/再生コンテキストを作り直す。頻繁な操作ではないので、実際に
      * 変わったかどうかは問わず常に再走査する。 */
     browser_open_dir(&app->browser, app->browser.cwd, app->cfg->show_all_files);
-    if (app->player_path[0]) app_sync_playctx(app, app->player_path, 1);
+    app_resync_playctx(app);
     set_status(app, "Settings reset to defaults");
 }
 
@@ -1195,7 +1284,8 @@ static const char *tracklist_item_text(void *ctx, int index) {
     app_t *app = (app_t *)ctx;
     static char buf[300];
     const playlist_entry_t *e = &app->pl->entries[index];
-    snprintf(buf, sizeof(buf), "%3d. %s", index + 1, e->title);
+    snprintf(buf, sizeof(buf), "%3d. %s%s", index + 1,
+             app_entry_is_favorite(app, index) ? "\xE2\x98\x85 " : "", e->title);
     return buf;
 }
 
@@ -1272,7 +1362,7 @@ static void draw_browser(app_t *app) {
                  &app->browser.scroll, browser_item_text, NULL, app);
 
     ui_footer_t ftr = {
-        .line1 = "A:Open  B:Up  Start:Menu",
+        .line1 = "A:Open  B:Up  Y:Favorites  Start:Menu",
         .line2 = "<>:Page  Start+Select:Quit",
         .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
     };
@@ -1315,7 +1405,12 @@ static void draw_player(app_t *app) {
      * シークバーと同じ行に収めた(下記)。曲名は見切れやすいという
      * フィードバックを受け、[ui] title_scroll(既定on)なら横スクロール、
      * offなら従来どおり "..." 省略で表示する。 */
+    char title_buf[320];
     const char *title = e ? e->title : "(no track)";
+    if (e && app_entry_is_favorite(app, app->player.current_entry)) {
+        snprintf(title_buf, sizeof(title_buf), "\xE2\x98\x85 %s", e->title); /* Issue #18 */
+        title = title_buf;
+    }
     /* Issue #7: バッテリーは曲名の行にだけ食い込ませる(以降の行は
      * タイトル行より下から始まるので content_w のまま)。 */
     int bat_w = draw_battery(app, x + content_w, y, ui_glyph_size(ui, UI_TEXT_TITLE));
@@ -1330,8 +1425,9 @@ static void draw_player(app_t *app) {
     /* Issue #47: ゲーム名・作者/著作権のどちらか(または両方)が空の
      * ヘッダしか持たないファイル(素のGBS/NSF等)で、空行が居座って
      * 波形側の余白を無駄に食わないよう、無い行は描かず詰める。 */
-    if (app->pl && app->pl->game && app->pl->game[0]) {
-        ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, app->pl->game);
+    const char *game = (app->pl && e) ? playlist_game_name(app->pl, e->source_index) : "";
+    if (game[0]) {
+        ui_text_clipped(ui, x, y, content_w, UI_TEXT_BODY, dim, game);
         y += ui->metrics.line_h;
     }
 
@@ -1467,7 +1563,7 @@ static void draw_player(app_t *app) {
     ui_footer_t ftr = {
         /* Issue #47: Up/Downはファイル一覧UIの撤去に伴い「同ディレクトリの
          * 前/次ファイル」へ転用した(app_player_step_file())。 */
-        .line1 = "<>:Track  ^v:File  Select:Pause  X:Tracks  Start:Settings",
+        .line1 = "<>:Track  ^v:File  Select:Pause  A:Fav  X:Tracks  Start:Settings",
         .line2 = footer_line2,
         .line1_color = fg, .line2_color = accent, .bar_color = ui_color(ui, THEME_ROLE_PANEL),
     };
@@ -1495,7 +1591,9 @@ static void draw_tracklist(app_t *app) {
         } else if (app->pl->source_count > 0) {
             title = path_leaf(app->pl->sources[0].display_path);
         }
-        if (app->pl->source_count > 0) subtitle = app->pl->sources[0].display_path;
+        if (app->pl->source_count > 0 && !app->pl->is_favorites) {
+            subtitle = app->pl->sources[0].display_path;
+        }
     }
     char counter[32];
     if (app->pl && app->pl->entry_count > 0) {
@@ -1517,7 +1615,7 @@ static void draw_tracklist(app_t *app) {
     }
 
     ui_footer_t ftr = {
-        .line1 = "A:Play  B/X:Back", .line2 = "Start+Select:Quit",
+        .line1 = "A:Play  Y:Fav  B/X:Back", .line2 = "Start+Select:Quit",
         .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
     };
     ui_draw_footer(ui, &ftr);
@@ -1874,7 +1972,9 @@ static int app_try_resume(app_t *app) {
     /* Browserをファイルの場所へ合わせておく(Bで戻ったときの一貫性。
      * restore_last_path()自体はディレクトリ/ファイルの両対応で、
      * 失敗してもここでは無視してよい: 次のapp_open_path()の成否だけを見る)。 */
-    restore_last_path(app, app->cfg->resume_path);
+    if (!is_favorites_path(app, app->cfg->resume_path)) {
+        restore_last_path(app, app->cfg->resume_path);
+    }
 
     app_open_path(app, app->cfg->resume_path);
     if (app->screen != SCREEN_PLAYER || !app->pl) return 0; /* 失敗 */
@@ -1900,6 +2000,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     memset(&app, 0, sizeof(app));
     app.cfg = cfg; /* コピーしない。app_t/player_t は常にこの1つを参照する (P6) */
     app.config_path = opt->config_path;
+    app.favorites_path = opt->favorites_path;
     app.running = 1;
     app.screen = SCREEN_BROWSER;
     app.battery_low_pct = opt->battery_low_pct;
@@ -1915,6 +2016,12 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
         input_shutdown(&app.input);
         ui_shutdown(&app.ui);
         return 1;
+    }
+
+    /* Issue #18: ui_init/player_init が失敗する経路より後で読む
+     * (以降の早期returnは favorites_free() を呼ぶ)。 */
+    if (app.favorites_path && favorites_load(&app.fav, app.favorites_path) != 0) {
+        LOG_WARN("お気に入りを読み込めませんでした: %s", app.favorites_path);
     }
 
     /* 起動時の開始位置。優先順(Issue #47でstart_mode/start_folderを追加):
@@ -1962,6 +2069,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
             player_shutdown(&app.player);
             browser_free(&app.browser);
             playctx_free(&app.playctx);
+            favorites_free(&app.fav);
             browser_free(&app.folder_pick);
             input_shutdown(&app.input);
             ui_shutdown(&app.ui);
@@ -2035,6 +2143,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     if (app.pl) playlist_free(app.pl);
     browser_free(&app.browser);
     playctx_free(&app.playctx);
+    favorites_free(&app.fav);
     browser_free(&app.folder_pick);
     player_shutdown(&app.player);
     input_shutdown(&app.input);

@@ -221,12 +221,16 @@ int playlist_fade_start_ms(int length_ms, const mugbs_config_t *cfg) {
 /* fs_path と zip_entry のどちらか一方だけを指定する(排他)。
  * zip由来のソースは zip_entry (zip内のエントリ名) を渡し、fs_path は NULL にする。 */
 static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path, char *zip_entry,
-                          char *m3u_text, size_t m3u_len) {
+                          char *m3u_text, size_t m3u_len, const char *container,
+                          archive_t *archive) {
     pl->sources = realloc(pl->sources, sizeof(*pl->sources) * (size_t)(pl->source_count + 1));
     playlist_source_t *s = &pl->sources[pl->source_count];
     s->display_path = display_path;
     s->fs_path = fs_path;
     s->zip_entry = zip_entry;
+    s->container = dup_str(container);
+    s->archive = archive; /* 借用。所有は pl->archives[] (pl_adopt_archive()) */
+    s->game = dup_str("");
     s->m3u_text = m3u_text;
     s->m3u_len = m3u_len;
     s->author = dup_str("");
@@ -234,6 +238,32 @@ static int pl_add_source(playlist_t *pl, char *display_path, char *fs_path, char
     s->system = dup_str("");
     s->effects_supported = 1; /* Issue #43: pl_scan_source()がSPCなら0へ差し替える */
     return pl->source_count++;
+}
+
+/* ar の所有権を pl に移す(playlist_free()で閉じる)。失敗時は ar を閉じて-1。 */
+static int pl_adopt_archive(playlist_t *pl, archive_t *ar) {
+    archive_t **grown = realloc(pl->archives, sizeof(*grown) * (size_t)(pl->archive_count + 1));
+    if (!grown) {
+        archive_close(ar);
+        return -1;
+    }
+    pl->archives = grown;
+    pl->archives[pl->archive_count++] = ar;
+    return 0;
+}
+
+static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t *cfg);
+
+/* ソースを追加し、pl->defer_scan が立っていなければそのままスキャンする。
+ * 戻り値はスキャンの成否(0=成功)。defer_scan 中は常に0
+ * (スキャンは playlist_open_favorites() が必要なソースにだけ後で行う)。 */
+static int pl_add_scan(playlist_t *pl, char *display_path, char *fs_path, char *zip_entry,
+                        char *m3u_text, size_t m3u_len, const char *container,
+                        archive_t *archive, const mugbs_config_t *cfg) {
+    int idx = pl_add_source(pl, display_path, fs_path, zip_entry, m3u_text, m3u_len,
+                             container, archive);
+    if (pl->defer_scan) return 0;
+    return pl_scan_source(pl, idx, cfg);
 }
 
 /* source_index の指すファイルを実際に開き、gme_track_count() 分だけ
@@ -248,14 +278,14 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
     gme_err_t err;
 
     if (src->zip_entry) {
-        int idx = archive_find(pl->archive, src->zip_entry);
+        int idx = archive_find(src->archive, src->zip_entry);
         if (idx < 0) {
             LOG_WARN("zip内にファイルが見つかりません: %s", src->zip_entry);
             return -1;
         }
         void *data = NULL;
         size_t size = 0;
-        if (archive_extract(pl->archive, idx, &data, &size) != 0) {
+        if (archive_extract(src->archive, idx, &data, &size) != 0) {
             return -1;
         }
         err = gme_open_data(data, (long)size, &emu, cfg->sample_rate);
@@ -328,6 +358,10 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
                 free(pl->game);
                 pl->game = dup_meta(info->game);
             }
+            if (!src->game[0] && info->game[0]) {
+                free(src->game);
+                src->game = dup_meta(info->game);
+            }
             /* ソース単位のメタデータ(SPEC 6.1)は最初に取得できたトラックの
              * ものを採用する。GBSの著作権・作者はファイル全体で共通なのが
              * 通例のため、トラックごとに上書きし続ける必要はない。 */
@@ -356,7 +390,8 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
  * 参照ファイルが1種類のみなら、セグメントは自動的に1つになる
  * (SPEC 5.2-2 の「推奨パス」に一致。特別扱いの分岐は不要)。 */
 static int build_from_m3u_text(playlist_t *pl, const char *text, size_t len,
-                                const char *base_dir, const mugbs_config_t *cfg) {
+                                const char *base_dir, const char *container,
+                                const mugbs_config_t *cfg) {
     m3u_segment_t *segs = NULL;
     int seg_count = 0;
     if (m3u_split_segments(text, len, &segs, &seg_count) != 0) {
@@ -377,8 +412,8 @@ static int build_from_m3u_text(playlist_t *pl, const char *text, size_t len,
         }
 
         char *m3u_copy = dup_len(seg->text, seg->text_len);
-        int source_index = pl_add_source(pl, dup_str(resolved), resolved, NULL, m3u_copy, seg->text_len);
-        if (pl_scan_source(pl, source_index, cfg) == 0) {
+        if (pl_add_scan(pl, dup_str(resolved), resolved, NULL, m3u_copy, seg->text_len,
+                         container, NULL, cfg) == 0) {
             ok_any = 1;
         }
     }
@@ -391,7 +426,8 @@ static int build_from_m3u_text(playlist_t *pl, const char *text, size_t len,
  * パス結合ではなく archive_find() (パス区切り・大小文字の揺れを吸収) で行う。
  * (SPEC 5.3) */
 static int build_from_m3u_text_zip(playlist_t *pl, const char *text, size_t len,
-                                    const char *zip_path, const mugbs_config_t *cfg) {
+                                    const char *zip_path, archive_t *ar,
+                                    const mugbs_config_t *cfg) {
     m3u_segment_t *segs = NULL;
     int seg_count = 0;
     if (m3u_split_segments(text, len, &segs, &seg_count) != 0) {
@@ -403,7 +439,7 @@ static int build_from_m3u_text_zip(playlist_t *pl, const char *text, size_t len,
     for (int i = 0; i < seg_count; i++) {
         m3u_segment_t *seg = &segs[i];
 
-        if (archive_find(pl->archive, seg->filename) < 0) {
+        if (archive_find(ar, seg->filename) < 0) {
             /* T-13相当: zip内にも参照先が見つからないエントリはスキップする。 */
             LOG_WARN("m3uが参照するファイルがzip内に見つかりません。スキップします: %s",
                       seg->filename);
@@ -413,9 +449,8 @@ static int build_from_m3u_text_zip(playlist_t *pl, const char *text, size_t len,
         char display[600];
         snprintf(display, sizeof(display), "%s:%s", zip_path, seg->filename);
         char *m3u_copy = dup_len(seg->text, seg->text_len);
-        int source_index = pl_add_source(pl, dup_str(display), NULL, dup_str(seg->filename),
-                                          m3u_copy, seg->text_len);
-        if (pl_scan_source(pl, source_index, cfg) == 0) {
+        if (pl_add_scan(pl, dup_str(display), NULL, dup_str(seg->filename), m3u_copy,
+                         seg->text_len, zip_path, ar, cfg) == 0) {
             ok_any = 1;
         }
     }
@@ -438,7 +473,7 @@ static int playlist_open_m3u(playlist_t *pl, const char *path, const mugbs_confi
     }
 
     char *dir = dirname_dup(path);
-    int rc = build_from_m3u_text(pl, text, len, dir, cfg);
+    int rc = build_from_m3u_text(pl, text, len, dir, path, cfg);
     free(dir);
     free(text);
     return rc;
@@ -468,7 +503,7 @@ static int playlist_open_music_file(playlist_t *pl, const char *path, const mugb
         char *text = NULL;
         size_t len = 0;
         if (read_file(sidecar, &text, &len) == 0) {
-            rc = build_from_m3u_text(pl, text, len, dir, cfg);
+            rc = build_from_m3u_text(pl, text, len, dir, path, cfg);
             free(text);
         } else {
             LOG_WARN("m3uの読み込みに失敗しました: %s。m3u無しで続行します", sidecar);
@@ -480,8 +515,7 @@ static int playlist_open_music_file(playlist_t *pl, const char *path, const mugb
     if (rc == -2) {
         /* m3u無し: 単体ファイルとして開き、gme_track_count() で全トラックを
          * 自動命名して列挙する (SPEC 5.2-3)。 */
-        int source_index = pl_add_source(pl, dup_str(path), dup_str(path), NULL, NULL, 0);
-        rc = pl_scan_source(pl, source_index, cfg);
+        rc = pl_add_scan(pl, dup_str(path), dup_str(path), NULL, NULL, 0, path, NULL, cfg);
     }
 
     return rc;
@@ -524,7 +558,9 @@ static int playlist_open_zip(playlist_t *pl, const char *path, const mugbs_confi
     if (archive_open(path, &ar) != 0) {
         return -1;
     }
-    pl->archive = ar;
+    /* 以後 ar は pl が所有する(失敗経路でも playlist_free() が閉じる)。
+     * 確保失敗時 pl_adopt_archive() は ar を閉じて-1を返す。 */
+    if (pl_adopt_archive(pl, ar) != 0) return -1;
 
     archive_entry_t *aentries = NULL;
     int acount = 0;
@@ -570,7 +606,7 @@ static int playlist_open_zip(playlist_t *pl, const char *path, const mugbs_confi
             archive_free_entries(aentries, acount);
             return -1;
         }
-        rc = build_from_m3u_text_zip(pl, text, len, path, cfg);
+        rc = build_from_m3u_text_zip(pl, text, len, path, ar, cfg);
         free(text);
     } else {
         free(m3us);
@@ -579,9 +615,10 @@ static int playlist_open_zip(playlist_t *pl, const char *path, const mugbs_confi
             if (!aentries[i].is_music) continue;
             char display[600];
             snprintf(display, sizeof(display), "%s:%s", path, aentries[i].name);
-            int source_index = pl_add_source(pl, dup_str(display), NULL,
-                                              dup_str(aentries[i].name), NULL, 0);
-            if (pl_scan_source(pl, source_index, cfg) == 0) rc = 0;
+            if (pl_add_scan(pl, dup_str(display), NULL, dup_str(aentries[i].name), NULL, 0,
+                             path, ar, cfg) == 0) {
+                rc = 0;
+            }
         }
         if (rc != 0) {
             LOG_ERR("zip内に再生可能な音楽ファイルがありません: %s", path);
@@ -592,20 +629,25 @@ static int playlist_open_zip(playlist_t *pl, const char *path, const mugbs_confi
     return rc;
 }
 
+/* path の種別で open ロジックを選ぶ。playlist_open() とお気に入りの
+ * container 再構築(playlist_open_favorites())が共有する。 */
+static int open_container(playlist_t *pl, const char *path, const mugbs_config_t *cfg) {
+    if (ends_with_ci(path, ".zip")) {
+        return playlist_open_zip(pl, path, cfg);
+    }
+    if (ends_with_ci(path, ".m3u")) {
+        return playlist_open_m3u(pl, path, cfg);
+    }
+    /* .gbs/.gb/.nsf/.nsfe いずれもここに来る。単体ファイル + 任意の
+     * 同名サイドカーm3u、という扱いは形式によらず共通 (SPEC 5.2-3/4)。 */
+    return playlist_open_music_file(pl, path, cfg);
+}
+
 int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **out) {
     playlist_t *pl = calloc(1, sizeof(*pl));
     pl->game = dup_str("");
 
-    int rc;
-    if (ends_with_ci(path, ".zip")) {
-        rc = playlist_open_zip(pl, path, config);
-    } else if (ends_with_ci(path, ".m3u")) {
-        rc = playlist_open_m3u(pl, path, config);
-    } else {
-        /* .gbs/.gb/.nsf/.nsfe いずれもここに来る。単体ファイル + 任意の
-         * 同名サイドカーm3u、という扱いは形式によらず共通 (SPEC 5.2-3/4)。 */
-        rc = playlist_open_music_file(pl, path, config);
-    }
+    int rc = open_container(pl, path, config);
 
     /* Issue #21: スキャンはall[]へ追記されただけなので、可視ビュー
      * entries[]をここで初めて作る(keep_source/keep_trackは無し。
@@ -624,12 +666,179 @@ int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **o
     return 0;
 }
 
+/* ---- お気に入り (Issue #18) ------------------------------------------- */
+
+/* 同じ container 内で同じファイルを参照するソースは、m3uが同じファイルを
+ * 非連続に複数回指すと2つ以上できうる(m3u.cはファイル名が変わるたびに
+ * セグメントを分ける)。track_index はセグメントごとのm3uを適用した後の
+ * 添字なので、同じキーでは区別できない。2つ目以降には "\x1f<N>" を足して
+ * 一意にする(ファイル名に現れない制御文字なので実在名と衝突しない)。 */
+int playlist_source_key(const playlist_t *pl, int source_index, char *out, size_t out_size) {
+    if (!pl || source_index < 0 || source_index >= pl->source_count || out_size == 0) return -1;
+    const playlist_source_t *s = &pl->sources[source_index];
+    const char *base = s->zip_entry ? s->zip_entry : s->fs_path;
+    if (!base) return -1;
+
+    int occurrence = 1;
+    for (int i = 0; i < source_index; i++) {
+        const char *b = pl->sources[i].zip_entry ? pl->sources[i].zip_entry : pl->sources[i].fs_path;
+        if (b && strcmp(b, base) == 0) occurrence++;
+    }
+    int n = occurrence == 1 ? snprintf(out, out_size, "%s", base)
+                            : snprintf(out, out_size, "%s\x1f%d", base, occurrence);
+    return (n < 0 || (size_t)n >= out_size) ? -1 : 0;
+}
+
+static int find_source_by_key(const playlist_t *pl, const char *key) {
+    char buf[MUGBS_PATH_MAX + 16];
+    for (int i = 0; i < pl->source_count; i++) {
+        if (playlist_source_key(pl, i, buf, sizeof(buf)) == 0 && strcmp(buf, key) == 0) return i;
+    }
+    return -1;
+}
+
+int playlist_open_favorites(const favorites_t *fav, const mugbs_config_t *config,
+                            playlist_t **out) {
+    if (!fav || fav->count <= 0) {
+        LOG_ERR("お気に入りが空です");
+        return -1;
+    }
+    const int n = fav->count;
+
+    playlist_t *pl = calloc(1, sizeof(*pl));
+    playlist_entry_t *res = calloc((size_t)n, sizeof(*res)); /* お気に入りと同じ並び。title==NULLは未解決 */
+    int *tmp_src = malloc(sizeof(int) * (size_t)n);          /* 各項目の、tmp上のソース添字 */
+    char *done = calloc((size_t)n, 1);                        /* containerごとの処理済み */
+    if (!pl || !res || !tmp_src || !done) {
+        free(pl);
+        free(res);
+        free(tmp_src);
+        free(done);
+        return -1;
+    }
+    pl->game = dup_str("Favorites");
+    pl->is_favorites = 1;
+
+    for (int i = 0; i < n; i++) {
+        if (done[i]) continue;
+        const char *container = fav->items[i].container;
+
+        /* container を通常の再生経路で開き直す。ここではソースを並べるだけで
+         * スキャンしない(必要なソースだけを後でスキャンする。大きなzipパックの
+         * 全曲を毎回スキャンしないため)。 */
+        playlist_t *tmp = calloc(1, sizeof(*tmp));
+        tmp->game = dup_str("");
+        tmp->defer_scan = 1;
+        if (open_container(tmp, container, config) != 0) {
+            LOG_WARN("お気に入りの参照先を開けません。スキップします: %s", container);
+        }
+
+        char *need = calloc((size_t)(tmp->source_count > 0 ? tmp->source_count : 1), 1);
+        for (int j = i; j < n; j++) {
+            if (done[j] || strcmp(fav->items[j].container, container) != 0) continue;
+            done[j] = 1;
+            tmp_src[j] = find_source_by_key(tmp, fav->items[j].source_key);
+            if (tmp_src[j] < 0) {
+                LOG_WARN("お気に入りの参照先が見つかりません。スキップします: %s (%s)",
+                          fav->items[j].source_key, container);
+                continue;
+            }
+            need[tmp_src[j]] = 1;
+        }
+
+        tmp->defer_scan = 0;
+        for (int s = 0; s < tmp->source_count; s++) {
+            if (need[s] && pl_scan_source(tmp, s, config) != 0) need[s] = 0;
+        }
+
+        /* 使うソースを pl へ移す(tmp側の枠はゼロ化。playlist_free()はNULLを許す)。 */
+        int *newidx = malloc(sizeof(int) * (size_t)(tmp->source_count > 0 ? tmp->source_count : 1));
+        for (int s = 0; s < tmp->source_count; s++) {
+            newidx[s] = -1;
+            if (!need[s]) continue;
+            pl->sources = realloc(pl->sources, sizeof(*pl->sources) * (size_t)(pl->source_count + 1));
+            pl->sources[pl->source_count] = tmp->sources[s];
+            memset(&tmp->sources[s], 0, sizeof(tmp->sources[s]));
+            newidx[s] = pl->source_count++;
+        }
+
+        for (int j = i; j < n; j++) {
+            if (strcmp(fav->items[j].container, container) != 0 || tmp_src[j] < 0) continue;
+            int ns = newidx[tmp_src[j]];
+            if (ns < 0) continue; /* スキャン失敗 */
+            const playlist_entry_t *found = NULL;
+            for (int k = 0; k < tmp->all_count; k++) {
+                if (tmp->all[k].source_index == tmp_src[j] &&
+                    tmp->all[k].track_index == fav->items[j].track_index) {
+                    found = &tmp->all[k];
+                    break;
+                }
+            }
+            if (!found) {
+                LOG_WARN("お気に入りのトラックが見つかりません。スキップします: %s #%d",
+                          fav->items[j].source_key, fav->items[j].track_index);
+                continue;
+            }
+            res[j] = *found;
+            res[j].title = dup_str(found->title);
+            res[j].source_index = ns;
+        }
+
+        /* 移したソースが借用しているzipの所有権も pl へ移す。 */
+        for (int a = 0; a < tmp->archive_count; a++) {
+            int used = 0;
+            for (int s = 0; s < pl->source_count && !used; s++) {
+                used = pl->sources[s].archive == tmp->archives[a];
+            }
+            if (used) {
+                if (pl_adopt_archive(pl, tmp->archives[a]) != 0) {
+                    LOG_ERR("お気に入り: メモリ確保に失敗しました");
+                }
+                tmp->archives[a] = NULL;
+            }
+        }
+        free(newidx);
+        free(need);
+        playlist_free(tmp);
+    }
+
+    /* お気に入りの並びで all[] を作る。 */
+    for (int j = 0; j < n; j++) {
+        if (!res[j].title) continue;
+        pl->all = realloc(pl->all, sizeof(*pl->all) * (size_t)(pl->all_count + 1));
+        pl->all[pl->all_count++] = res[j];
+    }
+    free(res);
+    free(tmp_src);
+    free(done);
+
+    playlist_apply_config(pl, config, -1, -1);
+
+    if (pl->entry_count == 0) {
+        LOG_ERR("お気に入りに再生可能なトラックがありません");
+        playlist_free(pl);
+        return -1;
+    }
+    *out = pl;
+    return 0;
+}
+
+const char *playlist_game_name(const playlist_t *pl, int source_index) {
+    if (!pl) return "";
+    if (pl->is_favorites && source_index >= 0 && source_index < pl->source_count) {
+        return pl->sources[source_index].game ? pl->sources[source_index].game : "";
+    }
+    return pl->game ? pl->game : "";
+}
+
 void playlist_free(playlist_t *pl) {
     if (!pl) return;
     for (int i = 0; i < pl->source_count; i++) {
         free(pl->sources[i].display_path);
         free(pl->sources[i].fs_path);
         free(pl->sources[i].zip_entry);
+        free(pl->sources[i].container);
+        free(pl->sources[i].game);
         free(pl->sources[i].m3u_text);
         free(pl->sources[i].author);
         free(pl->sources[i].copyright);
@@ -645,6 +854,9 @@ void playlist_free(playlist_t *pl) {
     free(pl->all);
     free(pl->entries);
     free(pl->game);
-    archive_close(pl->archive); /* NULLなら何もしない */
+    for (int i = 0; i < pl->archive_count; i++) {
+        archive_close(pl->archives[i]); /* NULLなら何もしない */
+    }
+    free(pl->archives);
     free(pl);
 }

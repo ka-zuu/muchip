@@ -18,6 +18,20 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
 `## vX.Y.Z - YYYY-MM-DD` へ書き換える。`CMakeLists.txt` の
 `project(muchip VERSION ...)` の更新と同じコミットで行うこと。
 
+## Unreleased
+
+### 機能追加
+
+- お気に入り（固定の1本）を追加した（F-33, Issue #18）。Player画面の
+  `A` で再生中のトラックを、TrackList画面の `Y` で選択中のトラックを
+  お気に入りへ追加/削除できる（曲名の前に★が付く）。Browser画面の `Y` で
+  お気に入りを1本のプレイリストとして開き、TrackList・リピート・
+  シャッフル・Resume（Start with: Last played）がそのまま使える。
+  単体ファイル・サイドカーm3u・m3u・zip内（zophar配布パック等）の
+  トラックを、フォルダをまたいで混在させられる。`config.ini` と同じ
+  ディレクトリの `favorites.txt` に保存する。お気に入り再生中はPlayerの
+  UP/DOWN（同ディレクトリのファイル送り）は無効になる。
+
 ## v1.8.0 - 2026-10-04
 
 ### 対応フォーマット
