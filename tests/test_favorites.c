@@ -115,6 +115,52 @@ static int test_load_skips_bad_lines_and_duplicates(void) {
     return 0;
 }
 
+/* Issue #51: 履歴は新しい順・先頭移動・重複なし・上限で古い順に捨てる。 */
+static int test_record_history(void) {
+    favorites_t h;
+    memset(&h, 0, sizeof(h));
+
+    CHECK(favorites_record(&h, "/m/a", "/m/a", 0, "A0", 3) == 0);
+    CHECK(favorites_record(&h, "/m/a", "/m/a", 1, "A1", 3) == 0);
+    CHECK(favorites_record(&h, "/m/b", "/m/b", 0, "B0", 3) == 0);
+    CHECK(h.count == 3);
+    CHECK_STREQ(h.items[0].title, "B0"); /* 新しいものが先頭 */
+    CHECK_STREQ(h.items[1].title, "A1");
+    CHECK_STREQ(h.items[2].title, "A0");
+
+    /* 既存の曲は先頭へ移り、重複は増えない */
+    CHECK(favorites_record(&h, "/m/a", "/m/a", 0, "A0", 3) == 0);
+    CHECK(h.count == 3);
+    CHECK_STREQ(h.items[0].title, "A0");
+    CHECK_STREQ(h.items[1].title, "B0");
+    CHECK_STREQ(h.items[2].title, "A1");
+    /* 既に先頭なら位置は変わらず、titleだけ最新になる */
+    CHECK(favorites_record(&h, "/m/a", "/m/a", 0, "A0 renamed\t!", 3) == 0);
+    CHECK(h.count == 3);
+    CHECK_STREQ(h.items[0].title, "A0 renamed !");
+
+    /* 上限を超えたら末尾(最も古い)から捨てる */
+    CHECK(favorites_record(&h, "/m/c", "/m/c", 0, "C0", 3) == 0);
+    CHECK(h.count == 3);
+    CHECK_STREQ(h.items[0].title, "C0");
+    CHECK_STREQ(h.items[2].title, "B0");
+    CHECK(favorites_find(&h, "/m/a", "/m/a", 1) == -1); /* A1が押し出された */
+
+    /* 不正な同定キー・上限0は拒否し、変更しない */
+    CHECK(favorites_record(&h, "/m/x\ty", "k", 0, "t", 3) == -1);
+    CHECK(favorites_record(&h, "/m/x", "k", 0, "t", 0) == -1);
+    CHECK(h.count == 3);
+
+    favorites_trim(&h, 1);
+    CHECK(h.count == 1);
+    CHECK_STREQ(h.items[0].title, "C0");
+    favorites_trim(&h, 5); /* 増えない */
+    CHECK(h.count == 1);
+
+    favorites_free(&h);
+    return 0;
+}
+
 static int test_resolve_path(void) {
     char out[256];
     unsetenv("MUCHIP_FAVORITES");
@@ -131,6 +177,15 @@ static int test_resolve_path(void) {
     favorites_resolve_path(out, sizeof(out), "/mnt/app/config.ini");
     CHECK_STREQ(out, "/tmp/x/fav.txt");
     unsetenv("MUCHIP_FAVORITES");
+
+    /* 履歴(Issue #51): 同じ規則で history.txt / MUCHIP_HISTORY */
+    unsetenv("MUCHIP_HISTORY");
+    history_resolve_path(out, sizeof(out), "/mnt/app/config.ini");
+    CHECK_STREQ(out, "/mnt/app/history.txt");
+    setenv("MUCHIP_HISTORY", "/tmp/x/h.txt", 1);
+    history_resolve_path(out, sizeof(out), "/mnt/app/config.ini");
+    CHECK_STREQ(out, "/tmp/x/h.txt");
+    unsetenv("MUCHIP_HISTORY");
     return 0;
 }
 
@@ -140,6 +195,7 @@ int main(void) {
     if (test_save_load_roundtrip()) return 1;
     if (test_load_missing_file_is_empty()) return 1;
     if (test_load_skips_bad_lines_and_duplicates()) return 1;
+    if (test_record_history()) return 1;
     if (test_resolve_path()) return 1;
     printf("test_favorites: OK\n");
     return 0;

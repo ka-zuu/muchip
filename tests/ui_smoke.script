@@ -182,6 +182,15 @@ B       # TrackList -> Player
 A       # お気に入り再生中でも追加できる（再生中トラックを再追加）
 A       # もう一度で外す -> 空
 B       # Player -> Browser
+# Issue #51 (再生履歴)。MUCHIP_HISTORY_MIN_MS=0 なので、ここまでに再生した
+# トラックは再生開始直後にhistory.txtへ記録されている(スクリプトは数百msで
+# 終わり、既定の5秒では記録されないため)。履歴は前回実行の残りに関わらず
+# 今回の実行で必ず1件以上になる。
+X       # Browser: 再生履歴を新しい順の1本のプレイリストとして開く -> Player
+RIGHT   # 履歴内の次トラック
+X       # Player -> TrackList（履歴の一覧）
+B       # TrackList -> Player
+B       # Player -> Browser
 START   # Browser -> Settings (SPEC 6.3からの逸脱。docs/design-notes.md参照)
 B       # Settings -> Browser
 QUIT

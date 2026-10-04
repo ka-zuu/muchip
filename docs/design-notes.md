@@ -168,7 +168,7 @@ GYM/VGM/SPCと拡張m3uのループ欄だけで、**GBS/NSFのヘッダにはル
 するが、先頭から末尾への回り込み（prev方向）はしない（直前まで見えて
 いた並びを壊さないため）。`REPEAT_ONE` はシャッフルより優先する。
 
-## お気に入り
+## お気に入りと再生履歴
 
 **固定の1本だけ**（命名や複数リストは持たない）。携帯機には文字入力手段が
 無く、命名UIが機能の大半を占めてしまうため。`favorites.txt` に1行1曲・
@@ -216,6 +216,25 @@ UP/DOWN（同ディレクトリのファイル送り）が `favorites.txt` の�
 曲が突然消えて再生が止まるのを避ける。次に開き直したときに反映される。
 トグルは `A`（Player）/`Y`（TrackList）、開くのは `Y`（Browser）。いずれも
 従来未使用のボタン。★/☆ は美咲フォント（U+2605/U+2606）で描ける。
+
+**再生履歴（Issue #51）はお気に入りと同じ型・同じ仕組み**。`favorites_t` を
+新しい順（`items[0]`が最新）で持ち、`history.txt`（`MUCHIP_HISTORY`で上書き）
+に同じ形式で保存し、同じ `playlist_open_favorites()`（表示名 "History"）で
+開く。仮想リストは `favorites_path`/`history_path` をパスとして
+`app_open_path()` に渡すと開ける（`virtual_list()`）。記録は
+`app_update_history()` が毎フレーム見て、**再生中のトラックが5秒以上
+再生されたら1回だけ** `favorites_record()`（先頭へ移動・重複なし・50件で
+末尾を捨てる）する。5秒としたのはスキップ連打で履歴が埋まらないため。
+「記録済み」は `pl_gen`（`app_open_path()`成功ごとの世代）と `current_entry`
+の組で判定し、リピートで同じ曲が回っても二重に記録しない。一時停止中は
+再生位置が進まないので `PLAYER_PLAYING` のときだけ見る。CTestのUIスモークは
+数百msで終わるため、環境変数 `MUCHIP_HISTORY_MIN_MS=0` でしきい値を外す
+（`MUCHIP_BATTERY_FAKE` と同じテスト用フック）。
+
+**履歴再生中は Resume の対象にしない**: 履歴は再生のたびに先頭へ並べ替わり、
+`resume_source`/`resume_track`（プレイリスト上の添字）が次回起動時に同じ曲を
+指さなくなる。`app_capture_resume()` は履歴再生中は前回の値を残す。
+お気に入りは追加/削除でしか並びが変わらないので対象に含める。
 
 ## UI・レイアウト
 

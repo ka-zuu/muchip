@@ -48,6 +48,11 @@ typedef struct {
                                     1本のプレイリストとして開く。NULLなら永続化しない
                                     (メモリ上でのみ保持。Browserからも開けない)。 */
 
+    const char *history_path;   /* Issue #51: 再生履歴(history.txt)の保存先。NULLなら
+                                    永続化しない(メモリ上でのみ保持し、Browserからも開けない)。 */
+    int history_min_ms;         /* Issue #51: このミリ秒以上再生したトラックだけ履歴に記録する。
+                                    main.c が決める(既定5000、MUCHIP_HISTORY_MIN_MSで上書き)。 */
+
     int battery_low_pct; /* Issue #7: [ui] battery_show = low での「低い」しきい値(%)。
                              main.c が battery_low_threshold_from_env() で決める
                              (muOS の mux_launch.sh が export する

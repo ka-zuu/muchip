@@ -24,6 +24,10 @@ typedef struct {
     char *title;       /* malloc'd。表示用のキャッシュ(同定には使わない) */
 } favorite_t;
 
+/* Issue #51: 再生履歴(history.txt)も同じ型・同じファイル形式で持つ。
+ * 履歴は新しい順(items[0]が最新)、お気に入りは追加順。 */
+#define HISTORY_MAX 50
+
 typedef struct {
     favorite_t *items; /* malloc'd配列。所有権はこの構造体にあり、favorites_free()で解放する */
     int count;
@@ -34,6 +38,10 @@ typedef struct {
  * カレントディレクトリ)。テストが config を共有しても互いのお気に入りを
  * 壊さないよう、config_resolve_path() と同じ形で環境変数の上書きを持つ。 */
 void favorites_resolve_path(char *out, unsigned long out_size, const char *config_path);
+
+/* 再生履歴ファイル(history.txt)の置き場所。favorites_resolve_path() と同じ
+ * 規則で、環境変数は MUCHIP_HISTORY。 */
+void history_resolve_path(char *out, unsigned long out_size, const char *config_path);
 
 /* path を読む。ファイルが無ければ空リストで0を返す(初回起動)。
  * フィールド数や track_index が不正な行は警告して読み飛ばす
@@ -53,6 +61,16 @@ int favorites_find(const favorites_t *fav, const char *container,
  * title のタブ・改行は空白へ置き換えて保持する。 */
 int favorites_toggle(favorites_t *fav, const char *container,
                      const char *source_key, int track_index, const char *title);
+
+/* 履歴向け: 一致する項目があれば先頭へ移動し、無ければ先頭へ追加して、
+ * max 件を超えた分を古い(末尾の)ものから捨てる。title は先頭の項目へ
+ * 最新の値で更新する。失敗(-1)の条件と title の扱いは favorites_toggle() と同じで、
+ * 失敗時 *fav は変わらない。0で成功。 */
+int favorites_record(favorites_t *fav, const char *container, const char *source_key,
+                     int track_index, const char *title, int max);
+
+/* max 件を超えた分を末尾から捨てる(手編集で長くなった履歴ファイル向け)。 */
+void favorites_trim(favorites_t *fav, int max);
 
 void favorites_free(favorites_t *fav);
 

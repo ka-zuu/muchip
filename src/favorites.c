@@ -23,18 +23,29 @@ static void item_free(favorite_t *it) {
     free(it->title);
 }
 
-void favorites_resolve_path(char *out, unsigned long out_size, const char *config_path) {
-    const char *env = getenv("MUCHIP_FAVORITES");
+/* env が設定されていればそれ、無ければ config_path と同じディレクトリの
+ * filename(config_path に '/' が無ければカレントディレクトリ)。 */
+static void resolve_sibling(char *out, unsigned long out_size, const char *config_path,
+                            const char *env_name, const char *filename) {
+    const char *env = getenv(env_name);
     if (env && env[0]) {
         snprintf(out, out_size, "%s", env);
         return;
     }
     const char *slash = config_path ? strrchr(config_path, '/') : NULL;
     if (!slash) {
-        snprintf(out, out_size, "favorites.txt");
+        snprintf(out, out_size, "%s", filename);
         return;
     }
-    snprintf(out, out_size, "%.*s/favorites.txt", (int)(slash - config_path), config_path);
+    snprintf(out, out_size, "%.*s/%s", (int)(slash - config_path), config_path, filename);
+}
+
+void favorites_resolve_path(char *out, unsigned long out_size, const char *config_path) {
+    resolve_sibling(out, out_size, config_path, "MUCHIP_FAVORITES", "favorites.txt");
+}
+
+void history_resolve_path(char *out, unsigned long out_size, const char *config_path) {
+    resolve_sibling(out, out_size, config_path, "MUCHIP_HISTORY", "history.txt");
 }
 
 void favorites_free(favorites_t *fav) {
@@ -183,4 +194,41 @@ int favorites_toggle(favorites_t *fav, const char *container,
         if (*p == '\t' || *p == '\n' || *p == '\r') *p = ' ';
     }
     return 1;
+}
+
+void favorites_trim(favorites_t *fav, int max) {
+    if (max < 0) max = 0;
+    while (fav->count > max) item_free(&fav->items[--fav->count]);
+}
+
+int favorites_record(favorites_t *fav, const char *container, const char *source_key,
+                     int track_index, const char *title, int max) {
+    if (max < 1) return -1;
+    int idx = favorites_find(fav, container, source_key, track_index);
+    if (idx == 0) {
+        /* 既に先頭。title だけ最新にする(失敗しても履歴自体は有効なので無視) */
+        char *t = dup_str(title ? title : "");
+        if (t) {
+            for (char *p = t; *p; p++) {
+                if (*p == '\t' || *p == '\n' || *p == '\r') *p = ' ';
+            }
+            free(fav->items[0].title);
+            fav->items[0].title = t;
+        }
+        return 0;
+    }
+    if (idx > 0) {
+        favorite_t hit = fav->items[idx];
+        memmove(&fav->items[1], &fav->items[0], sizeof(fav->items[0]) * (size_t)idx);
+        fav->items[0] = hit;
+        return 0;
+    }
+
+    /* 新規: 末尾へ追加(favorites_toggle)してから先頭へ回す */
+    if (favorites_toggle(fav, container, source_key, track_index, title) != 1) return -1;
+    favorite_t added = fav->items[fav->count - 1];
+    memmove(&fav->items[1], &fav->items[0], sizeof(fav->items[0]) * (size_t)(fav->count - 1));
+    fav->items[0] = added;
+    favorites_trim(fav, max);
+    return 0;
 }

@@ -57,6 +57,18 @@ typedef struct {
     favorites_t fav;
     const char *favorites_path;
 
+    /* Issue #51: 再生履歴(新しい順・HISTORY_MAX件)。history_path を
+     * app_open_path() に渡すと1本のプレイリストとして開く(お気に入りと同じ
+     * 仮想リスト)。history_min_ms 以上再生したトラックだけ app_update_history()
+     * が記録する。pl_gen は app_open_path() 成功ごとに増やす世代番号で、
+     * hist_gen/hist_entry は「いまの再生を記録済みか」の判定に使う。 */
+    favorites_t hist;
+    const char *history_path;
+    int history_min_ms;
+    int pl_gen;
+    int hist_gen;
+    int hist_entry;
+
     /* Issue #47: Settings画面の"Start folder"(A)で開くディレクトリ専用の
      * フォルダ選択サブ画面(SCREEN_FOLDER_PICK)用。app->browser とは別の
      * 3つ目のインスタンス(Browser/Player中の状態を壊さないため、
@@ -370,20 +382,38 @@ static void app_sync_playctx(app_t *app, const char *opened_path, int force_resc
 
 /* ---- ファイルを開く ---------------------------------------------------- */
 
+/* お気に入り(Issue #18)・再生履歴(Issue #51)は実ファイルではなく、
+ * favorites_path/history_path をパスとして app_open_path() に渡すと開ける
+ * 「仮想リスト」。path がそれなら一覧を返し(*name に表示名)、違えばNULL。 */
+static const favorites_t *virtual_list(const app_t *app, const char *path, const char **name) {
+    if (app->favorites_path && strcmp(path, app->favorites_path) == 0) {
+        *name = "Favorites";
+        return &app->fav;
+    }
+    if (app->history_path && strcmp(path, app->history_path) == 0) {
+        *name = "History";
+        return &app->hist;
+    }
+    return NULL;
+}
+
+static int is_virtual_path(const app_t *app, const char *path) {
+    const char *name;
+    return virtual_list(app, path, &name) != NULL;
+}
+
 /* playlist_open() が失敗しても現在の再生・プレイリストには一切触れない
  * (Browserに留まりエラー表示するだけ。T-12: 壊れたファイルでクラッシュしない)。
  * 成功した場合のみ、既存の再生を止めてから(SPEC 13チェックリスト:
  * gme_open_data の所有権/ロック順序に注意)差し替える。 */
-static int is_favorites_path(const app_t *app, const char *path) {
-    return app->favorites_path && strcmp(path, app->favorites_path) == 0;
-}
-
 static void app_open_path(app_t *app, const char *path) {
-    const int is_fav = is_favorites_path(app, path);
+    const char *list_name = NULL;
+    const favorites_t *list = virtual_list(app, path, &list_name);
+    const int is_virtual = list != NULL;
     playlist_t *new_pl = NULL;
-    if (is_fav ? playlist_open_favorites(&app->fav, app->cfg, &new_pl) != 0
-               : playlist_open(path, app->cfg, &new_pl) != 0) {
-        set_status(app, is_fav ? "Failed to open favorites" : "Failed to open: %s", path);
+    if (is_virtual ? playlist_open_favorites(list, list_name, app->cfg, &new_pl) != 0
+                   : playlist_open(path, app->cfg, &new_pl) != 0) {
+        set_status(app, "Failed to open: %s", is_virtual ? list_name : path);
         return;
     }
 
@@ -399,12 +429,13 @@ static void app_open_path(app_t *app, const char *path) {
         return;
     }
 
-    if (is_fav) {
-        /* Issue #18: お気に入りは「ディレクトリ内のファイル」ではないので、
+    app->pl_gen++; /* Issue #51: 履歴の「記録済み」判定をリセットする */
+    if (is_virtual) {
+        /* Issue #18: お気に入り・履歴は「ディレクトリ内のファイル」ではないので、
          * last_path(Browserの場所)には記録せず、UP/DOWNのファイル送りも
          * 無効にする(playctxを空にする)。Resume用に player_path だけは
-         * favorites_path にしておく(app_capture_resume()が使う)。
-         * path は favorites_path と等しいので長さは常に収まる。 */
+         * そのパスにしておく(app_capture_resume()が使う)。
+         * path は favorites_path/history_path と等しいので長さは常に収まる。 */
         playctx_free(&app->playctx);
         snprintf(app->player_path, sizeof(app->player_path), "%s", path);
     } else {
@@ -448,7 +479,7 @@ static void app_player_step_file(app_t *app, int delta) {
  * 再生コンテキストを作り直す。お気に入り再生中は対象ディレクトリが無い
  * (player_pathがfavorites_path)ので何もしない。 */
 static void app_resync_playctx(app_t *app) {
-    if (!app->player_path[0] || is_favorites_path(app, app->player_path)) return;
+    if (!app->player_path[0] || is_virtual_path(app, app->player_path)) return;
     app_sync_playctx(app, app->player_path, 1);
 }
 
@@ -489,6 +520,43 @@ static void app_toggle_favorite(app_t *app, int entry_idx) {
         return;
     }
     set_status(app, added ? "\xE2\x98\x85 Added to favorites" : "\xE2\x98\x86 Removed from favorites");
+}
+
+/* いま再生中のトラックが history_min_ms 以上再生されていたら履歴の先頭へ記録して
+ * 保存する(Issue #51)。1回の再生につき1度だけ(pl_gen と entry の組で判定)。
+ * 一時停止中は再生位置が進まないので PLAYER_PLAYING のときだけ見る。 */
+static void app_update_history(app_t *app) {
+    if (!app->pl || app->player.state != PLAYER_PLAYING) return;
+    const int cur = app->player.current_entry;
+    if (cur < 0 || cur >= app->pl->entry_count) return;
+    if (app->hist_gen == app->pl_gen && app->hist_entry == cur) return;
+    if (player_tell_ms(&app->player) < app->history_min_ms) return;
+
+    app->hist_gen = app->pl_gen;
+    app->hist_entry = cur;
+
+    const playlist_entry_t *e = &app->pl->entries[cur];
+    const playlist_source_t *src = &app->pl->sources[e->source_index];
+    char key[MUGBS_PATH_MAX + 16];
+    if (!src->container || playlist_source_key(app->pl, e->source_index, key, sizeof(key)) != 0) {
+        return;
+    }
+    if (favorites_record(&app->hist, src->container, key, e->track_index, e->title,
+                         HISTORY_MAX) != 0) {
+        return;
+    }
+    if (app->history_path && favorites_save(&app->hist, app->history_path) != 0) {
+        LOG_WARN("履歴を保存できませんでした: %s", app->history_path);
+    }
+}
+
+/* Browser の X: 再生履歴を新しい順の1本のプレイリストとして開く。 */
+static void app_open_history(app_t *app) {
+    if (!app->history_path || app->hist.count <= 0) {
+        set_status(app, "No history yet");
+        return;
+    }
+    app_open_path(app, app->history_path);
 }
 
 /* Browser の Y: お気に入りを1本のプレイリストとして開く。 */
@@ -566,6 +634,9 @@ static void handle_browser_input(app_t *app, input_action_t a) {
             break;
         case INPUT_Y:
             app_open_favorites(app);
+            break;
+        case INPUT_X:
+            app_open_history(app);
             break;
         case INPUT_START:
             /* SPEC 6.3 の表はStartをPlayer画面専用としているが、ファイルを
@@ -970,6 +1041,11 @@ static void adjust_setting(app_t *app, int direction) {
  * 構造的に無くす。app_apply_theme()等と同じ方針)。 */
 static void app_capture_resume(app_t *app) {
     if (!app->pl || app->player.current_entry < 0 || !app->player_path[0]) return;
+    /* Issue #51: 履歴は再生のたびに並びが変わる(先頭へ移る)ので、
+     * resume_source/resume_track が次回起動時に同じ曲を指さない。
+     * 履歴再生中は前回の値を残す(お気に入りは追加/削除でしか並びが変わらない
+     * ので対象外)。 */
+    if (app->history_path && strcmp(app->player_path, app->history_path) == 0) return;
 
     size_t n = strlen(app->player_path);
     if (n >= sizeof(app->cfg->resume_path)) {
@@ -1363,7 +1439,7 @@ static void draw_browser(app_t *app) {
 
     ui_footer_t ftr = {
         .line1 = "A:Open  B:Up  Y:Favorites  Start:Menu",
-        .line2 = "<>:Page  Start+Select:Quit",
+        .line2 = "<>:Page  X:History  Start+Select:Quit",
         .line1_color = fg, .line2_color = accent, .bar_color = bar_bg,
     };
     if (app->status[0] && SDL_GetTicks() < app->status_until) {
@@ -1972,7 +2048,7 @@ static int app_try_resume(app_t *app) {
     /* Browserをファイルの場所へ合わせておく(Bで戻ったときの一貫性。
      * restore_last_path()自体はディレクトリ/ファイルの両対応で、
      * 失敗してもここでは無視してよい: 次のapp_open_path()の成否だけを見る)。 */
-    if (!is_favorites_path(app, app->cfg->resume_path)) {
+    if (!is_virtual_path(app, app->cfg->resume_path)) {
         restore_last_path(app, app->cfg->resume_path);
     }
 
@@ -2001,6 +2077,9 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     app.cfg = cfg; /* コピーしない。app_t/player_t は常にこの1つを参照する (P6) */
     app.config_path = opt->config_path;
     app.favorites_path = opt->favorites_path;
+    app.history_path = opt->history_path;
+    app.history_min_ms = opt->history_min_ms;
+    app.hist_entry = -1;
     app.running = 1;
     app.screen = SCREEN_BROWSER;
     app.battery_low_pct = opt->battery_low_pct;
@@ -2023,6 +2102,10 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     if (app.favorites_path && favorites_load(&app.fav, app.favorites_path) != 0) {
         LOG_WARN("お気に入りを読み込めませんでした: %s", app.favorites_path);
     }
+    if (app.history_path && favorites_load(&app.hist, app.history_path) != 0) {
+        LOG_WARN("履歴を読み込めませんでした: %s", app.history_path);
+    }
+    favorites_trim(&app.hist, HISTORY_MAX);
 
     /* 起動時の開始位置。優先順(Issue #47でstart_mode/start_folderを追加):
      *   --start-dir > (start_mode=resumeならResume) > start_folder >
@@ -2070,6 +2153,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
             browser_free(&app.browser);
             playctx_free(&app.playctx);
             favorites_free(&app.fav);
+            favorites_free(&app.hist);
             browser_free(&app.folder_pick);
             input_shutdown(&app.input);
             ui_shutdown(&app.ui);
@@ -2107,6 +2191,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
             player_next_track(&app.player);
         }
 
+        app_update_history(&app); /* Issue #51 */
         app_update_scope(&app); /* F-14: 1フレーム1回だけ取り込む */
         app_update_battery(&app); /* Issue #7: 同上。実際のsysfs読みは内部で2秒に1回 */
         app_apply_theme(&app); /* Issue #27: 同上 */
@@ -2144,6 +2229,7 @@ int app_run(mugbs_config_t *cfg, const app_options_t *opt) {
     browser_free(&app.browser);
     playctx_free(&app.playctx);
     favorites_free(&app.fav);
+    favorites_free(&app.hist);
     browser_free(&app.folder_pick);
     player_shutdown(&app.player);
     input_shutdown(&app.input);

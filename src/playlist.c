@@ -697,10 +697,10 @@ static int find_source_by_key(const playlist_t *pl, const char *key) {
     return -1;
 }
 
-int playlist_open_favorites(const favorites_t *fav, const mugbs_config_t *config,
-                            playlist_t **out) {
+int playlist_open_favorites(const favorites_t *fav, const char *name,
+                            const mugbs_config_t *config, playlist_t **out) {
     if (!fav || fav->count <= 0) {
-        LOG_ERR("お気に入りが空です");
+        LOG_ERR("%sが空です", name ? name : "お気に入り");
         return -1;
     }
     const int n = fav->count;
@@ -716,7 +716,7 @@ int playlist_open_favorites(const favorites_t *fav, const mugbs_config_t *config
         free(done);
         return -1;
     }
-    pl->game = dup_str("Favorites");
+    pl->game = dup_str(name && name[0] ? name : "Favorites");
     pl->is_favorites = 1;
 
     for (int i = 0; i < n; i++) {
