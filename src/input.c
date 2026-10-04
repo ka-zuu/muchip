@@ -46,15 +46,25 @@ static input_action_t dpad_action(int index) {
  * ボタンの押下イベントだけでなく、dpad_held[]の長押しリピート合成
  * (下記 input_poll() 参照)からも呼ばれるため、「Dpadを押しっぱなしの
  * 途中でYを押した/離した」場合もその時点のy_heldで正しく組み替わる。 */
-static input_action_t apply_y_modifier(const input_t *in, input_action_t a) {
+static input_action_t apply_y_modifier(input_t *in, input_action_t a) {
     if (!in->y_held) return a;
     switch (a) {
-        case INPUT_LEFT:  return INPUT_Y_LEFT;
-        case INPUT_RIGHT: return INPUT_Y_RIGHT;
-        case INPUT_UP:    return INPUT_Y_UP;
-        case INPUT_DOWN:  return INPUT_Y_DOWN;
+        case INPUT_LEFT:  in->y_combo_used = 1; return INPUT_Y_LEFT;
+        case INPUT_RIGHT: in->y_combo_used = 1; return INPUT_Y_RIGHT;
+        case INPUT_UP:    in->y_combo_used = 1; return INPUT_Y_UP;
+        case INPUT_DOWN:  in->y_combo_used = 1; return INPUT_Y_DOWN;
         default:          return a;
     }
+}
+
+/* Yを離したとき(キーボード/コントローラ共通): コンボを使っていなければ
+ * INPUT_Y_TAP、使っていれば INPUT_NONE を返し、y_held を下ろす
+ * (Issue #53)。 */
+static input_action_t release_y(input_t *in) {
+    input_action_t out = (in->y_held && !in->y_combo_used) ? INPUT_Y_TAP : INPUT_NONE;
+    in->y_held = 0;
+    in->y_combo_used = 0;
+    return out;
 }
 
 static input_action_t key_to_action(SDL_Keycode k) {
@@ -240,7 +250,12 @@ int input_poll(input_t *in, input_action_t *out) {
 
         case SDL_KEYDOWN: {
             input_action_t a = key_to_action(ev.key.keysym.sym);
-            if (a == INPUT_Y) in->y_held = 1; /* P11: 'S'キーを押している間 */
+            if (a == INPUT_Y) {
+                in->y_held = 1; /* P11: 'S'キーを押している間 */
+                /* OSキーリピート(押しっぱなし)で何度も来る。2回目以降で
+                 * 0へ戻すと、コンボ後もタップ扱いになってしまう。 */
+                if (!ev.key.repeat) in->y_combo_used = 0;
+            }
 
             /* 上下左右以外はキーリピートを無視する(押しっぱなしでA連打等の
              * 誤操作にならないようにする)。 */
@@ -258,15 +273,18 @@ int input_poll(input_t *in, input_action_t *out) {
         }
 
         case SDL_KEYUP: {
-            if (key_to_action(ev.key.keysym.sym) == INPUT_Y) in->y_held = 0; /* P11 */
             *out = INPUT_NONE;
+            if (key_to_action(ev.key.keysym.sym) == INPUT_Y) *out = release_y(in); /* P11 */
             return 1;
         }
 
         case SDL_CONTROLLERBUTTONDOWN: {
             input_action_t a = controller_button_to_action(ev.cbutton.button);
 
-            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_Y) in->y_held = 1; /* P11 */
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_Y) {
+                in->y_held = 1; /* P11 */
+                in->y_combo_used = 0;
+            }
 
             int di = dpad_index(a);
             if (di >= 0) {
@@ -289,10 +307,10 @@ int input_poll(input_t *in, input_action_t *out) {
         case SDL_CONTROLLERBUTTONUP: {
             int di = dpad_index(controller_button_to_action(ev.cbutton.button));
             if (di >= 0) in->dpad_held[di] = 0;
-            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_Y) in->y_held = 0; /* P11 */
+            *out = INPUT_NONE;
+            if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_Y) *out = release_y(in); /* P11 */
             if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) in->held_mask &= ~HELD_START;
             if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) in->held_mask &= ~HELD_SELECT;
-            *out = INPUT_NONE;
             return 1;
         }
 
@@ -331,6 +349,7 @@ int input_poll(input_t *in, input_action_t *out) {
                 /* 切断中に押しっぱなしと誤認して幽霊リピートを出し続けないように。 */
                 memset(in->dpad_held, 0, sizeof(in->dpad_held));
                 in->y_held = 0; /* P11: Yを押しっぱなしのまま切断された場合の保険 */
+                in->y_combo_used = 0;
             }
             *out = INPUT_NONE;
             return 1;
