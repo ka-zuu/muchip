@@ -3,11 +3,12 @@
  *
  * P9まではこれを app_t 内の2つ目の browser_t (player_list) で表現していたが、
  * Issue #47 でPlayer画面のファイル一覧UIそのものを撤去したため、UP/DOWNで
- * 前後のファイルへ送るためだけの薄いモデルへ置き換えた。将来のプレイリスト
- * 機能(Issue #18)は、ここに PLAYCTX_PLAYLIST という2つ目の kind を足し、
- * dir/names の代わりにプレイリストの参照ファイル一覧を持たせる形で
- * 拡張できるようにしてある(playctx_open_dir()相当のplaylist版を足し、
- * app.c側は「いまどちらのkindで開いたか」を憶えて呼び分けるだけで済む想定)。
+ * 前後のファイルへ送るためだけの薄いモデルへ置き換えた。お気に入り
+ * (Issue #18)はこのモデルに載せていない: お気に入りは「ファイル」ではなく
+ * 「トラック」の並びで、playlist_t(playlist_open_favorites())がそのまま
+ * 表すため、お気に入り再生中の playctx は空(PLAYCTX_NONE)にして
+ * Player画面のUP/DOWN(ファイル送り)を無効にしている
+ * (docs/design-notes.md「お気に入り」参照)。
  *
  * browser.c と違い、カーソル移動やページ送りは無い(このモデルは「次/前へ
  * 送る」だけを提供する。実際にファイルを開くのは app.c の app_open_path())。

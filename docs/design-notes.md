@@ -168,6 +168,55 @@ GYM/VGM/SPCと拡張m3uのループ欄だけで、**GBS/NSFのヘッダにはル
 するが、先頭から末尾への回り込み（prev方向）はしない（直前まで見えて
 いた並びを壊さないため）。`REPEAT_ONE` はシャッフルより優先する。
 
+## お気に入り
+
+**固定の1本だけ**（命名や複数リストは持たない）。携帯機には文字入力手段が
+無く、命名UIが機能の大半を占めてしまうため。`favorites.txt` に1行1曲・
+タブ区切り・追加順で保存する。置き場所は `config.ini` と同じディレクトリ
+（`favorites_resolve_path()`。環境変数 `MUCHIP_FAVORITES` で上書きでき、
+CTestのUIスモークが解像度ごとに別ファイルを使うために使う）。音楽
+フォルダには書かない。保存は一時ファイルへ書いてから `rename` する
+（電源断対策）。読み込み時に不正な行・解決できない行は警告して読み飛ばす
+だけで、ファイル自体は書き換えない（SDカードを抜いた状態で起動しただけで
+お気に入りが消えるのを避けるため）。
+
+**トラックの同定は `(container, source_key, track_index)` の3つ組**。
+`container` は `app_open_path()` に渡したパス（`.gbs`/`.nsf`/`.spc`/
+`.m3u`/`.zip`）、`source_key` はそのソースの `zip_entry`（zip内）か
+`fs_path`、`track_index` は `playlist_entry_t.track_index`（m3u適用後の
+gmeの添字）。生のトラック番号やm3uの行をコピーする方式にしなかったのは、
+gmeが不正なm3u行を読み飛ばすと添字がずれるため。コンテナを**通常の
+再生経路でそのまま開き直して**から3つ組で引くので、サイドカーm3uや
+zip内の全m3u連結の適用結果と常に一致する。m3uが同じファイルを非連続に
+複数回指すとソースが2つできるため、2つ目以降の `source_key` には
+`\x1f<N>` を足して一意にする（`playlist_source_key()`）。
+
+**お気に入りも1本の `playlist_t`**（`playlist_open_favorites()`）。
+TrackList・シャッフル・リピート・自動送り・Resumeが追加実装なしで動く。
+containerごとに `defer_scan` でソースを列挙し、**必要なソースだけを
+スキャン**する（zophar配布パックのような大きなzipの全曲を毎回スキャン
+しないため）。使うソースは本体の `playlist_t` へ移し、zipの所有権も
+`playlist_t.archives[]`（zipごとに1個。通常のzipは1個、お気に入りでは
+複数）へ移す。`playlist_source_t.archive` はこの配列の要素の借用で、
+`player.c` はここからzip内ソースを展開する。`entries[]` はお気に入りの
+並び（追加順）。曲ごとに元のゲームが違うので、Playerのゲーム名は
+`pl->game`（お気に入りでは固定で "Favorites"）ではなくソース単位の
+`game`（`playlist_game_name()`）を表示する。
+
+**playctx は空にする**。お気に入りの `app_open_path()` は
+`app_sync_playctx()` を呼ばず `last_path` にも記録しない。Player画面の
+UP/DOWN（同ディレクトリのファイル送り）が `favorites.txt` のあるアプリ
+ディレクトリを走査してしまうのを避けるため。Resume用に `player_path` だけ
+`favorites_path` にしておく（`start_mode=resume` でお気に入りに戻れる。
+ただし `resume_source`/`resume_track` はお気に入りの内容が変わると指す先が
+ずれ、見つからなければ先頭から始まる）。show_all_files変更時の再同期も
+お気に入り再生中は何もしない（`app_resync_playctx()`）。
+
+**お気に入り再生中に外しても、開いているプレイリストは作り直さない**。
+曲が突然消えて再生が止まるのを避ける。次に開き直したときに反映される。
+トグルは `A`（Player）/`Y`（TrackList）、開くのは `Y`（Browser）。いずれも
+従来未使用のボタン。★/☆ は美咲フォント（U+2605/U+2606）で描ける。
+
 ## UI・レイアウト
 
 **解像度非依存化**: 画面座標・文字サイズは `src/ui.c` の `ui_metrics_t`
@@ -224,8 +273,10 @@ UP/DOWNは `app_player_step_file()` が `playctx_step_path()`（端は反対側�
 防いでいる（他画面のカーソル移動はリピートを許可したまま。詳細は下記
 「入力」参照）。一覧が1件だけ（自分自身に折り返す）場合は、同じパスへの
 再オープンで再生位置が0へ戻ってしまわないよう `app_player_step_file()`
-が何もしない。`playctx_t.kind` は将来のプレイリスト機能（Issue #18）で
-`PLAYCTX_PLAYLIST` を足す受け皿として設けてある。
+が何もしない。お気に入り（Issue #18）の再生中は `playctx` を空にして
+このファイル送りを無効にする（理由は「お気に入り」参照）。`playctx_t.kind`
+は `PLAYCTX_NONE`/`PLAYCTX_DIRECTORY` の2値のままで、お気に入り用の kind は
+足していない。
 
 `app_open_path()` は成功すると、Browserがいま同じディレクトリを見ている
 場合に限り `browser_select_by_name()` でBrowserのカーソルもいま開いた

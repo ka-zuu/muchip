@@ -24,7 +24,7 @@ target_include_directories(test_text PRIVATE . ../src)
 add_test(NAME test_text COMMAND test_text)
 
 add_executable(test_playlist test_playlist.c ../src/playlist.c ../src/m3u.c ../src/archive.c
-                              ../src/config.c ../src/theme.c ../src/text.c)
+                              ../src/config.c ../src/theme.c ../src/text.c ../src/favorites.c)
 target_include_directories(test_playlist PRIVATE . ../src)
 target_link_libraries(test_playlist PRIVATE gme_static miniz)
 set_target_properties(test_playlist PROPERTIES LINKER_LANGUAGE CXX)
@@ -155,7 +155,7 @@ foreach(res ${UI_SMOKE_RESOLUTIONS})
     # 一度も実行されない。7は既定しきい値(10%)未満なので、既定の
     # battery_show=low でも赤い(低残量)描画経路まで踏める。
     set_tests_properties(test_ui_smoke_${res} PROPERTIES
-        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;MUCHIP_BATTERY_FAKE=7")
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;MUCHIP_BATTERY_FAKE=7;MUCHIP_FAVORITES=${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_${res}.favorites.txt")
 endforeach()
 
 # --- .muxapp パッケージ構造の検証 (P7) ---------------------------------------
@@ -174,3 +174,8 @@ add_test(NAME test_package
             ${CMAKE_CURRENT_BINARY_DIR}/package_test
             ${PROJECT_VERSION})
 set_tests_properties(test_package PROPERTIES SKIP_RETURN_CODE 77)
+
+# Issue #18で追加したfavorites.c(お気に入りリストの永続化)の単体テスト。
+add_executable(test_favorites test_favorites.c ../src/favorites.c)
+target_include_directories(test_favorites PRIVATE . ../src)
+add_test(NAME test_favorites COMMAND test_favorites)

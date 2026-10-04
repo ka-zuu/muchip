@@ -13,6 +13,7 @@
 #include "app.h"
 #include "battery.h"
 #include "config.h"
+#include "favorites.h"
 #include "log.h"
 #include "player.h"
 #include "playlist.h"
@@ -289,6 +290,8 @@ int main(int argc, char **argv) {
      * (P7)。--start-dir と違い起動モード(Resume/Start folder)より優先度が低いので、
      * それらを毎回潰さずに「Start folder未設定のときだけ音楽フォルダから
      * 始める」を実現できる。 */
+    char favorites_path[MUGBS_PATH_MAX];
+    favorites_resolve_path(favorites_path, sizeof(favorites_path), config_path);
     app_options_t opt = {
         .initial_path = args.path,
         .start_dir = args.start_dir,
@@ -298,6 +301,7 @@ int main(int argc, char **argv) {
         .ui_script_path = args.ui_script,
         .screenshot_path = args.screenshot,
         .config_path = cli_override ? NULL : config_path,
+        .favorites_path = favorites_path,
         /* Issue #7: muOS実機は mux_launch.sh が GET_VAR でしきい値を探し、
          * 見つかれば MUCHIP_BATTERY_LOW_PCT を export する。無ければ
          * battery_low_threshold_from_env(NULL) が既定の10%を返す。 */

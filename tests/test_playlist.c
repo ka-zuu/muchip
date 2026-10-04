@@ -943,6 +943,150 @@ static int test_fade_start_ms(void) {
     return 0;
 }
 
+/* ---- Issue #18: お気に入り --------------------------------------------- */
+
+/* 単体gbs / サイドカーm3u付きgbs / 2つの別々のzipが混在するお気に入りを、
+ * お気に入りの並び(追加順)で、元の曲名・元のゲーム名のまま1本にできること。 */
+static int test_favorites_mixed_containers(void) {
+    unsigned char gbs3[SYNTHETIC_GBS_SIZE], gbs2[SYNTHETIC_GBS_SIZE];
+    build_synthetic_gbs(gbs3, 3);
+    build_synthetic_gbs(gbs2, 2);
+
+    char *solo = path_in("fav_solo.gbs");
+    write_synthetic_gbs(solo, 2);
+
+    char *side = path_in("fav_side.gbs");
+    write_synthetic_gbs(side, 3);
+    write_text_file(path_in("fav_side.m3u"),
+        "fav_side.gbs::GBS,0,Intro,0:10\n"
+        "fav_side.gbs::GBS,1,Stage,1:00\n"
+        "fav_side.gbs::GBS,2,Boss,0:50\n");
+
+    const char *pack_m3u = "GAME.gbs::GBS,0,BGM A,0:39\nGAME.gbs::GBS,1,BGM B,1:02\nGAME.gbs::GBS,2,BGM C,0:05\n";
+    zip_member_t pack_members[] = { { "GAME.gbs", gbs3, sizeof(gbs3) },
+                                     { "pack.m3u", pack_m3u, strlen(pack_m3u) } };
+    char *pack = path_in("fav_pack.zip");
+    write_binary_zip(pack, pack_members, 2);
+
+    zip_member_t other_members[] = { { "dir/OTHER.gbs", gbs2, sizeof(gbs2) } };
+    char *other = path_in("fav_other.zip");
+    write_binary_zip(other, other_members, 1);
+
+    favorites_t fav;
+    memset(&fav, 0, sizeof(fav));
+    /* container が交互になる並び: pack, solo, other, side, pack */
+    CHECK(favorites_toggle(&fav, pack, "GAME.gbs", 2, "x") == 1);
+    CHECK(favorites_toggle(&fav, solo, solo, 1, "x") == 1);
+    CHECK(favorites_toggle(&fav, other, "dir/OTHER.gbs", 0, "x") == 1);
+    CHECK(favorites_toggle(&fav, side, side, 1, "x") == 1);
+    CHECK(favorites_toggle(&fav, pack, "GAME.gbs", 0, "x") == 1);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    playlist_t *pl = NULL;
+    CHECK(playlist_open_favorites(&fav, &cfg, &pl) == 0);
+    CHECK(pl->is_favorites);
+    CHECK_STREQ(pl->game, "Favorites");
+    CHECK(pl->entry_count == 5);
+    CHECK_STREQ(pl->entries[0].title, "BGM C");
+    CHECK_STREQ(pl->entries[1].title, "Track 02");
+    CHECK_STREQ(pl->entries[2].title, "Track 01");
+    CHECK_STREQ(pl->entries[3].title, "Stage");
+    CHECK_STREQ(pl->entries[4].title, "BGM A");
+    CHECK(pl->entries[0].track_index == 2);
+    CHECK(pl->entries[3].track_index == 1);
+    /* 同じ GAME.gbs の#2と#0は同じソースを共有する */
+    CHECK(pl->entries[0].source_index == pl->entries[4].source_index);
+    CHECK(pl->source_count == 4);
+    CHECK(pl->archive_count == 2);
+    /* 曲ごとに元のゲーム名が引ける(pl->gameは"Favorites"のまま) */
+    CHECK_STREQ(playlist_game_name(pl, pl->entries[0].source_index), "Synthetic Game");
+    /* source_keyの往復: 保存した同定キーがそのまま引き直せる */
+    char key[MUGBS_PATH_MAX + 16];
+    CHECK(playlist_source_key(pl, pl->entries[2].source_index, key, sizeof(key)) == 0);
+    CHECK_STREQ(key, "dir/OTHER.gbs");
+    CHECK_STREQ(pl->sources[pl->entries[2].source_index].container, other);
+    /* 再生側がzip内ソースを引けるよう、zipの借用が移っている */
+    CHECK(pl->sources[pl->entries[0].source_index].archive != NULL);
+    CHECK(pl->sources[pl->entries[1].source_index].archive == NULL);
+
+    playlist_free(pl); /* ASan: 移し替えたarchive/sourceの二重解放・リークが無いこと */
+    favorites_free(&fav);
+    return 0;
+}
+
+/* 参照先が消えた・キーが違う・トラック番号が範囲外の項目は読み飛ばし、
+ * 残りだけで開く。1件も解決できなければ失敗する。 */
+static int test_favorites_skips_unresolvable(void) {
+    char *gbs = path_in("fav_ok.gbs");
+    write_synthetic_gbs(gbs, 2);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    favorites_t fav;
+    memset(&fav, 0, sizeof(fav));
+    CHECK(favorites_toggle(&fav, path_in("fav_gone.gbs"), path_in("fav_gone.gbs"), 0, "x") == 1);
+    CHECK(favorites_toggle(&fav, gbs, "wrong-key", 0, "x") == 1);
+    CHECK(favorites_toggle(&fav, gbs, gbs, 99, "x") == 1);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open_favorites(&fav, &cfg, &pl) != 0); /* 全滅 */
+    CHECK(pl == NULL);
+
+    CHECK(favorites_toggle(&fav, gbs, gbs, 1, "x") == 1);
+    CHECK(playlist_open_favorites(&fav, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK(pl->entries[0].track_index == 1);
+    playlist_free(pl);
+
+    favorites_free(&fav);
+    CHECK(playlist_open_favorites(&fav, &cfg, &pl) != 0); /* 空 */
+    return 0;
+}
+
+/* m3uが同じファイルを非連続に2回指すと、ソースが2つできる。
+ * それぞれのトラックが別々のsource_keyで区別でき、お気に入りから正しく戻ること。 */
+static int test_favorites_duplicate_file_segments(void) {
+    char *a = path_in("dupa.gbs");
+    char *b = path_in("dupb.gbs");
+    write_synthetic_gbs(a, 2);
+    write_synthetic_gbs(b, 1);
+    char *m3u = path_in("dup.m3u");
+    write_text_file(m3u,
+        "dupa.gbs::GBS,0,First A0,0:10\n"
+        "dupb.gbs::GBS,0,B0,0:10\n"
+        "dupa.gbs::GBS,1,Second A1,0:10\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+
+    playlist_t *src = NULL;
+    CHECK(playlist_open(m3u, &cfg, &src) == 0);
+    CHECK(src->source_count == 3);
+    char k1[MUGBS_PATH_MAX + 16], k3[MUGBS_PATH_MAX + 16];
+    CHECK(playlist_source_key(src, 0, k1, sizeof(k1)) == 0);
+    CHECK(playlist_source_key(src, 2, k3, sizeof(k3)) == 0);
+    CHECK(strcmp(k1, k3) != 0);
+
+    favorites_t fav;
+    memset(&fav, 0, sizeof(fav));
+    /* 3つ目のソース(2回目のdupa.gbs)の先頭トラックをお気に入りにする */
+    CHECK(favorites_toggle(&fav, m3u, k3, src->entries[2].track_index, "x") == 1);
+    CHECK(favorites_toggle(&fav, m3u, k1, src->entries[0].track_index, "x") == 1);
+
+    playlist_t *pl = NULL;
+    CHECK(playlist_open_favorites(&fav, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 2);
+    CHECK_STREQ(pl->entries[0].title, src->entries[2].title);
+    CHECK_STREQ(pl->entries[1].title, src->entries[0].title);
+
+    playlist_free(pl);
+    playlist_free(src);
+    favorites_free(&fav);
+    return 0;
+}
+
 int main(void) {
     setup_tmpdir("playlist");
 
@@ -972,6 +1116,9 @@ int main(void) {
     if (test_skip_short_apply_config_round_trip()) return 1;
     if (test_skip_short_keeps_current_track()) return 1;
     if (test_skip_short_all_filtered_guard()) return 1;
+    if (test_favorites_mixed_containers()) return 1;
+    if (test_favorites_skips_unresolvable()) return 1;
+    if (test_favorites_duplicate_file_segments()) return 1;
 
     printf("test_playlist: すべて成功\n");
     return 0;

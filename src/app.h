@@ -43,6 +43,11 @@ typedef struct {
     const char *config_path;    /* 終了時・Settings画面を抜けるときの自動保存先。
                                     NULLなら保存しない(CLIオーバーライド指定時 等)。 */
 
+    const char *favorites_path; /* Issue #18: お気に入りリスト(favorites.txt)の保存先。
+                                    app_open_path() にこのパスを渡すとお気に入りを
+                                    1本のプレイリストとして開く。NULLなら永続化しない
+                                    (メモリ上でのみ保持。Browserからも開けない)。 */
+
     int battery_low_pct; /* Issue #7: [ui] battery_show = low での「低い」しきい値(%)。
                              main.c が battery_low_threshold_from_env() で決める
                              (muOS の mux_launch.sh が export する

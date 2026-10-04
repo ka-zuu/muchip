@@ -134,6 +134,54 @@ START   # Player -> Settings。Stereo depth/EQ bass/EQ trebleの表示行が
         # クラッシュしないことだけを見る)
 B       # Settings -> Player
 B       # Player -> Browser
+# Issue #18 (お気に入り)。favorites.txt は MUCHIP_FAVORITES で解像度ごとの
+# 一時ファイルに向けてある。ここまでのBrowserカーソルはGame.spc。
+# 「0件でBrowser Y」「Playerで追加」「TrackListで追加」「別containerの
+# 曲も追加」「Browser Yで3曲(2container)のお気に入りを開く」「お気に入り
+# 再生中の操作」「TrackListで全て外す」を踏み、最後に空へ戻す
+# (再実行しても同じ状態から始まる)。
+Y       # Browser: お気に入りが0件 -> "No favorites yet"（開かない）
+UP      # カーソル Game.spc -> Game.gbs
+A       # Game.gbs(2トラック)を開く -> Player
+A       # Player: 再生中のトラック1をお気に入りへ追加（★。app_toggle_favorite）
+X       # Player -> TrackList
+DOWN    # トラック2へ
+Y       # TrackList: トラック2をお気に入りへ追加
+B       # TrackList -> Player
+B       # Player -> Browser
+DOWN    # カーソル Game.gbs -> Game.spc
+A       # Game.spcを開く -> Player
+A       # 別container(.spc)のトラックも追加（混在）
+B       # Player -> Browser
+Y       # お気に入り(3曲・2container)を開く -> Player（playlist_open_favorites）
+UP      # お気に入り再生中はファイル送りが無効（playctxが空）
+DOWN    # 同上
+RIGHT   # お気に入り内の次トラック（同じ.gbs内）
+RIGHT   # 次トラック（.gbs -> .spc。ソースをまたぐ張り替え）
+START   # Player -> Settings
+DOWN    # Length -> Default length
+DOWN    # -> Skip short
+DOWN    # -> Repeat
+DOWN    # -> Shuffle
+DOWN    # -> Stereo depth
+DOWN    # -> EQ bass
+DOWN    # -> EQ treble
+DOWN    # -> Fade
+DOWN    # -> Show all files
+RIGHT   # show_all_files を切り替える。お気に入り再生中は再生コンテキストを
+        # 作り直さない（app_resync_playctx。アプリDirを走査しない）
+RIGHT   # もう一度切り替えて元へ戻す（config.iniに残さない）
+B       # Settings -> Player（保存時に resume_path=favorites_path になる）
+X       # Player -> TrackList（カーソルは現在のトラック）
+Y       # 現在のトラックをお気に入りから外す
+UP      # 前のトラックへ
+Y       # こちらも外す
+UP      # 折り返して末尾のトラックへ
+Y       # 全て外す -> お気に入りが空に戻る
+B       # TrackList -> Player
+A       # お気に入り再生中でも追加できる（再生中トラックを再追加）
+A       # もう一度で外す -> 空
+B       # Player -> Browser
 START   # Browser -> Settings (SPEC 6.3からの逸脱。docs/design-notes.md参照)
 B       # Settings -> Browser
 QUIT

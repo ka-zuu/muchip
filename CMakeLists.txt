@@ -99,6 +99,7 @@ add_executable(muchip
     src/ui.c
     src/browser.c
     src/playctx.c
+    src/favorites.c
     src/input.c
     src/app.c
 )
