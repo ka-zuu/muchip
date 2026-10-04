@@ -179,3 +179,16 @@ set_tests_properties(test_package PROPERTIES SKIP_RETURN_CODE 77)
 add_executable(test_favorites test_favorites.c ../src/favorites.c)
 target_include_directories(test_favorites PRIVATE . ../src)
 add_test(NAME test_favorites COMMAND test_favorites)
+
+# Issue #53で追加したinput.cのY単押し(INPUT_Y_TAP)判定の単体テスト。
+# SDL_PushEventで合成したキーボードイベントをinput_poll()に通す
+# (映像/音声は初期化しない。SDL2の解決方法はtest_ui_metricsと同じ)。
+add_executable(test_input test_input.c ../src/input.c ../src/config.c ../src/theme.c)
+target_include_directories(test_input PRIVATE . ../src)
+if(TARGET SDL2::SDL2)
+    target_link_libraries(test_input PRIVATE SDL2::SDL2)
+else()
+    target_include_directories(test_input PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(test_input PRIVATE ${SDL2_LIBRARIES})
+endif()
+add_test(NAME test_input COMMAND test_input)

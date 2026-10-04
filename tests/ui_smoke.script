@@ -143,7 +143,8 @@ B       # Player -> Browser
 Y       # Browser: お気に入りが0件 -> "No favorites yet"（開かない）
 UP      # カーソル Game.spc -> Game.gbs
 A       # Game.gbs(2トラック)を開く -> Player
-A       # Player: 再生中のトラック1をお気に入りへ追加（★。app_toggle_favorite）
+Y_TAP   # Player: 再生中のトラック1をお気に入りへ追加（★。app_toggle_favorite。
+        # Yの単押し=コンボ無しで離したときのINPUT_Y_TAP。Issue #53）
 X       # Player -> TrackList
 DOWN    # トラック2へ
 Y       # TrackList: トラック2をお気に入りへ追加
@@ -151,7 +152,7 @@ B       # TrackList -> Player
 B       # Player -> Browser
 DOWN    # カーソル Game.gbs -> Game.spc
 A       # Game.spcを開く -> Player
-A       # 別container(.spc)のトラックも追加（混在）
+Y_TAP   # 別container(.spc)のトラックも追加（混在）
 B       # Player -> Browser
 Y       # お気に入り(3曲・2container)を開く -> Player（playlist_open_favorites）
 UP      # お気に入り再生中はファイル送りが無効（playctxが空）
@@ -179,8 +180,8 @@ Y       # こちらも外す
 UP      # 折り返して末尾のトラックへ
 Y       # 全て外す -> お気に入りが空に戻る
 B       # TrackList -> Player
-A       # お気に入り再生中でも追加できる（再生中トラックを再追加）
-A       # もう一度で外す -> 空
+Y_TAP   # お気に入り再生中でも追加できる（再生中トラックを再追加）
+Y_TAP   # もう一度で外す -> 空
 B       # Player -> Browser
 # Issue #51 (再生履歴)。MUCHIP_HISTORY_MIN_MS=0 なので、ここまでに再生した
 # トラックは再生開始直後にhistory.txtへ記録されている(スクリプトは数百msで

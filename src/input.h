@@ -59,12 +59,20 @@ typedef enum {
 
     /* Yを押しながらD-padを押した「コンボ」操作 (P11)。Player画面で
      * Settingsへ入らずリピート/シャッフルを素早く変えるショートカットに使う
-     * (input_t.y_held 参照)。Y単体(押して離すだけ)はもう何もしない
-     * (以前はリピートモード切替だったが、Y+LEFT/RIGHTへ移した)。 */
+     * (input_t.y_held 参照)。Y単体(押して離すだけ)は押下時にINPUT_Yを返し、
+     * コンボを使わずに離したときだけ INPUT_Y_TAP も返す(下記。Issue #53)。
+     * 以前はY単体がリピートモード切替だったが、Y+LEFT/RIGHTへ移した。 */
     INPUT_Y_LEFT,
     INPUT_Y_RIGHT,
     INPUT_Y_UP,
     INPUT_Y_DOWN,
+
+    /* Yを「コンボを使わずに」押して離した(Issue #53)。Yの押下時に返す
+     * INPUT_Y とは別で、離した瞬間に1回だけ返る。Player画面のYは
+     * Y+D-padのコンボの修飾キーでもあるため、押した瞬間に反応させると
+     * コンボのたびに誤爆する。押している間に一度でもコンボが成立していれば
+     * 返さない(input_t.y_combo_used 参照)。 */
+    INPUT_Y_TAP,
 } input_action_t;
 
 typedef struct {
@@ -103,6 +111,10 @@ typedef struct {
      * 返すためのモディファイア。押した順序に依存しない(dpad_held[]の
      * リピート合成時にもその都度この値を見て組み替える)。 */
     int y_held;
+    /* Issue #53: 今回のY押下中に、D-padがY+方向のコンボへ組み替えられたか。
+     * Yを離すとき、立っていなければ INPUT_Y_TAP を返す(コンボ後に離しても
+     * タップ扱いにしない)。Y押下のたびに0へ戻す。 */
+    int y_combo_used;
 
     /* START+SELECT同時押しでの終了(SPEC 6.3「Menu長押し=終了」の代替)用。
      * GameController の GUIDE ボタン(muOSのMENU相当)は muOS 側のオーバーレイに

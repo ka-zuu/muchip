@@ -148,7 +148,7 @@ typedef struct {
 static input_action_t parse_action_name(const char *name) {
     static const struct { const char *name; input_action_t action; } table[] = {
         { "UP", INPUT_UP }, { "DOWN", INPUT_DOWN }, { "LEFT", INPUT_LEFT }, { "RIGHT", INPUT_RIGHT },
-        { "A", INPUT_A }, { "B", INPUT_B }, { "X", INPUT_X }, { "Y", INPUT_Y },
+        { "A", INPUT_A }, { "B", INPUT_B }, { "X", INPUT_X }, { "Y", INPUT_Y }, { "Y_TAP", INPUT_Y_TAP },
         { "L1", INPUT_L1 }, { "R1", INPUT_R1 }, { "L2", INPUT_L2 }, { "R2", INPUT_R2 },
         { "START", INPUT_START }, { "SELECT", INPUT_SELECT }, { "QUIT", INPUT_QUIT },
         { "Y_LEFT", INPUT_Y_LEFT }, { "Y_RIGHT", INPUT_Y_RIGHT },
@@ -697,8 +697,12 @@ static void handle_player_input(app_t *app, input_action_t a, int repeat) {
         case INPUT_SELECT:
             player_toggle_pause(&app->player);
             break;
-        case INPUT_A:
-            app_toggle_favorite(app, app->player.current_entry); /* Issue #18 */
+        /* Issue #53: お気に入りの追加/削除はYの単押し(離した時)。Yは
+         * Y+D-padコンボの修飾キーでもあるため、押した瞬間(INPUT_Y)では
+         * なくコンボを使わずに離したとき(INPUT_Y_TAP)にだけ反応する。
+         * Browser/TrackListのYと揃えてある(Issue #18) */
+        case INPUT_Y_TAP:
+            app_toggle_favorite(app, app->player.current_entry);
             break;
         case INPUT_B:
             app->screen = SCREEN_BROWSER;
@@ -707,7 +711,8 @@ static void handle_player_input(app_t *app, input_action_t a, int repeat) {
             app->tracklist_sel = app->player.current_entry;
             app->screen = SCREEN_TRACKLIST;
             break;
-        /* Y単体(押して離すだけ)はもう何もしない。Yを押しながらの
+        /* Yを押した瞬間(INPUT_Y)は何もしない(単押しは離した時のINPUT_Y_TAP、
+         * 上記)。Yを押しながらの
          * LEFT/RIGHT/UP/DOWNだけが下記のコンボとして意味を持つ(P11)。
          * config はポインタで player と共有しているため、ここへの代入だけで
          * 次の player_next_track()/player_prev_track() から反映される。 */
@@ -1639,7 +1644,7 @@ static void draw_player(app_t *app) {
     ui_footer_t ftr = {
         /* Issue #47: Up/Downはファイル一覧UIの撤去に伴い「同ディレクトリの
          * 前/次ファイル」へ転用した(app_player_step_file())。 */
-        .line1 = "<>:Track  ^v:File  Select:Pause  A:Fav  X:Tracks  Start:Settings",
+        .line1 = "<>:Track  ^v:File  Select:Pause  Y:Fav  X:Tracks  Start:Settings",
         .line2 = footer_line2,
         .line1_color = fg, .line2_color = accent, .bar_color = ui_color(ui, THEME_ROLE_PANEL),
     };
