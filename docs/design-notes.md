@@ -43,21 +43,36 @@ SPEC の記述と食い違う点がいくつかある。
   無効化ではないので混同しないこと。
 - `Music_Emu.cpp` の無音自動終了（`silence_max = 6` 秒）はフェードとは
   独立した仕組みで、ループ情報もm3uも無い素のGBS/NSFで機能する。
-- **`Spc_Emu`（SPC, Issue #43）はEQ（F-20）とステレオ深度（F-21）が完全に
-  無効**。`Spc_Emu` は `Classic_Emu` を継承せず `Music_Emu` を直接継承する
+- **`Spc_Emu`（SPC, Issue #43）と`Gym_Emu`（GYM, Issue #55）はEQ（F-20）と
+  ステレオ深度（F-21）が完全に無効**（以下はSPCで説明するが、`Gym_Emu` も
+  `Music_Emu` を直接継承し `flags_` が 0 なので事情は同じ。VGM/HES/KSS/AY/SAP
+  は `Classic_Emu` 派生で `flags_` に 1 を持つためグレーアウトしない）。
+  `Spc_Emu` は `Classic_Emu` を継承せず `Music_Emu` を直接継承する
   ため `set_equalizer_()` が空実装（`Music_Emu.h` の `Gme_Info_`/基底の
   デフォルト）で、`gme_set_stereo_depth()`（`gme.cpp`）が使う
   `effects_buffer` も `NULL` のまま（`Classic_Emu` がコンストラクタで
   確保するメンバのため）。値を送っても黙って無視されるだけでエラーには
   ならない。UI側はこれを隠さず、Settings画面の `Stereo depth`/`EQ bass`/
   `EQ treble` の3行を `playlist_source_t.effects_supported`
-  （`gme_type(emu) != gme_spc_type` で判定、`src/playlist.c`）を見て
+  （`gme_spc_type`/`gme_gym_type` 以外か否かで判定、`src/playlist.c`）を見て
   グレーアウトする（`src/app.c` の `settings_item_dim()` を
   `ui_draw_list()` の `dim_fn` へ渡す。`THEME_ROLE_DIM` で描く）。
   カーソルを合わせた選択中も淡色を優先する（`src/ui.c`。選択した瞬間
   こそ「効かない」と伝わってほしいため、通常の選択色より優先する設計）。
   値の編集自体は禁止しない（GBS/NSFへ戻れば効くグローバル設定のため、
   無効化する意味が薄い）。
+
+- **VGZ（gzip圧縮VGM, Issue #55）はlibgmeのzlib経路を使わない**。
+  `GME_ZLIB=ON` にすると zlib への新規依存になり、実機のglibc互換性と
+  バイナリサイズに直結する（CLAUDE.md「依存追加は事前に相談」）。代わりに
+  同梱済みの miniz（tinfl）で `src/gzip.c` が展開してからメモリ経由で
+  libgme へ渡す。展開は `playlist_source_open_emu()`（`src/playlist.c`）に
+  一本化し、スキャン（`pl_scan_source()`）と再生開始（`src/player.c`）が
+  共有する。単体ファイルは先頭2バイトがgzipのマジックのときだけ全体を
+  読んで展開し、それ以外は従来どおり `gme_open_file()` に任せる（拡張子
+  判定の挙動を変えない）。メモリから開くときは `gme_open_data()` と違い
+  ヘッダ判定が空なら拡張子へフォールバックする。展開後は32MB上限
+  （zip展開と同じ）で、CRC32/ISIZEを検証して壊れたgzipは開かない。
 
 ## libgme フォーク運用（m3u トラック番号の0始まり問題）
 

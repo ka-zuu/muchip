@@ -13,8 +13,8 @@ struct archive {
     mz_zip_archive zip;
 };
 
-/* libgmeが開ける(かもしれない)拡張子。GBSが主目的だが、SPEC 1.2の通り
- * NSF/SPC/VGM等が「たまたま動く」ことを妨げない。 */
+/* libgmeが開ける拡張子(SPEC 1.2。Issue #55でVGM/HES/KSS/AY/SAP/GYMも
+ * 正式対応)。 */
 static const char *k_music_exts[] = {
     ".gbs", ".gb", ".nsf", ".nsfe", ".spc", ".vgm", ".vgz",
     ".ay", ".hes", ".kss", ".sap", ".gym", NULL

@@ -234,6 +234,24 @@ static int test_filter_dirs(void) {
     return 0;
 }
 
+/* Issue #55: VGM/VGZ/HES/KSS/AY/SAP/GYMも拡張子フィルタを通る。
+ * 他のテストの件数に影響しないよう専用サブディレクトリで確認する。 */
+static int test_filter_new_formats(void) {
+    make_dir(path_in("fmt"));
+    const char *names[] = { "a.vgm", "b.VGZ", "c.hes", "d.kss", "e.ay", "f.sap", "g.gym", "x.txt" };
+    for (int i = 0; i < 8; i++) {
+        char rel[32];
+        snprintf(rel, sizeof(rel), "fmt/%s", names[i]);
+        make_file(path_in(rel));
+    }
+    browser_t b;
+    memset(&b, 0, sizeof(b));
+    CHECK(browser_open_dir(&b, path_in("fmt"), 0) == 0);
+    CHECK(b.count == 7); /* x.txt だけ除外 */
+    browser_free(&b);
+    return 0;
+}
+
 int main(void) {
     setup_tmpdir("browser");
 
@@ -245,6 +263,7 @@ int main(void) {
     if (test_self_refresh_same_cwd_pointer()) return 1;
     if (test_select_by_name()) return 1;
     if (test_filter_dirs()) return 1;
+    if (test_filter_new_formats()) return 1;
 
     printf("test_browser: すべて成功\n");
     return 0;

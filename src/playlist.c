@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 
 #include "archive.h"
+#include "gzip.h"
 #include "log.h"
 #include "m3u.h"
 #include "text.h"
@@ -266,6 +267,95 @@ static int pl_add_scan(playlist_t *pl, char *display_path, char *fs_path, char *
     return pl_scan_source(pl, idx, cfg);
 }
 
+/* メモリ上のデータからemuを開く。種別はヘッダ→拡張子(name)の順で判定する
+ * (gme_open_data()はヘッダだけで判定するため、ヘッダを持たない形式を
+ * 取りこぼさないように拡張子へフォールバックする)。
+ * data はコピーされるので、呼び出し側は戻った後に解放してよい。 */
+static gme_err_t open_emu_from_memory(const void *data, size_t size, const char *name,
+                                      int sample_rate, Music_Emu **out) {
+    gme_type_t type = NULL;
+    *out = NULL;
+    if (size >= 4) type = gme_identify_extension(gme_identify_header(data));
+    if (!type && name) type = gme_identify_extension(name);
+    if (!type) return gme_wrong_file_type;
+
+    Music_Emu *emu = gme_new_emu(type, sample_rate);
+    if (!emu) return "out of memory";
+    gme_err_t err = gme_load_data(emu, data, (long)size);
+    if (err) {
+        gme_delete(emu);
+        return err;
+    }
+    *out = emu;
+    return NULL;
+}
+
+/* path の先頭がgzipならファイル全体を読んで out_data と out_size に返す(0)。
+ * gzipでなければ1(何も返さない)。読めなければ-1。
+ * 成功時 *out_data は malloc 済みで、呼び出し側が free() する。 */
+static int read_if_gzip(const char *path, void **out_data, size_t *out_size) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    unsigned char magic[2];
+    if (fread(magic, 1, 2, f) != 2 || !gzip_is_gzip(magic, 2)) {
+        fclose(f);
+        return 1;
+    }
+    /* 圧縮後の実サイズは展開上限を超えられない(超えるなら展開でも弾かれる) */
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
+    long len = ftell(f);
+    if (len < 0 || (unsigned long)len > GZIP_MAX_OUTPUT_SIZE || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
+    unsigned char *buf = malloc(len ? (size_t)len : 1);
+    if (!buf) { fclose(f); return -1; }
+    size_t n = fread(buf, 1, (size_t)len, f);
+    fclose(f);
+    if (n != (size_t)len) { free(buf); return -1; }
+    *out_data = buf;
+    *out_size = n;
+    return 0;
+}
+
+gme_err_t playlist_source_open_emu(const playlist_source_t *src, int sample_rate,
+                                   Music_Emu **out) {
+    void *data = NULL;
+    size_t size = 0;
+    *out = NULL;
+
+    if (src->zip_entry) {
+        int idx = archive_find(src->archive, src->zip_entry);
+        if (idx < 0) return "zip内にファイルが見つかりません";
+        /* data の所有権: archive_extract() が確保し、このブロック内で free する */
+        if (archive_extract(src->archive, idx, &data, &size) != 0) return "zip展開に失敗しました";
+    } else {
+        int r = read_if_gzip(src->fs_path, &data, &size);
+        if (r < 0) return "ファイルを読めません";
+        if (r > 0) return gme_open_file(src->fs_path, out, sample_rate); /* 非gzip: 従来どおり */
+    }
+
+    /* VGZ等のgzip圧縮データは先に展開する(GME_ZLIB=OFFのため)。
+     * 展開後バッファの所有権はこのブロックで持ち、open後に free する。 */
+    if (gzip_is_gzip(data, size)) {
+        void *plain = NULL;
+        size_t plain_size = 0;
+        int rc = gzip_inflate(data, size, &plain, &plain_size);
+        free(data);
+        if (rc != 0) return "gzipの展開に失敗しました";
+        data = plain;
+        size = plain_size;
+    }
+
+    /* open_emu_from_memory() は data をコピーするので、ここで解放してよい
+     * (libgme 0.6.6 の gme_load_data() で確認済み)。 */
+    gme_err_t err = open_emu_from_memory(data, size,
+                                         src->zip_entry ? src->zip_entry : src->fs_path,
+                                         sample_rate, out);
+    free(data);
+    return err;
+}
+
 /* source_index の指すファイルを実際に開き、gme_track_count() 分だけ
  * gme_track_info() を回して all[] に追記する。曲長等の重い判定は
  * player.c 側(再生開始時)に任せ、ここではタイトルの収集に徹する。
@@ -275,39 +365,15 @@ static int pl_scan_source(playlist_t *pl, int source_index, const mugbs_config_t
     playlist_source_t *src = &pl->sources[source_index];
 
     Music_Emu *emu = NULL;
-    gme_err_t err;
-
-    if (src->zip_entry) {
-        int idx = archive_find(src->archive, src->zip_entry);
-        if (idx < 0) {
-            LOG_WARN("zip内にファイルが見つかりません: %s", src->zip_entry);
-            return -1;
-        }
-        void *data = NULL;
-        size_t size = 0;
-        if (archive_extract(src->archive, idx, &data, &size) != 0) {
-            return -1;
-        }
-        err = gme_open_data(data, (long)size, &emu, cfg->sample_rate);
-        /* gme_open_data はデータをコピーするので、ここで解放してよい
-         * (SPEC 5.1落とし穴3として書かれている「コピーしない場合がある」は
-         * 実際のlibgme(0.6.6)には当てはまらないことをヘッダで確認済み)。 */
-        free(data);
-        if (err) {
-            LOG_WARN("開けませんでした(zip内 %s): %s", src->zip_entry, err);
-            return -1;
-        }
-    } else {
-        err = gme_open_file(src->fs_path, &emu, cfg->sample_rate);
-        if (err) {
-            LOG_WARN("開けませんでした: %s: %s", src->fs_path, err);
-            return -1;
-        }
+    gme_err_t err = playlist_source_open_emu(src, cfg->sample_rate, &emu);
+    if (err) {
+        LOG_WARN("開けませんでした: %s: %s", src->display_path, err);
+        return -1;
     }
 
     /* Issue #43: SPCはEQ/ステレオ深度が効かない(playlist.hのeffects_supported
      * コメント参照)。Settings画面向けにここで一度だけ判定して焼き込む。 */
-    src->effects_supported = (gme_type(emu) != gme_spc_type);
+    src->effects_supported = (gme_type(emu) != gme_spc_type && gme_type(emu) != gme_gym_type);
 
     if (src->m3u_text) {
         err = gme_load_m3u_data(emu, src->m3u_text, (long)src->m3u_len);

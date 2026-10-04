@@ -2,12 +2,13 @@
 
 muOS 向けの chiptune プレーヤー。GBS (Game Boy Sound System)、
 `.nsf`/`.nsfe`（NSF, Nintendo Sound Format）、`.spc`（SPC, SNES SPC700
-Sound File）を同格の一級市民として扱い、サブトラック構造と拡張M3U
+Sound File）、`.vgm`/`.vgz`・`.hes`・`.kss`・`.ay`・`.sap`・`.gym` を
+同格の一級市民として扱い、サブトラック構造と拡張M3U
 （曲名・曲長・ループ指定）を正しく扱う。
 （旧名 `muGBS`。詳細は [`docs/design-notes.md`](./docs/design-notes.md)
 参照）。
 
-- 主な機能: GBS/NSF/SPC/拡張M3U/zip対応、Browser/Player/TrackList/Settings
+- 主な機能: GBS/NSF/SPC/VGM/HES/KSS/AY/SAP/GYM/拡張M3U/zip対応、Browser/Player/TrackList/Settings
   のGUI、EQ・ビジュアライザ・シャッフル・ながさチェンジ・短い曲の
   スキップ・バッテリー残量表示・日本語メタデータ表示
 - 詳細仕様: [`SPEC.md`](./SPEC.md)

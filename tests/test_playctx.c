@@ -56,6 +56,24 @@ static int test_open_dir_filters_and_sorts(void) {
     return 0;
 }
 
+/* Issue #55: VGM/VGZ/HES/KSS/AY/SAP/GYMも拡張子フィルタを通る
+ * (browser.cと同じ集合。専用サブディレクトリで他の件数に影響させない)。 */
+static int test_open_dir_new_formats(void) {
+    make_dir(path_in("fmt"));
+    const char *names[] = { "a.vgm", "b.VGZ", "c.hes", "d.kss", "e.ay", "f.sap", "g.gym", "x.txt" };
+    for (int i = 0; i < 8; i++) {
+        char rel[32];
+        snprintf(rel, sizeof(rel), "fmt/%s", names[i]);
+        make_file(path_in(rel));
+    }
+    playctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    CHECK(playctx_open_dir(&ctx, path_in("fmt/a.vgm"), 0, 0) == 0);
+    CHECK(ctx.count == 7);
+    playctx_free(&ctx);
+    return 0;
+}
+
 /* show_all!=0なら拡張子フィルタ無しですべてのファイルを列挙する
  * (browser.cのBROWSER_FILTER_ALLと同じ意味)。 */
 static int test_open_dir_show_all(void) {
@@ -162,6 +180,7 @@ int main(void) {
 
     if (test_open_dir_filters_and_sorts()) return 1;
     if (test_open_dir_show_all()) return 1;
+    if (test_open_dir_new_formats()) return 1;
     if (test_step_path_wraps()) return 1;
     if (test_step_path_no_current()) return 1;
     if (test_force_rescan()) return 1;

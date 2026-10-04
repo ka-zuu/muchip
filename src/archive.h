@@ -17,7 +17,7 @@ void archive_close(archive_t *ar);
 typedef struct {
     char *name;               /* zip内のエントリ名 (そのまま。malloc'd) */
     int index;                  /* archive_extract() に渡すzip内の添字 */
-    int is_music;               /* .gbs/.gb/.nsf/.spc/.vgm 等、libgmeが開ける拡張子 */
+    int is_music;               /* .gbs/.gb/.nsf/.spc/.vgm/.hes/.kss/.ay/.sap/.gym 等、libgmeが開ける拡張子 */
     int is_m3u;                  /* .m3u */
     unsigned long long uncompressed_size;
 } archive_entry_t;

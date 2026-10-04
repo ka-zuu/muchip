@@ -568,6 +568,228 @@ static int test_zip_single_m3u(void) {
     return 0;
 }
 
+/* ---- Issue #55: VGM/VGZ/GYM/HES/KSS/SAP ------------------------------
+ * いずれも合成した最小ファイル(本物の楽曲は同梱しない)。スキャン
+ * (playlist_open)がヘッダを受理してトラックを列挙できることを見る。
+ * 実際に鳴らす検証は実機で行う。 */
+
+static void write_bytes(const char *path, const void *buf, size_t n) {
+    FILE *f = fopen(path, "wb");
+    fwrite(buf, 1, n, f);
+    fclose(f);
+}
+
+static void le32(unsigned char *p, unsigned v) {
+    p[0] = v & 0xFF; p[1] = (v >> 8) & 0xFF; p[2] = (v >> 16) & 0xFF; p[3] = (v >> 24) & 0xFF;
+}
+
+/* VGM: ヘッダ0x40 + コマンド0x66(end)。track_duration=44100*3サンプル=3秒。 */
+#define SYNTHETIC_VGM_SIZE 0x41
+static void build_synthetic_vgm(unsigned char *out) {
+    memset(out, 0, SYNTHETIC_VGM_SIZE);
+    memcpy(out, "Vgm ", 4);
+    le32(out + 0x04, SYNTHETIC_VGM_SIZE - 4); /* EOFオフセット */
+    le32(out + 0x08, 0x150);                  /* version */
+    le32(out + 0x18, 44100 * 3);              /* total samples */
+    out[0x40] = 0x66;
+}
+
+/* GYM: "GYMX" + ヘッダ428バイト(packed=0) + データ1バイト */
+#define SYNTHETIC_GYM_SIZE 429
+static void build_synthetic_gym(unsigned char *out) {
+    memset(out, 0, SYNTHETIC_GYM_SIZE);
+    memcpy(out, "GYMX", 4);
+}
+
+/* HES: ヘッダ0x20("HESM", "DATA") + 1バイト */
+#define SYNTHETIC_HES_SIZE 0x21
+static void build_synthetic_hes(unsigned char *out) {
+    memset(out, 0, SYNTHETIC_HES_SIZE);
+    memcpy(out, "HESM", 4);
+    memcpy(out + 0x10, "DATA", 4);
+    le32(out + 0x14, 1);        /* size */
+    le32(out + 0x18, 0x10000);  /* addr */
+}
+
+/* KSS: ヘッダ0x10("KSCC") + 1バイト */
+#define SYNTHETIC_KSS_SIZE 0x11
+static void build_synthetic_kss(unsigned char *out) {
+    memset(out, 0, SYNTHETIC_KSS_SIZE);
+    memcpy(out, "KSCC", 4);
+    out[4] = 0x00; out[5] = 0x40; /* load_addr */
+    out[6] = 1;                    /* load_size */
+}
+
+/* SAP: テキストヘッダ + FF FF + ロードアドレス範囲 + コード */
+static size_t build_synthetic_sap(unsigned char *out) {
+    static const char hdr[] = "SAP\r\nAUTHOR \"A\"\r\nTYPE B\r\nINIT 0600\r\nPLAYER 0601\r\n";
+    size_t n = sizeof(hdr) - 1;
+    memcpy(out, hdr, n);
+    static const unsigned char body[] = { 0xFF, 0xFF, 0x00, 0x06, 0x01, 0x06, 0x60, 0x60 };
+    memcpy(out + n, body, sizeof(body));
+    return n + sizeof(body);
+}
+
+/* data(len)をgzip化して返す(malloc'd)。tdefでraw deflateを作り
+ * ヘッダ10バイト+トレーラ8バイトを付ける。corrupt_crcなら末尾CRCを壊す。 */
+static unsigned char *make_gzip(const unsigned char *data, size_t len, int corrupt_crc,
+                                size_t *out_len) {
+    size_t dlen = 0;
+    void *def = tdefl_compress_mem_to_heap(data, len, &dlen, TDEFL_DEFAULT_MAX_PROBES);
+    unsigned char *buf = malloc(10 + dlen + 8);
+    static const unsigned char h[10] = { 0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3 };
+    memcpy(buf, h, 10);
+    memcpy(buf + 10, def, dlen);
+    le32(buf + 10 + dlen, (unsigned)mz_crc32(MZ_CRC32_INIT, data, len) ^ (corrupt_crc ? 1u : 0u));
+    le32(buf + 10 + dlen + 4, (unsigned)len);
+    mz_free(def);
+    *out_len = 10 + dlen + 8;
+    return buf;
+}
+
+static int test_vgm_plain(void) {
+    unsigned char vgm[SYNTHETIC_VGM_SIZE];
+    build_synthetic_vgm(vgm);
+    char *path = path_in("plain.vgm");
+    write_bytes(path, vgm, sizeof vgm);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(path, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK(pl->entries[0].length_known);
+    CHECK(pl->entries[0].natural_ms == 3000);
+    CHECK(playlist_effects_supported(pl, 0) == 1);
+    playlist_free(pl);
+    return 0;
+}
+
+/* .vgz(gzip)・拡張子が.vgmでも中身がgzipのファイル・zip内の.vgz、
+ * いずれもminiz経由で展開して開ける。 */
+static int test_vgz_variants(void) {
+    unsigned char vgm[SYNTHETIC_VGM_SIZE];
+    build_synthetic_vgm(vgm);
+    size_t gl;
+    unsigned char *gz = make_gzip(vgm, sizeof vgm, 0, &gl);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    playlist_t *pl = NULL;
+
+    char *vgz = path_in("song.vgz");
+    write_bytes(vgz, gz, gl);
+    CHECK(playlist_open(vgz, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1 && pl->entries[0].natural_ms == 3000);
+    playlist_free(pl);
+
+    char *disguised = path_in("gz_as_vgm.vgm");
+    write_bytes(disguised, gz, gl);
+    pl = NULL;
+    CHECK(playlist_open(disguised, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    playlist_free(pl);
+
+    zip_member_t members[] = { { "TUNE.vgz", gz, gl } };
+    char *zip = path_in("vgz.zip");
+    write_binary_zip(zip, members, 1);
+    pl = NULL;
+    CHECK(playlist_open(zip, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    playlist_free(pl);
+
+    free(gz);
+    return 0;
+}
+
+/* 壊れたgzip(CRC不一致)は開けずにエラーで返る(クラッシュしない)。 */
+static int test_vgz_corrupt_fails(void) {
+    unsigned char vgm[SYNTHETIC_VGM_SIZE];
+    build_synthetic_vgm(vgm);
+    size_t gl;
+    unsigned char *gz = make_gzip(vgm, sizeof vgm, 1, &gl);
+    char *path = path_in("bad.vgz");
+    write_bytes(path, gz, gl);
+    free(gz);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(path, &cfg, &pl) != 0);
+    return 0;
+}
+
+/* GYMはSpc_Emu同様 Classic_Emu を継承しないためEQ/ステレオ深度が効かない。 */
+static int test_gym_effects_unsupported(void) {
+    unsigned char gym[SYNTHETIC_GYM_SIZE];
+    build_synthetic_gym(gym);
+    char *path = path_in("song.gym");
+    write_bytes(path, gym, sizeof gym);
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(path, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK(playlist_effects_supported(pl, 0) == 0);
+    playlist_free(pl);
+    return 0;
+}
+
+static int test_hes_kss_sap_open(void) {
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    playlist_t *pl = NULL;
+
+    unsigned char hes[SYNTHETIC_HES_SIZE];
+    build_synthetic_hes(hes);
+    char *hp = path_in("song.hes");
+    write_bytes(hp, hes, sizeof hes);
+    CHECK(playlist_open(hp, &cfg, &pl) == 0);
+    CHECK(pl->entry_count >= 1 && pl->source_count == 1);
+    CHECK(playlist_effects_supported(pl, 0) == 1);
+    playlist_free(pl);
+
+    unsigned char kss[SYNTHETIC_KSS_SIZE];
+    build_synthetic_kss(kss);
+    char *kp = path_in("song.kss");
+    write_bytes(kp, kss, sizeof kss);
+    pl = NULL;
+    CHECK(playlist_open(kp, &cfg, &pl) == 0);
+    CHECK(pl->entry_count >= 1 && pl->source_count == 1);
+    playlist_free(pl);
+
+    unsigned char sap[256];
+    size_t sap_len = build_synthetic_sap(sap);
+    char *sp = path_in("song.sap");
+    write_bytes(sp, sap, sap_len);
+    pl = NULL;
+    CHECK(playlist_open(sp, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    playlist_free(pl);
+    return 0;
+}
+
+/* KSSは flags_ に0x02(10進m3u番号が0始まり)を持つ。0を指すm3u行が
+ * 「Invalid track」にならず、そのまま1曲として列挙される。 */
+static int test_kss_decimal_track_zero_based(void) {
+    unsigned char kss[SYNTHETIC_KSS_SIZE];
+    build_synthetic_kss(kss);
+    char *kp = path_in("zero.kss");
+    write_bytes(kp, kss, sizeof kss);
+    char *mp = path_in("zero.m3u");
+    write_text_file(mp, "zero.kss::KSS,0,Zeroth,0:10\n");
+
+    mugbs_config_t cfg;
+    config_set_defaults(&cfg);
+    playlist_t *pl = NULL;
+    CHECK(playlist_open(mp, &cfg, &pl) == 0);
+    CHECK(pl->entry_count == 1);
+    CHECK_STREQ(pl->entries[0].title, "Zeroth");
+    playlist_free(pl);
+    return 0;
+}
+
 /* Issue #19/#24: playlist_resolve_length_ms() は length_override_sec の
  * みを見る純関数(loopsも引数で渡すだけ)。SDLもlibgmeの初期化も要らない。 */
 static int test_resolve_length_ms(void) {
@@ -1105,6 +1327,12 @@ int main(void) {
     if (test_multi_file_and_missing()) return 1;
     if (test_zip_single_m3u()) return 1;
     if (test_zip_multiple_m3u()) return 1;
+    if (test_vgm_plain()) return 1;
+    if (test_vgz_variants()) return 1;
+    if (test_vgz_corrupt_fails()) return 1;
+    if (test_gym_effects_unsupported()) return 1;
+    if (test_hes_kss_sap_open()) return 1;
+    if (test_kss_decimal_track_zero_based()) return 1;
     if (test_fade_start_ms()) return 1;
     if (test_resolve_length_ms()) return 1;
     if (test_length_override_applies_and_reverts()) return 1;

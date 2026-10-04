@@ -169,33 +169,10 @@ int player_play_entry(player_t *p, int entry_index) {
         close_current_emu(p);
 
         Music_Emu *emu = NULL;
-        gme_err_t err;
-
-        if (src->zip_entry) {
-            /* zip由来のソース: その都度展開してメモリから開く。
-             * 一時ファイルはディスクに書かない (SPEC 5.3)。 */
-            int idx = archive_find(src->archive, src->zip_entry);
-            if (idx < 0) {
-                LOG_ERR("zip内にファイルが見つかりません: %s", src->zip_entry);
-                return -1;
-            }
-            void *data = NULL;
-            size_t size = 0;
-            if (archive_extract(src->archive, idx, &data, &size) != 0) {
-                return -1;
-            }
-            err = gme_open_data(data, (long)size, &emu, p->config->sample_rate);
-            free(data); /* gme_open_data はデータをコピーするのでここで解放してよい */
-            if (err) {
-                LOG_ERR("gme_open_data(zip内 %s): %s", src->zip_entry, err);
-                return -1;
-            }
-        } else {
-            err = gme_open_file(src->fs_path, &emu, p->config->sample_rate);
-            if (err) {
-                LOG_ERR("gme_open_file(%s): %s", src->fs_path, err);
-                return -1;
-            }
+        gme_err_t err = playlist_source_open_emu(src, p->config->sample_rate, &emu);
+        if (err) {
+            LOG_ERR("emuを開けません(%s): %s", src->display_path, err);
+            return -1;
         }
 
         if (src->m3u_text) {

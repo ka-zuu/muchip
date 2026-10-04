@@ -16,6 +16,10 @@ static int has_music_ext(const char *name) {
     return ends_with_ci(name, ".gbs") || ends_with_ci(name, ".gb") ||
            ends_with_ci(name, ".nsf") || ends_with_ci(name, ".nsfe") ||
            ends_with_ci(name, ".spc") ||
+           ends_with_ci(name, ".vgm") || ends_with_ci(name, ".vgz") ||
+           ends_with_ci(name, ".hes") || ends_with_ci(name, ".kss") ||
+           ends_with_ci(name, ".ay") || ends_with_ci(name, ".sap") ||
+           ends_with_ci(name, ".gym") ||
            ends_with_ci(name, ".m3u") || ends_with_ci(name, ".zip");
 }
 
