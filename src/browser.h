@@ -39,7 +39,7 @@ typedef struct {
  * 失敗時(opendir不可等)は browser_t を触らない(呼び出し側は直前の
  * ディレクトリに留まれる)。
  * filter は browser_filter_t(int互換)。BROWSER_FILTER_MUSICなら
- * .gbs/.gb/.nsf/.nsfe/.spc/.m3u/.zip のみを列挙する(拡張子フィルタ、
+ * .gbs/.gb/.nsf/.nsfe/.spc/.vgm/.vgz/.hes/.kss/.ay/.sap/.gym/.m3u/.zip のみを列挙する(拡張子フィルタ、
  * SPEC 6.1)。BROWSER_FILTER_ALLならすべてのファイルを列挙する
  * (config.ini show_all_files 相当。値の永続化自体はP6)。BROWSER_FILTER_DIRS
  * ならディレクトリのみを列挙する(Settings画面の「Start folder」サブ画面用、

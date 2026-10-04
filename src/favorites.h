@@ -4,7 +4,7 @@
  * tests/test_favorites.c で単体テストできる。
  *
  * トラックは (container, source_key, track_index) の3つ組で同定する:
- *   container    app_open_path() に渡したパス(.gbs/.nsf/.spc/.m3u/.zip)
+ *   container    app_open_path() に渡したパス(.gbs/.nsf/.spc/.vgm等/.m3u/.zip)
  *   source_key   playlist_source_t の zip_entry(zip内)か fs_path
  *   track_index  playlist_entry_t.track_index(m3u適用後のgmeの添字)
  * playlist_open_favorites()(playlist.h)は container ごとに既存の

@@ -24,12 +24,18 @@ target_include_directories(test_text PRIVATE . ../src)
 add_test(NAME test_text COMMAND test_text)
 
 add_executable(test_playlist test_playlist.c ../src/playlist.c ../src/m3u.c ../src/archive.c
-                              ../src/config.c ../src/theme.c ../src/text.c ../src/favorites.c)
+                              ../src/gzip.c ../src/config.c ../src/theme.c ../src/text.c ../src/favorites.c)
 target_include_directories(test_playlist PRIVATE . ../src)
 target_link_libraries(test_playlist PRIVATE gme_static miniz)
 set_target_properties(test_playlist PROPERTIES LINKER_LANGUAGE CXX)
 target_link_options(test_playlist PRIVATE -static-libstdc++ -static-libgcc)
 add_test(NAME test_playlist COMMAND test_playlist)
+
+# Issue #55: gzip(VGZ)展開。minizのみに依存する。
+add_executable(test_gzip test_gzip.c ../src/gzip.c)
+target_include_directories(test_gzip PRIVATE . ../src)
+target_link_libraries(test_gzip PRIVATE miniz)
+add_test(NAME test_gzip COMMAND test_gzip)
 
 # P8で追加したeq.c(EQノブ -100..100 -> libgmeの treble(dB)/bass(Hz))の
 # 単体テスト。config.c と同じくSDLにもlibgmeにも依存しない純libc。

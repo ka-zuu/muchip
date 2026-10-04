@@ -15,7 +15,7 @@
 #   ICON: glyph/<ICON>.png と grid/<ICON>.png を引くためのキー
 #   GRID: グリッド表示時の短い名前
 
-# HELP: A chiptune music player (GBS/NSF/SPC) with full sub-track and M3U support.
+# HELP: A chiptune music player (GBS/NSF/SPC/VGM and more) with full sub-track and M3U support.
 # ICON: muchip
 # GRID: muChip
 

@@ -22,6 +22,12 @@ muChip（旧 muGBS）のユーザー向け変更履歴。実装の設計判断�
 
 ### 機能追加
 
+- 対応フォーマットを拡張した（F-35, Issue #55）。`.vgm`/`.vgz`（Sega
+  SMS/Genesis）・`.hes`（PC Engine）・`.kss`（MSX等）・`.ay`（ZX Spectrum）・
+  `.sap`（Atari XL）・`.gym`（Sega Genesis）がBrowserに表示され、GBS/NSF/SPCと
+  同じ操作（単体・m3u・zip同梱）で再生できる。`.vgz`（gzip圧縮）は
+  zlibを追加せず同梱のminizで展開する。GYMはSPCと同様にEQ/ステレオ深度が
+  効かないため、再生中のSettings画面で該当3行をグレーアウトする。
 - お気に入り（固定の1本）を追加した（F-33, Issue #18）。Player画面の
   `Y`（単押し）で再生中のトラックを、TrackList画面の `Y` で選択中のトラックを
   お気に入りへ追加/削除できる（曲名の前に★が付く）。Browser画面の `Y` で

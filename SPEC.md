@@ -27,8 +27,9 @@
 ### 1.2 スコープ外（やらないこと）
 
 - GB APU の自前エミュレーション実装（libgme に委譲する）
-- GBS/NSF/SPC 以外の形式の**積極的な**サポート（ただし libgme が対応する
-  VGM 等は「たまたま動く」状態で構わない。UI上で排除しない）。
+- GBS/NSF/SPC/VGM/HES/KSS/AY/SAP/GYM 以外の形式のサポート。
+  `.vgm`/`.vgz`・`.hes`・`.kss`・`.ay`・`.sap`・`.gym` も libgme に
+  デコードを委譲して一級市民として扱う（F-35, Issue #55）。
   `.nsf`/`.nsfe`（NSF, Nintendo Sound Format）と `.spc`（SPC, SNES SPC700
   Sound File）は GBS と同格の一級市民として正式サポートする（F-27, F-32,
   Issue #2, Issue #43）。GBS 用に組んだ「単体ファイル＋同名サイドカーm3u／
@@ -102,6 +103,7 @@
 | F-32 | `.spc`（SPC, SNES SPC700 Sound File）を `.gbs`/`.nsf` と同格に扱える。単体ファイル＋同名サイドカーm3u・m3u直接・zip同梱のいずれの経路も共通（Issue #43で実装）。以下の3点でGBS/NSFと挙動が異なる: (1) 1ファイル=1トラック固定（libgmeの`gme_spc_type_`がfixed_track_count=1を宣言するため、フォルダ内の複数`.spc`をまたぐ自動連続再生は行わない。アルバムはzip/m3uでまとめる運用に委ねる）。(2) 10進の拡張M3Uトラック番号はNSFと同じく1始まり（5.2節参照。追加パッチ不要）。(3) ID666タグに曲長（秒）を持つため`length_known`が立ち、F-28（ながさチェンジ）・F-29（Skip short）がGBS/NSFの素のヘッダ（曲長情報を一切持たない）と異なる経路を通る。加えて、libgmeの実装上（`Spc_Emu`が`Classic_Emu`を継承しないため）EQ（F-20）とステレオ深度（F-21）がSPC再生中は一切効かない。値の編集自体は禁止しないが、Settings画面は該当行をグレーアウト（`THEME_ROLE_DIM`）して示す（選択中も維持する。6.1節） |
 | F-33 | お気に入り（固定の1本。Issue #18）: Player画面の`Y`単押しで再生中のトラックを、TrackList画面の`Y`で選択中のトラックを、お気に入りへ追加/削除（トグル）できる。追加するたびに`config.ini`と同じディレクトリの`favorites.txt`へ保存する（環境変数`MUCHIP_FAVORITES`で場所を上書きできる）。Browser画面の`Y`でお気に入りを1本のプレイリストとして開き、TrackList・リピート・シャッフル・Resumeがそのまま使える。お気に入りのトラックは曲名の前に★が付く。単体ファイル・サイドカーm3u・m3u直接・zip内（zophar配布パック等）のいずれのトラックも入れられ、フォルダをまたいで混在できる。参照先が消えたトラックは再生時に警告して読み飛ばす（`favorites.txt`は書き換えない）。お気に入り再生中はPlayerのUP/DOWN（同ディレクトリのファイル送り）は無効。お気に入り再生中にトラックを外しても、開いているプレイリストは次に開き直すまで変わらない |
 | F-34 | 再生履歴（Issue #51）: 5秒以上再生したトラックを新しい順に最大50件記録し、Browser画面の`X`で1本のプレイリストとして開ける（TrackList・リピート・シャッフルがそのまま使える）。同じトラックは先頭へ移動して重複させず、50件を超えた分は古いものから捨てる。トラックの同定と保存形式はお気に入り（F-33）と同じで、zip内のトラックも記録される。`config.ini`と同じディレクトリの`history.txt`へ記録のたびに保存する（環境変数`MUCHIP_HISTORY`で場所を上書きできる）。0件なら`No history yet`を表示して画面は変わらない。履歴再生中はPlayerのUP/DOWN（同ディレクトリのファイル送り）は無効で、`Start with: Last played`の復元対象にもならない（履歴は再生のたびに並びが変わるため、次回起動時に同じ曲を指せない） |
+| F-35 | `.vgm`/`.vgz`（Sega SMS/Genesis）・`.hes`（PC Engine）・`.kss`（MSX等）・`.ay`（ZX Spectrum）・`.sap`（Atari XL）・`.gym`（Sega Genesis）を `.gbs`/`.nsf` と同格に扱える。単体ファイル＋同名サイドカーm3u・m3u直接・zip同梱の経路は共通（Issue #55で実装）。(1) `.vgz`（gzip圧縮VGM）は libgme の zlib 依存を使わず、muChip が同梱の miniz で展開してから libgme へ渡す（zip内の`.vgz`、拡張子が`.vgm`でも中身がgzipのファイルも同様）。展開後サイズは32MBまで。CRC32/ISIZEの不一致・切り詰め・非対応方式のgzipは開けずにエラーとして扱う。(2) 10進の拡張M3UトラックはKSSのみ0始まり、他（VGM/HES/AY/SAP/GYM）は1始まり（5.2節参照。libgme本家の既定動作で追加パッチは不要）。(3) GYMは `Classic_Emu` を継承しないためEQ（F-20）とステレオ深度（F-21）が効かず、SPC（F-32）と同様にSettings画面で該当行をグレーアウトする。VGM/HES/KSS/AY/SAPは通常どおり効く |
 
 ---
 
@@ -307,6 +309,12 @@ Game.gbs::GBS,2,Battle,1:45
 > 適用される。SPCは1ファイル=1トラック固定なので実用上m3uで意味を持つのは
 > `SPC,1,...`のみだが、GBSのようなフォークパッチは不要（
 > `tests/test_playlist.c` の `test_spc_sidecar_m3u_is_one_based()` 参照）。
+>
+> **VGM/HES/AY/SAP/GYMも1始まり、KSSだけ0始まり**（Issue #55）:
+> `gme_kss_type_` は upstream 側で `flags_` に 0x02 を持っており、10進番号を
+> そのまま0始まりの生サブトラック番号として使う（GBSパッチと同じ動作）。
+> それ以外は `flags_` の 0x02 が無く、上記NSF/SPCと同じく1始まりとして
+> `-1` される。いずれも追加パッチは要らない。
 
 #### 実装方針
 
@@ -340,7 +348,7 @@ Game.gbs::GBS,2,Battle,1:45
 ```
 zip を開く
  ├─ 中央ディレクトリを列挙
- ├─ 拡張子で分類: .gbs/.gb/.nsf/.spc → 音楽, .m3u → プレイリスト
+ ├─ 拡張子で分類: .gbs/.gb/.nsf/.spc/.vgm/.vgz/.hes/.kss/.ay/.sap/.gym → 音楽, .m3u → プレイリスト
  ├─ .m3u が1つ以上ある場合
  │    └─ **全ての .m3u をメモリ展開してマージする**（最初の1つだけを
  │       採用しない）→ 参照される .gbs もメモリ展開
@@ -422,10 +430,10 @@ UTF-8で統一しているため、`playlist.c` が上記フィールドを複�
 
 | 画面 | 内容 |
 |---|---|
-| **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.gb` `.nsf` `.nsfe` `.spc` `.m3u` `.zip` のみ表示（設定で全表示可。`.nsf`/`.nsfe`はIssue #2、`.spc`はIssue #43で追加） |
+| **Browser** | ファイル一覧。ディレクトリ階層を辿る。`.gbs` `.gb` `.nsf` `.nsfe` `.spc` `.vgm` `.vgz` `.hes` `.kss` `.ay` `.sap` `.gym` `.m3u` `.zip` のみ表示（設定で全表示可。`.nsf`/`.nsfe`はIssue #2、`.spc`はIssue #43、`.vgm`〜`.gym`はIssue #55で追加） |
 | **Player** | 曲名（見切れる場合、`[ui] title_scroll` が既定onなら横スクロール表示。Issue #8）・ゲーム名・作者・著作権（無い項目の行は詰めて描く。Issue #47）・トラック `n/N`・経過/全体時間とシークバー（同一行。リピートが `one` でフェード無効(エンドレス)のときは全体時間を `--:--` にしシークバーを描かない。Issue #15）・波形ビジュアライザ（残りの高さ全部。Issue #47で同ディレクトリのファイル一覧UIを撤去し波形に回した。低解像度で最低行数も取れない場合は描かない） |
 | **TrackList** | 現在のファイルの全トラック一覧。直接ジャンプ可能 |
-| **Settings** | Length（先頭。ながさチェンジ。auto/5〜30分・5分刻み。F-28, Issue #19）・デフォルト曲長（分単位・1分刻み。Issue #16）・Skip short（短い曲のスキップ。off/0〜30秒・1秒刻み。F-29, Issue #21）・リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・Fade・Show all files・Scroll title（Issue #8）・Show battery（F-26, Issue #7）・Theme・Edit theme（カラーテーマ。F-31, Issue #27）・Start with・Start folder（末尾2つ。起動モード。F-13, Issue #47）。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10）。現在再生中のソースがSPCのときは、libgmeの実装上効かないステレオ深度・EQ bass・EQ trebleの3行をグレーアウトする（カーソルを合わせた選択中も維持する。F-32, Issue #43。値の編集自体は禁止しない） |
+| **Settings** | Length（先頭。ながさチェンジ。auto/5〜30分・5分刻み。F-28, Issue #19）・デフォルト曲長（分単位・1分刻み。Issue #16）・Skip short（短い曲のスキップ。off/0〜30秒・1秒刻み。F-29, Issue #21）・リピート・シャッフル（F-25, P10）・ステレオ深度・EQ・Fade・Show all files・Scroll title（Issue #8）・Show battery（F-26, Issue #7）・Theme・Edit theme（カラーテーマ。F-31, Issue #27）・Start with・Start folder（末尾2つ。起動モード。F-13, Issue #47）。`X`で全項目を既定値に戻す確認ダイアログを開ける（P10）。現在再生中のソースがSPC/GYMのときは、libgmeの実装上効かないステレオ深度・EQ bass・EQ trebleの3行をグレーアウトする（カーソルを合わせた選択中も維持する。F-32, Issue #43。値の編集自体は禁止しない） |
 | **Theme Editor** | `Settings`の`Edit theme`（`A`）で開くサブ画面。9つの色スロット（背景・パネル・本文・副文・アクセント・選択行・再生中マーク・警告・充電中）をラベル・R/G/B値・色見本の一覧で並べる。カーソル行のR/G/Bのうち選択中のチャンネルにマーカー（`>`）が付く。編集した値は即座に全6画面へライブプレビューされる（F-31, Issue #27） |
 | **Folder Pick** | `Settings`の`Start folder`（`A`）で開くサブ画面。ディレクトリのみを列挙する（Browserと同じ2段組ヘッダ+リスト+フッタ2行の構図だが、ファイルは一切出さない）。`A`で中へ入る、`B`で上の階層へ、`X`でいまのフォルダを確定してSettingsへ戻る（保存される）、`Y`で未設定に戻してSettingsへ戻る、`Start`でキャンセルしてSettingsへ戻る（F-13, F-05, Issue #47） |
 
@@ -695,8 +703,11 @@ target_link_libraries(muchip PRIVATE gme_static SDL2 m)
 
 libgme は `BUILD_SHARED_LIBS=OFF`, `ENABLE_UBSAN=OFF` でビルドし、
 不要なエミュレータを削って軽量化してもよい（`USE_GME_GBS=ON` /
-`USE_GME_NSF=ON` / `USE_GME_NSFE=ON` / `USE_GME_SPC=ON` は必須。
-F-27, F-32, Issue #2, Issue #43）。
+`USE_GME_NSF=ON` / `USE_GME_NSFE=ON` / `USE_GME_SPC=ON` /
+`USE_GME_VGM=ON` / `USE_GME_HES=ON` / `USE_GME_KSS=ON` / `USE_GME_AY=ON` /
+`USE_GME_SAP=ON` / `USE_GME_GYM=ON` は必須。F-27, F-32, F-35, Issue #2,
+Issue #43, Issue #55）。`GME_ZLIB=OFF` のままで、VGZ は muChip 側で
+miniz を使って展開する（F-35）。
 
 ---
 
@@ -854,6 +865,12 @@ CMake オプション `-DTARGET_HOST=ON` でホストビルドできるように
 | T-29 | 曲を5秒以上再生し、Browserで`X`（F-34, Issue #51） | 再生した曲が新しい順の先頭に並ぶ履歴が開く。5秒未満でスキップした曲は記録されない。同じ曲を再度聴くと重複せず先頭へ移る |
 | T-30 | 履歴が0件でBrowserの`X`（F-34, Issue #51） | `No history yet`が表示され、画面は変わらない |
 | T-31 | 51曲以上を5秒ずつ再生する（F-34, Issue #51） | 履歴は50件で、最も古い曲から押し出される。zip内の曲も記録され、履歴から再生できる |
+| T-32 | 単体の `.vgm` を開く（F-35, Issue #55） | 1トラックが列挙され、ヘッダの総サンプル数から曲長が既知（`length_known`）になる。EQ/ステレオ深度は効く（グレーアウトされない） |
+| T-33 | `.vgz`（gzip）、拡張子が`.vgm`で中身がgzipのファイル、zip内の`.vgz`を開く（F-35, Issue #55） | いずれも展開されて `.vgm` と同じ結果で開ける |
+| T-34 | CRC32が壊れた`.vgz`を開く（F-35, Issue #55） | クラッシュせずエラーとして開けない |
+| T-35 | `.gym` を開く／再生中にSettingsを開く（F-35, Issue #55） | 開ける。再生中はSPC同様に`Stereo depth`・`EQ bass`・`EQ treble`がグレーアウトされる |
+| T-36 | `.hes`/`.kss`/`.sap` を開く。KSSの同名m3uで10進トラック番号`0`を指す（F-35, Issue #55） | いずれも開ける。KSSのm3uの`0`は0始まりの先頭トラックとして列挙される |
+| T-37 | Browser/Playerのディレクトリ送りで `.vgm` `.vgz` `.hes` `.kss` `.ay` `.sap` `.gym` を含むフォルダを開く（F-35, Issue #55） | 拡張子フィルタを通って一覧に出る（`.txt`等は出ない） |
 
 ### 10.3 テスト用素材
 

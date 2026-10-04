@@ -840,7 +840,7 @@ typedef struct {
     const char *const *enum_names; /* SET_ENUMのみ非NULL */
     int enum_count;
     /* Issue #43: 非0なら、この項目はlibgmeのEQ/ステレオ深度に相当し、
-     * 現在再生中のソースがSPC(playlist_effects_supported()==0)のときは
+     * 現在再生中のソースがSPC/GYM(playlist_effects_supported()==0)のときは
      * 行をグレーアウトする(settings_item_dim()参照)。値の編集自体は
      * 禁止しない(形式非依存のグローバル設定であり、GBS/NSFへ戻れば
      * 効くため)。 */
@@ -879,7 +879,7 @@ static const setting_def_t SETTINGS[] = {
     { "Skip short",       SET_SECONDS, offsetof(mugbs_config_t, skip_short_sec),      0,    30,   1, NULL, 0, 0 },
     { "Repeat",           SET_ENUM,   offsetof(mugbs_config_t, repeat_mode),        0,     2,   1, REPEAT_MODE_NAMES, 3, 0 },
     { "Shuffle",            SET_BOOL,   offsetof(mugbs_config_t, shuffle),            0,     1,   1, NULL, 0, 0 },
-    /* Issue #43: 末尾の1はneeds_effects。SPC再生中はEQ/ステレオ深度が
+    /* Issue #43: 末尾の1はneeds_effects。SPC/GYM再生中はEQ/ステレオ深度が
      * 効かないためグレーアウトの対象(settings_item_dim()参照)。 */
     { "Stereo depth",      SET_DOUBLE, offsetof(mugbs_config_t, stereo_depth),       0.0,   1.0, 0.05, NULL, 0, 1 },
     { "EQ bass",            SET_INT,    offsetof(mugbs_config_t, eq_bass),         -100,   100,   5, NULL, 0, 1 },
@@ -1783,11 +1783,11 @@ static const char *settings_item_text(void *ctx, int index) {
 }
 
 /* Issue #43: needs_effects項目(Stereo depth/EQ bass/EQ treble)は、現在
- * 再生中のソースがSPC(playlist_effects_supported()==0)のとき値が
+ * 再生中のソースがSPC/GYM(playlist_effects_supported()==0)のとき値が
  * 効かない。settings_item_text()の値そのものは変えない
  * (LEFT/RIGHTでの編集はGBS/NSFへ戻れば効くグローバル設定なので禁止
  * しない)。ui_draw_list()のdim_fnへ渡し、行の文字色をTHEME_ROLE_DIMへ
- * 差し替えて示す(停止中・SPC以外は従来どおり通常色)。 */
+ * 差し替えて示す(停止中・SPC/GYM以外は従来どおり通常色)。 */
 static int settings_item_dim(void *ctx, int index) {
     app_t *app = (app_t *)ctx;
     const setting_def_t *s = &SETTINGS[index];

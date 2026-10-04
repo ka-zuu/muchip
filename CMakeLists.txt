@@ -54,7 +54,8 @@ set(GME_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GME_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(GME_ENABLE_UBSAN OFF CACHE BOOL "" FORCE)
 set(GME_ENABLE_ASAN OFF CACHE BOOL "" FORCE)
-# zlib 依存を持ち込まない。VGZ 等の圧縮系フォーマットが読めなくなるだけで GBS には影響しない。
+# zlib 依存を持ち込まない。libgme 自身の VGZ 展開は無効になるが、gzip は
+# muChip 側で同梱の miniz を使って展開してから libgme へ渡す(src/gzip.c, Issue #55)。
 set(GME_ZLIB OFF CACHE BOOL "" FORCE)
 set(USE_GME_GBS ON CACHE BOOL "" FORCE)
 # NSF/NSFE (Nintendo Sound Format) デコード。GBSと同格の一級市民として扱う
@@ -65,6 +66,14 @@ set(USE_GME_NSFE ON CACHE BOOL "" FORCE)
 # SPC (SNES SPC700) デコード。GBS/NSFと同格の一級市民として扱う
 # (F-32, Issue #43)。理由はNSF/NSFEと同じ(暗黙の既定値に頼らない)。
 set(USE_GME_SPC ON CACHE BOOL "" FORCE)
+# VGM/VGZ・HES・KSS・AY・SAP・GYM (Issue #55)。これも理由はNSF/SPCと同じ
+# (暗黙の既定値に頼らない)。
+set(USE_GME_VGM ON CACHE BOOL "" FORCE)
+set(USE_GME_HES ON CACHE BOOL "" FORCE)
+set(USE_GME_KSS ON CACHE BOOL "" FORCE)
+set(USE_GME_AY ON CACHE BOOL "" FORCE)
+set(USE_GME_SAP ON CACHE BOOL "" FORCE)
+set(USE_GME_GYM ON CACHE BOOL "" FORCE)
 # YM2612エミュレータの選択。"Nuked"/"GENS"はLGPLv2.1+だが"MAME"はGPLv2+。
 # 暗黙の既定値(現状は"Nuked")に頼るとupstreamが既定を変えたときに出荷バイナリの
 # ライセンスが黙ってGPLv2+へ変わってしまうため、ライセンス上の理由で明示する
@@ -95,6 +104,7 @@ add_executable(muchip
     src/m3u.c
     src/playlist.c
     src/archive.c
+    src/gzip.c
     src/text.c
     src/ui.c
     src/browser.c

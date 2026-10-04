@@ -1,4 +1,4 @@
-/* playlist.h - 単体音楽ファイル(.gbs/.gb/.nsf/.nsfe/.spc) / 同名.m3u同梱 /
+/* playlist.h - 単体音楽ファイル(.gbs/.gb/.nsf/.nsfe/.spc/.vgm/.vgz/.hes/.kss/.ay/.sap/.gym) / 同名.m3u同梱 /
  * .m3u直接 / (P4で).zip の4入力を単一のデータモデルへ正規化する。
  * (SPEC 4.2, 5.2)
  *
@@ -18,6 +18,7 @@
 typedef struct gme_info_t gme_info_t;
 /* archive.h の不透明型 archive_t と同じ実体(typedef struct archive archive_t)。 */
 struct archive;
+struct Music_Emu;
 
 typedef struct {
     char *display_path; /* 表示・ログ用。P4ではzip内なら "rip.zip:Game.gbs" 形式になる */
@@ -48,6 +49,7 @@ typedef struct {
      * なので set_equalizer_() が空実装(Music_Emu.h)で、effects_buffer も
      * NULLのため gme_set_stereo_depth() も何もしない
      * (docs/design-notes.md「libgmeの使い方と既知の乖離」参照)。
+     * GYM(Gym_Emu)も Music_Emu 直下で flags_=0 のため同じく0(Issue #55)。
      * Settings画面(app.c)がグレーアウト表示を出すために読む。 */
     int effects_supported;
 } playlist_source_t; /* = 1回 Music_Emu を開く単位 (m3uのセグメントに対応) */
@@ -215,6 +217,13 @@ int playlist_is_short(const playlist_entry_t *e, const mugbs_config_t *cfg);
  * 追随させること (Issue #21, app_apply_settings() 参照)。 */
 void playlist_apply_config(playlist_t *pl, const mugbs_config_t *cfg,
                             int keep_source, int keep_track);
+
+/* src を開いて Music_Emu を返す(NULLなら成功、それ以外はエラー文字列)。
+ * 単体ファイル/zip内の両方に対応し、gzip圧縮(VGZ)ならminizで展開してから
+ * 開く(Issue #55)。成功時、呼び出し側が gme_delete() すること。
+ * playlist.c のスキャンと player.c の再生開始が共有する。 */
+const char *playlist_source_open_emu(const playlist_source_t *src, int sample_rate,
+                                     struct Music_Emu **out);
 
 /* sources[source_index].effects_supported を返す(Issue #43)。
  * pl が NULL、または source_index が範囲外なら 1(通常表示)を返す
