@@ -984,7 +984,7 @@ static int test_favorites_mixed_containers(void) {
     mugbs_config_t cfg;
     config_set_defaults(&cfg);
     playlist_t *pl = NULL;
-    CHECK(playlist_open_favorites(&fav, &cfg, &pl) == 0);
+    CHECK(playlist_open_favorites(&fav, "Favorites", &cfg, &pl) == 0);
     CHECK(pl->is_favorites);
     CHECK_STREQ(pl->game, "Favorites");
     CHECK(pl->entry_count == 5);
@@ -1031,17 +1031,18 @@ static int test_favorites_skips_unresolvable(void) {
     CHECK(favorites_toggle(&fav, gbs, gbs, 99, "x") == 1);
 
     playlist_t *pl = NULL;
-    CHECK(playlist_open_favorites(&fav, &cfg, &pl) != 0); /* 全滅 */
+    CHECK(playlist_open_favorites(&fav, "Favorites", &cfg, &pl) != 0); /* 全滅 */
     CHECK(pl == NULL);
 
     CHECK(favorites_toggle(&fav, gbs, gbs, 1, "x") == 1);
-    CHECK(playlist_open_favorites(&fav, &cfg, &pl) == 0);
+    CHECK(playlist_open_favorites(&fav, "History", &cfg, &pl) == 0);
+    CHECK_STREQ(pl->game, "History"); /* 表示名は呼び出し側が決める(Issue #51) */
     CHECK(pl->entry_count == 1);
     CHECK(pl->entries[0].track_index == 1);
     playlist_free(pl);
 
     favorites_free(&fav);
-    CHECK(playlist_open_favorites(&fav, &cfg, &pl) != 0); /* 空 */
+    CHECK(playlist_open_favorites(&fav, "Favorites", &cfg, &pl) != 0); /* 空 */
     return 0;
 }
 
@@ -1076,7 +1077,7 @@ static int test_favorites_duplicate_file_segments(void) {
     CHECK(favorites_toggle(&fav, m3u, k1, src->entries[0].track_index, "x") == 1);
 
     playlist_t *pl = NULL;
-    CHECK(playlist_open_favorites(&fav, &cfg, &pl) == 0);
+    CHECK(playlist_open_favorites(&fav, "Favorites", &cfg, &pl) == 0);
     CHECK(pl->entry_count == 2);
     CHECK_STREQ(pl->entries[0].title, src->entries[2].title);
     CHECK_STREQ(pl->entries[1].title, src->entries[0].title);

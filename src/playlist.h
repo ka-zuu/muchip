@@ -116,14 +116,16 @@ typedef struct {
  * P3時点ではローカルファイルシステムのみを扱う。zip対応はP4。 */
 int playlist_open(const char *path, const mugbs_config_t *config, playlist_t **out);
 
-/* Issue #18: お気に入り(favorites.h)を1本の playlist_t にする。
+/* Issue #18: お気に入り(favorites.h)を1本の playlist_t にする。Issue #51:
+ * 再生履歴(同じ型)も同じ関数で開く。name は pl->game に入る表示名
+ * ("Favorites"/"History")。
  * entries[] はお気に入りの並び(追加順)になる。fav の各項目は、containerを
  * playlist_open() と同じロジックで開き直し、source_key が一致するソースの
  * track_index のトラックとして解決する(サイドカーm3uやzip内m3uの適用も
  * 通常の再生経路と同一)。解決できない項目(ファイルが消えた等)は警告して
  * 読み飛ばす。fav は変更しない。1件も解決できなければ-1。 */
-int playlist_open_favorites(const favorites_t *fav, const mugbs_config_t *config,
-                            playlist_t **out);
+int playlist_open_favorites(const favorites_t *fav, const char *name,
+                            const mugbs_config_t *config, playlist_t **out);
 
 /* Issue #18: source_index のソースを favorites.h の source_key へ変換する。
  * 同じファイルを複数セグメントで指すm3uでも一意になる(実装側のコメント参照)。

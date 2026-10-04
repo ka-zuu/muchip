@@ -292,6 +292,17 @@ int main(int argc, char **argv) {
      * 始める」を実現できる。 */
     char favorites_path[MUGBS_PATH_MAX];
     favorites_resolve_path(favorites_path, sizeof(favorites_path), config_path);
+    char history_path[MUGBS_PATH_MAX];
+    history_resolve_path(history_path, sizeof(history_path), config_path);
+    /* Issue #51: スキップ連打で履歴が埋まらないよう既定は5秒以上再生した曲だけ。
+     * CTestのUIスモークは数百msで終わるため MUCHIP_HISTORY_MIN_MS=0 で
+     * 再生開始直後に記録させる(MUCHIP_BATTERY_FAKEと同じ位置づけのテスト用フック)。 */
+    int history_min_ms = 5000;
+    const char *min_env = getenv("MUCHIP_HISTORY_MIN_MS");
+    if (min_env && min_env[0]) {
+        int v = atoi(min_env);
+        if (v >= 0) history_min_ms = v;
+    }
     app_options_t opt = {
         .initial_path = args.path,
         .start_dir = args.start_dir,
@@ -302,6 +313,8 @@ int main(int argc, char **argv) {
         .screenshot_path = args.screenshot,
         .config_path = cli_override ? NULL : config_path,
         .favorites_path = favorites_path,
+        .history_path = history_path,
+        .history_min_ms = history_min_ms,
         /* Issue #7: muOS実機は mux_launch.sh が GET_VAR でしきい値を探し、
          * 見つかれば MUCHIP_BATTERY_LOW_PCT を export する。無ければ
          * battery_low_threshold_from_env(NULL) が既定の10%を返す。 */

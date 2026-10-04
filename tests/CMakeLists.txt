@@ -155,7 +155,7 @@ foreach(res ${UI_SMOKE_RESOLUTIONS})
     # 一度も実行されない。7は既定しきい値(10%)未満なので、既定の
     # battery_show=low でも赤い(低残量)描画経路まで踏める。
     set_tests_properties(test_ui_smoke_${res} PROPERTIES
-        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;MUCHIP_BATTERY_FAKE=7;MUCHIP_FAVORITES=${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_${res}.favorites.txt")
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;MUCHIP_BATTERY_FAKE=7;MUCHIP_FAVORITES=${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_${res}.favorites.txt;MUCHIP_HISTORY=${CMAKE_CURRENT_BINARY_DIR}/ui_smoke_${res}.history.txt;MUCHIP_HISTORY_MIN_MS=0")
 endforeach()
 
 # --- .muxapp パッケージ構造の検証 (P7) ---------------------------------------
