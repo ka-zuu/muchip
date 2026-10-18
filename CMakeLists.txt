@@ -28,7 +28,9 @@ cmake_minimum_required(VERSION 3.13)
 # ユーザー向けの新機能のためminorバンプ。
 # 1.8.0 = SPC(SNES SPC700)対応(Issue #43)と、UI刷新・ディレクトリベースの
 # 管理・起動モード追加(Issue #47)。ユーザー向けの新機能のためminorバンプ。
-project(muchip VERSION 1.8.0 LANGUAGES C CXX)
+# 1.9.0 = お気に入り(Issue #18)・再生履歴(Issue #51)と、VGM/VGZ・HES・KSS・AY・
+# SAP・GYM対応(Issue #55)。ユーザー向けの新機能のためminorバンプ。
+project(muchip VERSION 1.9.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
