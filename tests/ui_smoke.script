@@ -36,6 +36,8 @@ UP      # Player: UP(同ディレクトリの前ファイルへ送る。Issue #4
 DOWN    # DOWN(次ファイルへ送る)。先頭(Game.gbs)へ折り返りつつ張り替える
 SELECT  # 一時停止 (P9でAから移した)
 SELECT  # 再開
+A       # Player: Aでも一時停止 (Issue #58)
+A       # 再開
 Y_RIGHT # Player: Y+RIGHTでRepeatを直接進める (P11。既定all -> none)
 Y_RIGHT # none -> one (Issue #15: エンドレス化。start_track_atで既に組んだ
         # フェードを即座に無効化するplayer_apply_config()の新分岐を通す。

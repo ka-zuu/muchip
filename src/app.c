@@ -694,6 +694,9 @@ static void handle_player_input(app_t *app, input_action_t a, int repeat) {
         case INPUT_RIGHT:
             player_next_track(&app->player);
             break;
+        /* Issue #58: Aでも再生/一時停止できる(Issue #47で一覧UIを撤去して
+         * 未使用だったため)。Selectは従来どおり。 */
+        case INPUT_A:
         case INPUT_SELECT:
             player_toggle_pause(&app->player);
             break;
@@ -1644,7 +1647,7 @@ static void draw_player(app_t *app) {
     ui_footer_t ftr = {
         /* Issue #47: Up/Downはファイル一覧UIの撤去に伴い「同ディレクトリの
          * 前/次ファイル」へ転用した(app_player_step_file())。 */
-        .line1 = "<>:Track  ^v:File  Select:Pause  Y:Fav  X:Tracks  Start:Settings",
+        .line1 = "<>:Track  ^v:File  A:Pause  Y:Fav  X:Tracks  Start:Settings",
         .line2 = footer_line2,
         .line1_color = fg, .line2_color = accent, .bar_color = ui_color(ui, THEME_ROLE_PANEL),
     };
